@@ -38,15 +38,6 @@ do
     esac
 done
 
-if [ -z "$database_account_name" ] && [ -z "$local_database_folder" ]
-then
-    echo "ERROR - Invalid Input"
-    echo "You need to provide either a database connection information or a path to a folder to store a local database"
-    echo "Please provide a local database folder with -f [path to folder] or"
-    echo "a database account name with -d [account name] and -p [password]"
-    exit 1
-fi
-
 #Check if conda environment already exits, create it if not
 env_list_result=$(conda env list | grep "$env_name")
 if [ -z "$env_list_result" ]
@@ -158,6 +149,11 @@ then
     mkdir "$tmp_folder_path"
     echo "Needed to create the tmp folder:"
     echo "   $tmp_folder_path"
+fi
+
+if [ -z $local_database_folder ]
+then
+    local_database_folder="$storage_folder"
 fi
 
 #Fetching, patching, and installing custom DSSP binary
