@@ -1,0 +1,4 @@
+lib/.*
+lib/base/blast_db/tmp/*
+lib/base/blast_db/*
+lib/base/id_mapping/*

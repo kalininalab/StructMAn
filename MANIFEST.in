@@ -1,0 +1,13 @@
+include structman/lib/rinerator/reduce
+include structman/lib/rinerator/probe
+include structman/lib/rinerator/reduce_wwPDB_het_dict.txt
+include structman/scripts/pdb-rsync.sh
+include structman/scripts/struct_man_db_uniprot.sql
+include structman/scripts/database_structure.sql
+include structman/scripts/sqlite_database_structure.sql
+include structman/scripts/structguy_project_template.conf
+include structman/resources/Components-smiles-stereo-oe.smi
+include structman/resources/inchi_base.tsv
+include structman/resources/pdbba.fasta.gz
+include structman/resources/human_info_map.tab
+include changelog.txt

@@ -1,0 +1,124 @@
+From 61261457ef4168be6e5be8f5e6d93292efad4ddd Mon Sep 17 00:00:00 2001
+From: Sebastian Keller <sebastian.keller@helmholtz-hips.de>
+Date: Tue, 12 Jan 2021 15:24:10 +0100
+Subject: [PATCH] Split accessible surface area into main chain and side chain
+
+---
+ src/dssp.cpp      |  9 +++++----
+ src/structure.cpp | 13 +++++++++++--
+ src/structure.h   |  4 ++++
+ 3 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/src/dssp.cpp b/src/dssp.cpp
+index 2e90e29..e4371be 100644
+--- a/src/dssp.cpp
++++ b/src/dssp.cpp
+@@ -30,11 +30,11 @@ std::string ResidueToDSSPLine(const MResidue& residue)
+ /*
+   This is the header line for the residue lines in a DSSP file:
+ 
+-  #  RESIDUE AA STRUCTURE BP1 BP2  ACC     N-H-->O    O-->H-N    N-H-->O    O-->H-N    TCO  KAPPA ALPHA  PHI   PSI    X-CA   Y-CA   Z-CA
++  #  RESIDUE AA STRUCTURE BP1 BP2  ACC MCA SCA     N-H-->O    O-->H-N    N-H-->O    O-->H-N    TCO  KAPPA ALPHA  PHI   PSI    X-CA   Y-CA   Z-CA
+ 
+  */
+   boost::format kDSSPResidueLine(
+-  "%5.5d%5.5d%1.1s%1.1s %c  %c %c%c%c%c%c%c%c%4.4d%4.4d%c%4.4d %11s%11s%11s%11s  %6.3f%6.1f%6.1f%6.1f%6.1f %6.1f %6.1f %6.1f");
++  "%5.5d%5.5d%1.1s%1.1s %c  %c %c%c%c%c%c%c%c%4.4d%4.4d%c%4.4d%4.4d%4.4d %11s%11s%11s%11s  %6.3f%6.1f%6.1f%6.1f%6.1f %6.1f %6.1f %6.1f");
+ 
+   const MAtom& ca = residue.GetCAlpha();
+ 
+@@ -118,6 +118,7 @@ std::string ResidueToDSSPLine(const MResidue& residue)
+   return (kDSSPResidueLine % residue.GetNumber() % ca.mResSeq % ca.mICode % ca.mChainID % code %
+     ss % helix[0] % helix[1] % helix[2] % bend % chirality % bridgelabel[0] % bridgelabel[1] %
+     bp[0] % bp[1] % sheet % floor(residue.Accessibility() + 0.5) %
++    floor(residue.MCAccessibility() + 0.5) % floor(residue.SCAccessibility() + 0.5) %
+     NHO[0] % ONH[0] % NHO[1] % ONH[1] %
+     residue.TCO() % residue.Kappa() % alpha % residue.Phi() % residue.Psi() %
+     ca.mLoc.mX % ca.mLoc.mY % ca.mLoc.mZ).str();
+@@ -207,9 +208,9 @@ void WriteDSSP(MProtein& protein, std::ostream& os)
+ 
+   // per residue information
+ 
+-  os << "  #  RESIDUE AA STRUCTURE BP1 BP2  ACC     N-H-->O    O-->H-N    N-H-->O    O-->H-N    TCO  KAPPA ALPHA  PHI   PSI    X-CA   Y-CA   Z-CA " << std::endl;
++  os << "  #  RESIDUE AA STRUCTURE BP1 BP2  ACC MCA SCA      N-H-->O    O-->H-N    N-H-->O    O-->H-N    TCO  KAPPA ALPHA  PHI   PSI    X-CA   Y-CA   Z-CA " << std::endl;
+   boost::format kDSSPResidueLine(
+-    "%5.5d        !%c             0   0    0      0, 0.0     0, 0.0     0, 0.0     0, 0.0   0.000 360.0 360.0 360.0 360.0    0.0    0.0    0.0");
++    "%5.5d        !%c             0   0    0   0   0      0, 0.0     0, 0.0     0, 0.0     0, 0.0   0.000 360.0 360.0 360.0 360.0    0.0    0.0    0.0");
+ 
+   std::vector<const MResidue*> residues;
+ 
+diff --git a/src/structure.cpp b/src/structure.cpp
+index 1232c4e..79f122a 100644
+--- a/src/structure.cpp
++++ b/src/structure.cpp
+@@ -351,6 +351,8 @@ MResidue::MResidue(uint32 inNumber, MResidue* inPrevious,
+   , mType(MapResidue(inAtoms.front().mResName))
+   , mSSBridgeNr(0)
+   , mAccessibility(0)
++  , mMCAccessibility(0)
++  , mSCAccessibility(0)
+   , mSecondaryStructure(loop)
+   , mSheet(0)
+   , mBend(false)
+@@ -441,6 +443,8 @@ MResidue::MResidue(uint32 inNumber, char inTypeCode, MResidue* inPrevious)
+   , mType(MapResidue(inTypeCode))
+   , mSSBridgeNr(0)
+   , mAccessibility(0)
++  , mMCAccessibility(0)
++  , mSCAccessibility(0)
+   , mSecondaryStructure(loop)
+   , mSheet(0)
+   , mBend(false)
+@@ -470,6 +474,8 @@ MResidue::MResidue(const MResidue& residue)
+   , mType(residue.mType)
+   , mSSBridgeNr(residue.mSSBridgeNr)
+   , mAccessibility(residue.mAccessibility)
++  , mMCAccessibility(residue.mMCAccessibility)
++  , mSCAccessibility(residue.mSCAccessibility)
+   , mSecondaryStructure(residue.mSecondaryStructure)
+   , mC(residue.mC)
+   , mN(residue.mN)
+@@ -766,13 +772,16 @@ void MResidue::CalculateSurface(const std::vector<MResidue*>& inResidues)
+       neighbours.push_back(r);
+   }
+ 
+-  mAccessibility = CalculateSurface(mN, kRadiusN, neighbours) +
++  mMCAccessibility = CalculateSurface(mN, kRadiusN, neighbours) +
+            CalculateSurface(mCA, kRadiusCA, neighbours) +
+            CalculateSurface(mC, kRadiusC, neighbours) +
+            CalculateSurface(mO, kRadiusO, neighbours);
++  mAccessibility = mMCAccessibility;
+ 
++  mSCAccessibility = 0.0;
+   foreach (const MAtom& atom, mSideChain)
+-    mAccessibility += CalculateSurface(atom, kRadiusSideAtom, neighbours);
++    mSCAccessibility += CalculateSurface(atom, kRadiusSideAtom, neighbours);
++  mAccessibility += mSCAccessibility;
+ }
+ 
+ class MAccumulator
+diff --git a/src/structure.h b/src/structure.h
+index 6e618d9..2448c00 100644
+--- a/src/structure.h
++++ b/src/structure.h
+@@ -177,6 +177,8 @@ class MResidue
+   double        TCO() const;
+ 
+   double        Accessibility() const      { return mAccessibility; }
++  double        MCAccessibility() const    { return mMCAccessibility; }
++  double        SCAccessibility() const    { return mSCAccessibility; }
+ 
+   void        SetSecondaryStructure(MSecondaryStructure inSS)
+                             { mSecondaryStructure = inSS; }
+@@ -270,6 +272,8 @@ class MResidue
+   MResidueType    mType;
+   uint8        mSSBridgeNr;
+   double        mAccessibility;
++  double        mMCAccessibility;
++  double        mSCAccessibility;
+   MSecondaryStructure  mSecondaryStructure;
+   MAtom        mC, mN, mCA, mO, mH;
+   HBond        mHBondDonor[2], mHBondAcceptor[2];
+-- 
+1.8.3.1
+
