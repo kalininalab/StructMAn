@@ -42,6 +42,7 @@ CREATE TABLE `UNIPROT` (
 
 CREATE TABLE `EMBL_Transcripts` (
   `Transcript_ID` varchar(32) COLLATE utf8_unicode_ci NOT NULL,
+  `Gene_ID` varchar(32) COLLATE utf8_unicode_ci NOT NULL,  
   `Sequence` blob
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 

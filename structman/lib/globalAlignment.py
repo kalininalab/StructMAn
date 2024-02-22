@@ -196,6 +196,9 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
         else:
             backmap[seq_res_map[tem_n - 1]] = None
 
+    error_count = 0
+    error_example = None
+
     for aac_base in aaclist:
         target_pos = int(aac_base[1:])
         target_aa = aac_base[0]
@@ -211,11 +214,17 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
                 if not (target_aa == 'U' and align_map[target_pos][1] == 'C'):
                     if not (target_aa == 'O' and align_map[target_pos][1] == 'K'):
                         if not (target_aa == 'J' and align_map[target_pos][1] == 'I'):
-                            config.errorlog.add_warning('Amino acid of Mutation does not match with amino acid in the query protein: %s; %s%s (found),%s (given)' % (u_ac, align_map[target_pos][1], str(target_pos), aac_base), lock=lock)
+                            error_count += 1
+                            if error_example is None:
+                                error_example = f'Amino acid of Mutation does not match with amino acid in the query protein: {u_ac}; {align_map[target_pos][1]}{target_pos} (found),{aac_base} (given)'
+                            
 
         if ignore_gaps and sub_info[0] is None:
             continue
         sub_infos[target_pos] = sub_info
+
+    if error_count > 0:
+        config.errorlog.add_warning(f'{error_count} number of warnings happed during getSubPos, representing warning message:\n{error_example}', lock=lock)
 
     return (sub_infos, aaclist, backmap)
 

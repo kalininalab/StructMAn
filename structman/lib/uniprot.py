@@ -1,6 +1,7 @@
 import os
 import socket
 import sys
+import traceback
 import time
 import urllib.error
 import urllib.parse
@@ -10,7 +11,7 @@ import json
 
 from Bio import Entrez
 
-from structman.lib.database import database
+from structman.lib.database.database_core_functions import select, insert, update
 from structman.lib.sdsc.sdsc_utils import translate
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import protein as protein_package
@@ -268,7 +269,7 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
     if len(id_map) > 0:
         if config.mapping_db_is_set:
 
-            results = database.select(config, ['Uniprot_Ac', 'Uniprot_Id'], 'UNIPROT', in_rows={'Uniprot_Id':id_map.keys()}, from_mapping_db = True)
+            results = select(config, ['Uniprot_Ac', 'Uniprot_Id'], 'UNIPROT', in_rows={'Uniprot_Id':id_map.keys()}, from_mapping_db = True)
 
             stored_ids = set()
             for row in results:
@@ -317,7 +318,7 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
 
     if len(np_map) > 0:
         if config.mapping_db_is_set:
-            results = database.select(config, ['Uniprot_Ac', 'Refseq'], 'UNIPROT', in_rows={'Refseq': np_map.keys()}, from_mapping_db=True)
+            results = select(config, ['Uniprot_Ac', 'Refseq'], 'UNIPROT', in_rows={'Refseq': np_map.keys()}, from_mapping_db=True)
 
             ref_u_ac_map = {}  # different u_acs may have the same refseq, try to choose the right one, prefering u_acs containing '-'
             gene_id_snap = set(proteins.keys())  # snapshot of u_acs not originating from refseq-mapping
@@ -411,7 +412,7 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
             if ensembl_id in prot_gene_map:
                 gene_id = prot_gene_map[ensembl_id]
             else:
-                gene_id = None
+                gene_id = "to_fetch"
 
             if ensembl_id in ensembl_ac_map:
                 u_ac = ensembl_ac_map[ensembl_id]
@@ -445,7 +446,7 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
         if config.mapping_db_is_set:
             stored_u_acs = set()
 
-            results = database.select(config, ['Uniprot_Ac', 'Uniprot_Id'], 'UNIPROT', in_rows={'Uniprot_Ac': id_search}, from_mapping_db=True)
+            results = select(config, ['Uniprot_Ac', 'Uniprot_Id'], 'UNIPROT', in_rows={'Uniprot_Ac': id_search}, from_mapping_db=True)
 
             for row in results:
                 u_ac = row[0]
@@ -469,7 +470,7 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
             if len(unstored_u_acs) > 0:
                 # updateMappingDatabase(unstored_u_acs, db, config)
 
-                results = database.select(config, ['Uniprot_Ac', 'Uniprot_Id'], 'UNIPROT', in_rows={'Uniprot_Ac': unstored_u_acs}, from_mapping_db=True)
+                results = select(config, ['Uniprot_Ac', 'Uniprot_Id'], 'UNIPROT', in_rows={'Uniprot_Ac': unstored_u_acs}, from_mapping_db=True)
 
                 for row in results:
                     u_ac = row[0]
@@ -494,7 +495,7 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
 
     if config.mapping_db_is_set:
 
-        results = database.select(config, ['Uniprot_Ac', 'Refseq'], 'UNIPROT', in_rows={'Uniprot_Ac': proteins.keys()}, from_mapping_db=True)
+        results = select(config, ['Uniprot_Ac', 'Refseq'], 'UNIPROT', in_rows={'Uniprot_Ac': proteins.keys()}, from_mapping_db=True)
 
         for row in results:
             u_ac = row[0]
@@ -653,47 +654,149 @@ def getUniprotIds(config, query_ids, querytype, target_type = "UniProtKB", targe
         return {}
     return uniprot_ids
 
-def retrieve_transcript_sequences(ensembl_server, transcript_ids):
-    nt_seq_map = {}
-    for transcript_id in transcript_ids:
-        rest_url = f'{ensembl_server}/sequence/id/{transcript_id}?type=cds'
+
+def retrieve_transcript_metadata(server, transcript_ids):
+    rest_url = f'{server}/lookup/id'
+    transcript_ids = list(transcript_ids)
+    headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
+    transcript_gene_id_dict = {}
+    chunksize = 950
+    chunk = transcript_ids[:chunksize]
+    i = 0
+    try_number = 0
+    while len(chunk) > 0:
+        data = json.dumps({'ids':chunk})
 
         try:
-            r = requests.get(rest_url, headers={ "Content-Type" : "text/x-fasta"})
+            r = requests.post(rest_url, headers = headers, data = data)
         except:
-            print(f'Transcript Sequence Retrieval failed for: {transcript_id}')
+            try_number += 1
+            if try_number == 5:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+                print(f'POST request failed: {e}\n{f}\n{g}')
+                break
+            time.sleep(try_number**2)
             continue
+
         if not r.ok:
+            r.raise_for_status()
+            print(f'Transcript metadata Retrieval failed')
+            return None
+
+        decoded = r.json()
+        try_number = 0
+
+        for transcript_id in decoded:
             try:
-                r.raise_for_status()
+                gene_id = decoded[transcript_id]['Parent']
+                transcript_gene_id_dict[transcript_id] = gene_id
             except:
-                pass
-            print(f'Transcript Sequence Retrieval failed for: {transcript_id}')
-            nt_seq_map[transcript_id] = '-'
+                #print(transcript_id)
+                continue
+                
+        i += 1
+        chunk = transcript_ids[(chunksize*i):(chunksize*(i+1))]
+
+    return transcript_gene_id_dict
+
+
+def retrieve_transcript_sequences(server, transcript_ids):
+    rest_url = f'{server}/sequence/id'
+
+    headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
+    transcript_seq_dict = {}
+    chunksize = 45
+    transcript_ids = list(transcript_ids)
+    chunk = transcript_ids[:chunksize]
+    i = 0
+    try_number = 0
+    while len(chunk) > 0:
+
+        data = json.dumps({'ids':chunk})
+
+        try:
+            r = requests.post(rest_url, headers = headers, data = data, params = {'type' : 'protein'})
+        except:
+            try_number += 1
+            if try_number == 5:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+                print(f'POST request failed: {e}\n{f}\n{g}')
+                break
+            time.sleep(try_number**2)
             continue
-        nt_seq_map[transcript_id] = r.text
-    return nt_seq_map
+
+        if not r.ok:
+            r.raise_for_status()
+            print(f'Transcript Sequence Retrieval failed')
+            return None
+
+        decoded = r.json()
+        try_number = 0
+
+        for entry in decoded:
+            transcript_id = entry['query']
+            nt_seq = entry['seq']
+            transcript_seq_dict[transcript_id] = nt_seq
+
+        i += 1
+        chunk = transcript_ids[(chunksize*i):(chunksize*(i+1))]
+
+    return transcript_seq_dict
 
 def embl_database_lookup(config, transcript_ids):
     missing_ids = set(transcript_ids)
-    results = database.select(config, ['Transcript_ID', 'Sequence'], 'EMBL_Transcripts', in_rows={'Transcript_ID': missing_ids}, from_mapping_db=True)
+    results = select(config, ['Transcript_ID', 'Gene_ID', 'Sequence'], 'EMBL_Transcripts', in_rows={'Transcript_ID': missing_ids}, from_mapping_db=True)
     sequence_map = {}
+    gene_id_map = {}
+    broken_ids = set()
+    mean_seq_len = 0
     for row in results:
         transcript_id = row[0]
-        seq = base_utils.unpack(row[1])
+        gene_id = row[1]
+        try:
+            seq = base_utils.unpack(row[2])
+        except:
+            broken_ids.add(transcript_id)
+            continue
         sequence_map[transcript_id] = seq
+        mean_seq_len += len(seq)
+        gene_id_map[transcript_id] = gene_id
         missing_ids.remove(transcript_id)
-    return sequence_map, missing_ids
+    if len(sequence_map) > 0:
+        mean_seq_len = mean_seq_len / len(sequence_map)
+    if config.verbosity >= 2:
+        print(f'Embl database lookup: {len(sequence_map)} sequences, mean length: {mean_seq_len}')
+    return sequence_map, missing_ids, gene_id_map, broken_ids
 
-def embl_database_update(config, sequence_map):
+def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken_ids):
     values = []
     for transcript_id in sequence_map:
-        values.append((transcript_id, base_utils.pack(sequence_map[transcript_id])))
+        if transcript_id in broken_ids:
+            continue
+        try:
+            gene_id = transcript_id_gene_id_map[transcript_id]
+        except:
+            gene_id = None
+        values.append((transcript_id, gene_id, base_utils.pack(sequence_map[transcript_id])))
 
-    database.insert('EMBL_Transcripts', ['Transcript_ID', 'Sequence'], values, config, mapping_db = True)
+    insert('EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Sequence'], values, config, mapping_db = True)
+
+    values = []
+    for transcript_id in broken_ids:
+
+        try:
+            gene_id = transcript_id_gene_id_map[transcript_id]
+        except:
+            gene_id = None
+        values.append((transcript_id, gene_id, base_utils.pack(sequence_map[transcript_id])))
+
+    update(config, 'EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Sequence'], values, mapping_db = True)
 
 def get_ensembl_seqs(config, full_transcript_ids):
     aa_seqs = {}
+    total_gene_id_map = {}
     chunksize = 5000
     iter_number = 0
     while True:
@@ -705,43 +808,35 @@ def get_ensembl_seqs(config, full_transcript_ids):
             print(f'Get ensembl transcript sequences, iteration: {iter_number}, chunksize: {len(transcript_ids)}')
 
         if config.mapping_db_is_set:
-            sequence_map, missing_ids = embl_database_lookup(config, transcript_ids)
+            if config.verbosity >= 2:
+                print(f'Calling embl_database_lookup with {len(transcript_ids)} number of transcript ids')
+            sequence_map, missing_ids, gene_id_map, broken_ids = embl_database_lookup(config, transcript_ids)
+            if config.verbosity >= 2:
+                print(f'embl_database_lookup returned with {len(sequence_map)} number of sequences and {len(missing_ids)} number of still missing transcripts')
         else:
             sequence_map = {}
+            gene_id_map = {}
             missing_ids = transcript_ids
 
         if len(missing_ids) > 0:
             fasta_sequences = retrieve_transcript_sequences(config.ensembl_server, missing_ids)
+            transcript_id_gene_id_map = retrieve_transcript_metadata(config.ensembl_server, missing_ids)
             if config.mapping_db_is_set:
-                embl_database_update(config, fasta_sequences)
+                embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids)
         else:
             fasta_sequences = {}
+            transcript_id_gene_id_map = {}
 
         fasta_sequences.update(sequence_map)
+        aa_seqs.update(fasta_sequences)
 
-        for transcript_id in fasta_sequences:
-            fasta_sequence = fasta_sequences[transcript_id]
-            if fasta_sequence == '-': #This happens for non-cds transcripts
-                continue
-            nt_seq = ''
-            for fasta_line in fasta_sequence.split('\n')[1:]:
-                nt_seq = f'{nt_seq}{fasta_line}'
+        total_gene_id_map.update(gene_id_map)
+        total_gene_id_map.update(transcript_id_gene_id_map)
 
-            aa_seq = ''
-            current_codon = ''
-            for nt in nt_seq:
-                current_codon += nt
-                if len(current_codon) == 3:
-                    if current_codon in codons.CODONS:
-                        aa = codons.CODONS[current_codon]
-                        if aa != '_':
-                            aa_seq += aa
-                    current_codon = ''
-            aa_seqs[transcript_id] = aa_seq
         if r >= len(full_transcript_ids):
             break
         iter_number += 1
-    return aa_seqs
+    return aa_seqs, total_gene_id_map
 
 # First version of refseq sequence retrieval. Uses biopython.
 # called by serializePipeline
@@ -856,7 +951,7 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
         if config.verbosity >= 2:
             t0 = time.time()
 
-        results = database.select(config, ['Uniprot_Ac', 'Sequence'], 'UNIPROT', in_rows={'Uniprot_Ac': u_acs}, from_mapping_db = True)
+        results = select(config, ['Uniprot_Ac', 'Sequence'], 'UNIPROT', in_rows={'Uniprot_Ac': u_acs}, from_mapping_db = True)
 
         if config.verbosity >= 2:
             t1 = time.time()

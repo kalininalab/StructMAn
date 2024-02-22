@@ -570,6 +570,16 @@ def process_classification_outputs(outs, proteins, recommended_complexes):
             proteins.protein_map[protein_id].positions[pos].mappings = mappings_package.Mappings(raw_results=mapping_results)
             recommended_complexes[protein_id][pos] = proteins.protein_map[protein_id].positions[pos].mappings.recommendation_order
 
+@ray.remote(max_calls = 1)
+def para_mm_lookup(package, store):
+    config, n_sub_procs = store
+    complex_feature_dict_dict = {}
+    for complex_id in package:
+        feature_dict, _ = mm_lookup(complex_id, config, n_sub_procs = n_sub_procs)
+        complex_feature_dict_dict[complex_id] = feature_dict
+    return complex_feature_dict_dict
+
+
 def classification(proteins, config, background_insert_residues_process, indel_analysis_follow_up=False, custom_structure_annotations=None):
 
     if config.verbosity >= 2:
@@ -923,50 +933,53 @@ def classification(proteins, config, background_insert_residues_process, indel_a
                 print(f'Calling MicroMiner-lookup for {len(mm_inputs)} Complexes.')
             n_empty = 0
             new_mm_inputs = set()
+            small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(config.proc_n//4, len(mm_inputs))
+            n_of_chunks = n_of_small_chunks + n_of_big_chunks
+            if n_of_chunks < config.proc_n//4:
+                n_sub_procs = (config.proc_n//4) // n_of_chunks
+            else:
+                n_sub_procs = 1
+
+            store = ray.put((config, n_sub_procs))
+            para_mm_lookup_process_ids = []
+            package = []
             for complex_id in mm_inputs:
-                feature_dict, _ = mm_lookup(complex_id, config, n_sub_procs = config.proc_n)
+                package.append(complex_id)
+                if n_of_small_chunks > 0:
+                    if len(para_mm_lookup_process_ids) < n_of_small_chunks:
+                        if len(package) == small_chunksize:
+                            para_mm_lookup_process_ids.append(para_mm_lookup.remote(package, store))
+                            package = []
+                            continue
+                if n_of_big_chunks > 0:
+                    if len(package) == big_chunksize:
+                        para_mm_lookup_process_ids.append(para_mm_lookup.remote(package, store))
+                        package = []
 
-                if len(feature_dict) == 0:
-                    n_empty += 1
-                    for (prot_id, pos, current_try) in rec_complex_pos_dict[complex_id]:
-                        stay_in_loop = True
-                        next_try = current_try + 1
-                        while len(recommended_complexes[prot_id][pos]) > next_try and stay_in_loop:
-                            recommended_structure_triple = recommended_complexes[prot_id][pos][next_try][1]
-                            complex_id, chain_id, res = recommended_structure_triple
+            if len(package) > 0:
+                config.errorlog.add_error(f'Leftover mm_inputs: {package}')
 
-                            if complex_id in mm_db_dict:
-                                if (chain_id, res) in mm_db_dict[complex_id]:
-                                    successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
-                                    stay_in_loop = False
-                                else:
-                                    next_try += 1
-                            elif not complex_id in processed_complexes:
-                                new_mm_inputs.add(complex_id)
-                                processed_complexes.add(complex_id)
-                                if complex_id not in rec_complex_pos_dict:
-                                    rec_complex_pos_dict[complex_id] = []
-                                rec_complex_pos_dict[complex_id].append((prot_id, pos, next_try))
-                                stay_in_loop = False
-                            else:
-                                next_try += 1
+            results = ray.get(para_mm_lookup_process_ids)
+            for complex_feature_dict_dict in results:
 
-                else:
-                    mm_db_dict[complex_id] = feature_dict
-                    for (prot_id, pos, current_try) in rec_complex_pos_dict[complex_id]:
-                        recommended_structure_triple = recommended_complexes[prot_id][pos][current_try][1]
-                        complex_id, chain_id, res = recommended_structure_triple
-                        if (chain_id, res) in feature_dict:
-                            successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
-                        else:
-                            next_try = current_try + 1
+                for complex_id in complex_feature_dict_dict:
+                    feature_dict = complex_feature_dict_dict[complex_id]
+
+                    if len(feature_dict) == 0:
+                        n_empty += 1
+                        for (prot_id, pos, current_try) in rec_complex_pos_dict[complex_id]:
                             stay_in_loop = True
+                            next_try = current_try + 1
                             while len(recommended_complexes[prot_id][pos]) > next_try and stay_in_loop:
                                 recommended_structure_triple = recommended_complexes[prot_id][pos][next_try][1]
                                 complex_id, chain_id, res = recommended_structure_triple
+
                                 if complex_id in mm_db_dict:
-                                    successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
-                                    stay_in_loop = False
+                                    if (chain_id, res) in mm_db_dict[complex_id]:
+                                        successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
+                                        stay_in_loop = False
+                                    else:
+                                        next_try += 1
                                 elif not complex_id in processed_complexes:
                                     new_mm_inputs.add(complex_id)
                                     processed_complexes.add(complex_id)
@@ -976,6 +989,32 @@ def classification(proteins, config, background_insert_residues_process, indel_a
                                     stay_in_loop = False
                                 else:
                                     next_try += 1
+
+                    else:
+                        mm_db_dict[complex_id] = feature_dict
+                        for (prot_id, pos, current_try) in rec_complex_pos_dict[complex_id]:
+                            recommended_structure_triple = recommended_complexes[prot_id][pos][current_try][1]
+                            complex_id, chain_id, res = recommended_structure_triple
+                            if (chain_id, res) in feature_dict:
+                                successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
+                            else:
+                                next_try = current_try + 1
+                                stay_in_loop = True
+                                while len(recommended_complexes[prot_id][pos]) > next_try and stay_in_loop:
+                                    recommended_structure_triple = recommended_complexes[prot_id][pos][next_try][1]
+                                    complex_id, chain_id, res = recommended_structure_triple
+                                    if complex_id in mm_db_dict:
+                                        successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
+                                        stay_in_loop = False
+                                    elif not complex_id in processed_complexes:
+                                        new_mm_inputs.add(complex_id)
+                                        processed_complexes.add(complex_id)
+                                        if complex_id not in rec_complex_pos_dict:
+                                            rec_complex_pos_dict[complex_id] = []
+                                        rec_complex_pos_dict[complex_id].append((prot_id, pos, next_try))
+                                        stay_in_loop = False
+                                    else:
+                                        next_try += 1
 
             if config.verbosity >= 2:
                 print(f'MicroMiner-lookup succesful for {len(mm_inputs) - n_empty} Complexes.')

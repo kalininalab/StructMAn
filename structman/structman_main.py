@@ -165,6 +165,7 @@ class Config:
         self.microminer_kmer_matching_rate = cfg.getfloat('microminer_kmer_matching_rate', fallback = 0.4)
         self.microminer_fragment_length = cfg.getint('microminer_fragment_length', fallback=8)
         self.microminer_k = cfg.getint('microminer_k', fallback=7)
+        self.update_microminer_active = cfg.getboolean('update_microminer_active', fallback=False)
 
         self.condition_1_tag = None
         self.condition_2_tag = None
@@ -409,6 +410,8 @@ def main(infiles, out_folder, config, intertable=False, custom_db_mode=False):
 
             if out_folder is None:
                 out_folder = resolve_path(os.path.join(trunk, "Output"))
+        else:
+            config.errorlog.add_error('Invalid input file path: {infile}')
 
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
@@ -658,7 +661,7 @@ def structman_cli():
     if len(argv) > 0:
         if argv[0] == 'out':
             argv = argv[1:]
-            possible_key_words = set(['suggest', 'PPI', 'LSS', 'FAT', 'MM', 'RAS', 'GIS', 'GIN', 'getsubgraph'])
+            possible_key_words = set(['suggest', 'PPI', 'LSS', 'FAT', 'MM', 'RAS', 'GIS', 'GIN', 'getsubgraph', 'isoform_relations', 'gene_report'])
             out_util_mode = None
             output_util = True
             if argv[0] in possible_key_words:
@@ -1069,6 +1072,19 @@ def structman_cli():
             if target is None:
                 print(f'getsubgraph needs a target gene ID given with --target [gene ID]')
                 sys.exit(1)
+            genes_out_package.retrieve_sub_graph(infile, config, trunk, session_name, target)
+        elif out_util_mode == 'isoform_relations':
+            out_f = f'{outfolder}/{session_name}'
+            genes_out_package.generate_isoform_relations(session_id, config, out_f, session_name)
+        elif out_util_mode == 'gene_report':
+            if target is None:
+                print(f'gene_report needs a target gene ID given with --target [gene ID]')
+                sys.exit(1)
+            if session_id is None:
+                print(f'Couldnt find input file {infile} in database. Is the correct database (--dbname) provided?')
+                sys.exit(1)
+            out_f = f'{outfolder}/{session_name}'
+            genes_out_package.create_gene_report(session_id, target, config, out_f, session_name)
             genes_out_package.retrieve_sub_graph(infile, config, trunk, session_name, target)
 
     elif update_util:

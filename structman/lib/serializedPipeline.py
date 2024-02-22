@@ -25,6 +25,7 @@ from structman.lib.sdsc.consts import codons as codon_consts
 from structman.lib.sdsc import structure as structure_package
 from structman.lib.sdsc import complex as complex_package
 from structman.lib.sdsc import protein as protein_package
+from structman.lib.sdsc import gene as gene_package
 
 from structman.lib.database import database
 from structman.lib.output import output
@@ -118,7 +119,7 @@ def remove_position(config, proteins, indels, pos, wt_aa, primary_protein_id, de
 # @profile
 
 
-def sequenceScan(config, proteins, indels):
+def sequenceScan(config, proteins, indels, genes = None):
     def promote_uac_to_primary_id(u_ac, np_ref):
         primary_protein_id = u_ac
         proteins[primary_protein_id] = proteins[np_ref]
@@ -152,7 +153,9 @@ def sequenceScan(config, proteins, indels):
 
     if config.verbosity >= 2:
         if len(proteins) <= 100:
-            print(f'Protein IDs going into sequence scan: {proteins}')
+            print(f'Protein IDs going into sequence scan: {proteins}, genes set: {genes is not None}')
+        else:
+            print(f'{len(proteins)} number of Protein IDs going into sequence scan, genes set: {genes is None}')
 
     for prot_id in proteins:
         uni_pos, tags = proteins[prot_id].popNone()
@@ -274,7 +277,14 @@ def sequenceScan(config, proteins, indels):
         if config.verbosity >= 1:
             print("Amount of proteins going into Ensembl sequenceScan: ", len(sequenceScanEnsembl))
         
-        gene_sequence_map = uniprot.get_ensembl_seqs(config, list(sequenceScanEnsembl.keys()))
+        gene_sequence_map, gene_id_map = uniprot.get_ensembl_seqs(config, list(sequenceScanEnsembl.keys()))
+
+        if config.verbosity >= 2:
+            print(f"Size of gene_sequence_map: {len(gene_sequence_map)}, size of gene_id_map: {len(gene_id_map)}")
+
+        mean_seq_len = 0
+        n = 0
+
         for transcript_id in sequenceScanEnsembl:
             tags, uni_pos = sequenceScanEnsembl[transcript_id]
             if tags is None:
@@ -299,6 +309,18 @@ def sequenceScan(config, proteins, indels):
             primary_protein_id = transcript_id
 
             proteins[primary_protein_id].sequence = seq
+            n += 1
+            mean_seq_len += len(seq)
+
+            if genes is not None:
+                gene_id = gene_id_map[transcript_id]
+                if gene_id not in genes:
+                    gene_obj = gene_package.Gene(gene_id, proteins = [primary_protein_id])
+                    genes[gene_id] = gene_obj
+                else:
+                    genes[gene_id].proteins.add(primary_protein_id)
+
+                proteins[primary_protein_id].gene = gene_id
 
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
@@ -312,6 +334,13 @@ def sequenceScan(config, proteins, indels):
 
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
+        if genes is not None:
+            del genes['to_fetch']
+
+        if n > 0:
+            mean_seq_len = mean_seq_len/n
+        if config.verbosity >= 2:
+            print(f'Retrieved {n} number of sequences in sequenceScanEnsembl with mean length: {mean_seq_len}')
 
     if len(sequenceScanProteins) > 0:
         if config.verbosity >= 1:
@@ -420,7 +449,7 @@ def sequenceScan(config, proteins, indels):
                 # creates mutation protein object
                 multi_mutation_objects += proteins[primary_protein_id].create_multi_mutations(proteins, config)
 
-    return proteins, indels, multi_mutation_objects, removed_proteins
+    return proteins, indels, multi_mutation_objects, removed_proteins, genes
 
 
 def parseFasta(config, nfname):
@@ -824,6 +853,12 @@ def gene_isoform_check(proteins, genes, indel_map, config):
     for gene_id in genes:
         if len(genes[gene_id].proteins) < 2:
             continue
+
+        if gene_id == 'to_fetch':
+            for protein_id in genes[gene_id].proteins:
+                extra_sequence_scan_proteins[protein_id] = proteins[protein_id]
+            continue
+
         isoform_list = list(genes[gene_id].proteins)
 
         for iso1 in isoform_list:
@@ -833,11 +868,19 @@ def gene_isoform_check(proteins, genes, indel_map, config):
                 extra_sequence_scan_proteins[iso1] = proteins[iso1]
                 extra_sequence_scan_proteins[iso2] = proteins[iso2]
 
-    extra_sequence_scan_proteins, indel_map, _, removed_proteins = sequenceScan(config, extra_sequence_scan_proteins, indel_map)
+    extra_sequence_scan_proteins, indel_map, _, removed_proteins, genes = sequenceScan(config, extra_sequence_scan_proteins, indel_map, genes = genes)
 
+    n = 0
+    mean_seq_len = 0
     for prot_id in proteins:
         if prot_id in extra_sequence_scan_proteins:
             proteins[prot_id] = extra_sequence_scan_proteins[prot_id]
+            n += 1
+            mean_seq_len += len(proteins[prot_id].sequence)
+    if n > 0:
+        mean_seq_len = mean_seq_len/n
+    if config.verbosity >= 2:
+        print(f'Extra sequenceScan replace {n} number of protein objects with mean sequence lenght: {mean_seq_len}')
 
     for removed_prot_id in removed_proteins:
         del proteins[removed_prot_id]
@@ -927,7 +970,15 @@ def para_mm_generation(config, packages):
     aligner_class = globalAlignment.init_bp_aligner_class(open_gap_score = -2.0)
     for sequence_map, iso_pairs in unpack(packages):
         for iso1, iso2 in iso_pairs:
-            mm_results.append((iso1, iso2, generate_multi_mutation(sequence_map[iso1], sequence_map[iso2], config, aligner_class = aligner_class)))
+            seq_iso1 = sequence_map[iso1]
+            seq_iso2 = sequence_map[iso2]
+            if len(seq_iso1) == 0:
+                mm_results.append((iso1, iso2, f'Couldnt call generate_multi_mutation, sequence of {iso1} is empty'))
+                continue
+            if len(seq_iso2) == 0:
+                mm_results.append((iso1, iso2, f'Couldnt call generate_multi_mutation, sequence of {iso2} is empty'))
+                continue
+            mm_results.append((iso1, iso2, generate_multi_mutation(seq_iso1, seq_iso2, config, aligner_class = aligner_class)))
     return pack(mm_results)
 
 def nToAA(seq):
@@ -2259,7 +2310,7 @@ def main(filename, config, custom_db_mode=False):
                 print("Chunk %s/%s" % (str(chunk_nr), str(len(proteins_chunks))))
             chunk_nr += 1
 
-            protein_list, indels, multi_mutation_objects, _ = sequenceScan(config, protein_list, indels)
+            protein_list, indels, multi_mutation_objects, _, _ = sequenceScan(config, protein_list, indels)
 
             out_objects, amount_of_structures = core(protein_list, genes, indels, multi_mutation_objects, config, session, config.outfolder, session_name, out_objects)
 

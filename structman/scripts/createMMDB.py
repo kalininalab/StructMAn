@@ -62,14 +62,21 @@ def mm_lookup(pdb_id, config, n_sub_procs = 1):
 
     mmdb_raw_entry, mmdb_aggregated_entry = get_mmdb_entry_path(pdb_id, config.microminer_db, identity = config.microminer_identity, kmer_matching_rate = config.microminer_kmer_matching_rate, fragment_length = config.microminer_fragment_length, k = config.microminer_k)
     
-    if not os.path.isfile(mmdb_aggregated_entry):
+    if not os.path.isfile(mmdb_aggregated_entry) and config.update_microminer_active:
+        if config.verbosity >= 4:
+            print(f'Running microminer in mm_lookup: {pdb_id} {mmdb_raw_entry}')
         outfolder = mmdb_raw_entry.rsplit('/', 1)[0]
         microminer_search_db = get_mm_search_db_path(config.microminer_db, config.microminer_k)
         pdb_file_path = get_pdb_file_path(pdb_id, config)
         apply_microminer(config, microminer_search_db, pdb_file_path, outfolder, config.microminer_identity, kmer_matching_rate = config.microminer_kmer_matching_rate, fragment_length = config.microminer_fragment_length, n_procs = n_sub_procs)
         mm_post_procession(outfolder, mmdb_raw_entry, mmdb_aggregated_entry)
 
-    feature_dict, feature_names = parse_processed_mmdb_entry(mmdb_aggregated_entry)
+    if os.path.isfile(mmdb_aggregated_entry):
+        feature_dict, feature_names = parse_processed_mmdb_entry(mmdb_aggregated_entry)
+    else:
+        feature_dict = {}
+        feature_names = []
+        
     return feature_dict, feature_names
 
 def apply_microminer(config, microminer_search_db, infile, outfolder, identity = 0.6, kmer_matching_rate = 0.4, fragment_length = 8, n_procs = 1):

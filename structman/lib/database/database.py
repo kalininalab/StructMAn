@@ -635,7 +635,7 @@ def addIupred(proteins, config):
                     pos_region_type = region_type
 
             if scores is None:
-                config.errorlog.add_error('IUpred scores are None for: %s' % u_ac)
+                config.errorlog.add_warning('IUpred scores are None for: %s' % u_ac)
                 break
 
             if pos not in scores:
@@ -737,14 +737,18 @@ def getSessionId(infile, config):
     checksum = calc_checksum(infile)
 
     table = 'Session'
-    columns = ['Session_Id']
+    columns = ['Session_Id', 'Checksum']
 
-    results = select(config, columns, table, equals_rows={'Input_File': infile, 'Checksum': checksum})
+    results = select(config, columns, table, equals_rows={'Input_File': infile})
 
     if len(results) == 0:
         return None
 
-    return results[0][0]
+    for row in results:
+        if checksum == row[1]:
+            return row[0]
+
+    return None
 
 
 # called by babel
@@ -2023,6 +2027,9 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
     pos_db_map = {}
 
+    error_count = 0
+    error_message = None
+
     for row in results:
         p_id = row[0]
 
@@ -2047,7 +2054,24 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
                     intra_chain_median_kd, intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
                     weighted_inter_chain_interactions_median, weighted_inter_chain_interactions_dist_weighted,
                     weighted_intra_chain_interactions_median, weighted_intra_chain_interactions_dist_weighted,
-                    rsa_change_score, rsa_mc_change_score, rsa_sc_change_score) = unpack(row[7])
+                    rsa_change_score, rsa_mc_change_score, rsa_sc_change_score,
+                    Backbone_RMSD_seq_id_high_weight, All_atom_RMSD_seq_id_high_weight, nof_site_residue_seq_id_high_weight, Site_LDDT_seq_id_high_weight,
+                    Backbone_RMSD_seq_id_low_weight, All_atom_RMSD_seq_id_low_weight, nof_site_residue_seq_id_low_weight, Site_LDDT_seq_id_low_weight,
+                    Backbone_RMSD_seq_id_greater_90, All_atom_RMSD_seq_id_greater_90, nof_site_residue_seq_id_greater_90, Site_LDDT_seq_id_greater_90,
+                    Backbone_RMSD_seq_id_between_50_and_90, All_atom_RMSD_seq_id_between_50_and_90, nof_site_residue_seq_id_between_50_and_90, Site_LDDT_seq_id_between_50_and_90,
+                    Backbone_RMSD_seq_id_lower_50, All_atom_RMSD_seq_id_lower_50, nof_site_residue_seq_id_lower_50, Site_LDDT_seq_id_lower_50,
+                    Backbone_RMSD_site_id_greater_99, All_atom_RMSD_site_id_greater_99, nof_site_residue_site_id_greater_99, Site_LDDT_site_id_greater_99,
+                    Backbone_RMSD_site_id_between_70_and_99, All_atom_RMSD_site_id_between_70_and_99, nof_site_residue_site_id_between_70_and_99, Site_LDDT_site_id_between_70_and_99,
+                    Backbone_RMSD_site_id_lower_70, All_atom_RMSD_site_id_lower_70, nof_site_residue_site_id_lower_70, Site_LDDT_site_id_lower_70,
+                    Backbone_RMSD_seq_id_greater_90_site_id_greater_99, All_atom_RMSD_seq_id_greater_90_site_id_greater_99, nof_site_residue_seq_id_greater_90_site_id_greater_99, Site_LDDT_seq_id_greater_90_site_id_greater_99,
+                    Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99, nof_site_residue_seq_id_between_50_and_90_site_id_greater_99, Site_LDDT_seq_id_between_50_and_90_site_id_greater_99,
+                    Backbone_RMSD_seq_id_lower_50_site_id_greater_99, All_atom_RMSD_seq_id_lower_50_site_id_greater_99, nof_site_residue_seq_id_lower_50_site_id_greater_99, Site_LDDT_seq_id_lower_50_site_id_greater_99,
+                    Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99, nof_site_residue_seq_id_greater_90_site_id_between_70_and_99, Site_LDDT_seq_id_greater_90_site_id_between_70_and_99,
+                    Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99, Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99,
+                    Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99, All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99, nof_site_residue_seq_id_lower_50_site_id_between_70_and_99, Site_LDDT_seq_id_lower_50_site_id_between_70_and_99,
+                    Backbone_RMSD_seq_id_greater_90_site_id_lower_70, All_atom_RMSD_seq_id_greater_90_site_id_lower_70, nof_site_residue_seq_id_greater_90_site_id_lower_70, Site_LDDT_seq_id_greater_90_site_id_lower_70,
+                    Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70, All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70, nof_site_residue_seq_id_between_50_and_90_site_id_lower_70, Site_LDDT_seq_id_between_50_and_90_site_id_lower_70,
+                    Backbone_RMSD_seq_id_lower_50_site_id_lower_70, All_atom_RMSD_seq_id_lower_50_site_id_lower_70, nof_site_residue_seq_id_lower_50_site_id_lower_70, Site_LDDT_seq_id_lower_50_site_id_lower_70) = unpack(row[7])
 
                     mapping_results = (None, None, None, rsa, mainchain_rsa, sidechain_rsa, weighted_sc, mainchain_location,
                                         sidechain_location, rin_profile_str, weighted_centrality_scores, b_factor,
@@ -2060,10 +2084,31 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
                                         weighted_intra_chain_interactions_median, weighted_intra_chain_interactions_dist_weighted,
                                         None, None, None, None, None, None, None, rin_class, rin_simple_class, Class, 
                                         simple_class, interaction_str, None, None, None, None, None, None, None, 
-                                        None, None, amount_of_structures, rsa_change_score, rsa_mc_change_score, rsa_sc_change_score)
+                                        None, None, amount_of_structures, rsa_change_score, rsa_mc_change_score, rsa_sc_change_score,
+                                        Backbone_RMSD_seq_id_high_weight, All_atom_RMSD_seq_id_high_weight, nof_site_residue_seq_id_high_weight, Site_LDDT_seq_id_high_weight,
+                                        Backbone_RMSD_seq_id_low_weight, All_atom_RMSD_seq_id_low_weight, nof_site_residue_seq_id_low_weight, Site_LDDT_seq_id_low_weight,
+                                        Backbone_RMSD_seq_id_greater_90, All_atom_RMSD_seq_id_greater_90, nof_site_residue_seq_id_greater_90, Site_LDDT_seq_id_greater_90,
+                                        Backbone_RMSD_seq_id_between_50_and_90, All_atom_RMSD_seq_id_between_50_and_90, nof_site_residue_seq_id_between_50_and_90, Site_LDDT_seq_id_between_50_and_90,
+                                        Backbone_RMSD_seq_id_lower_50, All_atom_RMSD_seq_id_lower_50, nof_site_residue_seq_id_lower_50, Site_LDDT_seq_id_lower_50,
+                                        Backbone_RMSD_site_id_greater_99, All_atom_RMSD_site_id_greater_99, nof_site_residue_site_id_greater_99, Site_LDDT_site_id_greater_99,
+                                        Backbone_RMSD_site_id_between_70_and_99, All_atom_RMSD_site_id_between_70_and_99, nof_site_residue_site_id_between_70_and_99, Site_LDDT_site_id_between_70_and_99,
+                                        Backbone_RMSD_site_id_lower_70, All_atom_RMSD_site_id_lower_70, nof_site_residue_site_id_lower_70, Site_LDDT_site_id_lower_70,
+                                        Backbone_RMSD_seq_id_greater_90_site_id_greater_99, All_atom_RMSD_seq_id_greater_90_site_id_greater_99, nof_site_residue_seq_id_greater_90_site_id_greater_99, Site_LDDT_seq_id_greater_90_site_id_greater_99,
+                                        Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99, nof_site_residue_seq_id_between_50_and_90_site_id_greater_99, Site_LDDT_seq_id_between_50_and_90_site_id_greater_99,
+                                        Backbone_RMSD_seq_id_lower_50_site_id_greater_99, All_atom_RMSD_seq_id_lower_50_site_id_greater_99, nof_site_residue_seq_id_lower_50_site_id_greater_99, Site_LDDT_seq_id_lower_50_site_id_greater_99,
+                                        Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99, nof_site_residue_seq_id_greater_90_site_id_between_70_and_99, Site_LDDT_seq_id_greater_90_site_id_between_70_and_99,
+                                        Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99, Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99,
+                                        Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99, All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99, nof_site_residue_seq_id_lower_50_site_id_between_70_and_99, Site_LDDT_seq_id_lower_50_site_id_between_70_and_99,
+                                        Backbone_RMSD_seq_id_greater_90_site_id_lower_70, All_atom_RMSD_seq_id_greater_90_site_id_lower_70, nof_site_residue_seq_id_greater_90_site_id_lower_70, Site_LDDT_seq_id_greater_90_site_id_lower_70,
+                                        Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70, All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70, nof_site_residue_seq_id_between_50_and_90_site_id_lower_70, Site_LDDT_seq_id_between_50_and_90_site_id_lower_70,
+                                        Backbone_RMSD_seq_id_lower_50_site_id_lower_70, All_atom_RMSD_seq_id_lower_50_site_id_lower_70, nof_site_residue_seq_id_lower_50_site_id_lower_70, Site_LDDT_seq_id_lower_50_site_id_lower_70)
 
                 except:
-                    print('Error in retrieving position data, couldnt unpack:', m_id)
+                    error_count += 1
+                    if error_message is None:
+                        [e, f, g] = sys.exc_info()
+                        g = traceback.format_exc()
+                        error_message = f'Error in retrieving position data, couldnt unpack: {m_id}\n{e}\n{f}\n{g}'
                     continue
             mappings_obj = mappings_package.Mappings(raw_results = mapping_results)
 
@@ -2073,6 +2118,9 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
         prot_id = id_prot_id_map[p_id]
         proteins[prot_id].add_positions([pos_obj])
         pos_db_map[m_id] = (prot_id, pos)
+
+    if error_count > 0:
+        print(f'There were {error_count} number of errors retrieving position data, example error:\n{error_message}')
     return pos_db_map
 
 # called by output

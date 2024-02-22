@@ -102,7 +102,8 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                                        intra_chain_interactions_median=intra_chain_interactions_median, intra_chain_interactions_dist_weighted=intra_chain_interactions_dist_weighted,
                                        interacting_chains_str=interacting_chains_str, interacting_ligands_str=interacting_ligands_str)
                     proteins.add_residue(pdb_id, chain, res_id, residue)
-                    print(f'Calling proteins.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
+                    if config.verbosity >= 6:
+                        print(f'Calling proteins.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
                 else:
                     if res_id not in proteins.structures[(pdb_id, chain)].residues:
                         residue = residue_package.Residue(res_id, database_id=row[1], stored=True)

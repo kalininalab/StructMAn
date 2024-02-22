@@ -1,4 +1,6 @@
 import os
+import sys
+import traceback
 import math
 import igraph as ig
 import matplotlib as mpl
@@ -24,6 +26,7 @@ import markdown
 
 
 from structman.lib.database import database
+from structman.lib.database.database_core_functions import select
 from structman.lib.lib_utils import fuse_multi_mutations
 from structman.lib.output import out_generator, out_utils, massmodel
 from structman.base_utils.base_utils import resolve_path
@@ -33,9 +36,11 @@ class Gene:
     def __init__(self, name, isoform_pair_multimutations, isoform_pair_scores, isoform_expressions, isoform_prot_objs):
         self.name = name
         isoforms = {}
+        self.all_expression_values_none = True
         for iso in isoform_prot_objs:
             if iso in isoform_expressions:
                 expression_wt_condition, expression_d_condition = isoform_expressions[iso]
+                self.all_expression_values_none = False
             else:
                 expression_wt_condition = None
                 expression_d_condition = None
@@ -205,7 +210,7 @@ def init_gene_maps(session_id, config):
     rows = ['Protein_A', 'Protein_B', 'Gene', 'Multi_Mutation']
     eq_rows = {'Session': session_id}
 
-    results = database.select(config, rows, table, equals_rows=eq_rows)
+    results = select(config, rows, table, equals_rows=eq_rows)
 
     gene_db_ids = set()
     gene_isoform_map = {}
@@ -299,6 +304,10 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
 
     gene_class = gene_isoform_score_dict[gene_name][5]
 
+    if gene_class.all_expression_values_none:
+        print(f'Creating isoform relations invalid for {gene_class.name}, expression values are not defined. Please set the condition tags with --condition_1 "tag name" and --condition_2 "tag name"')
+        return None
+
     node_id_list = []
     node_ids = {}
     node_labels = []
@@ -326,7 +335,7 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
             max_seq_len = seq_len
             longest_isoform = isoform
         label = f'{isoform} ({seq_len})\nExC1:{expression_wt_condition}\nExC2:{expression_d_condition}'
-        print(label)
+        #print(label)
         node_labels.append(label)
 
     node_colors = []
@@ -347,7 +356,7 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
     identicals = set()
     max_sds = 0
     for (iso_a, iso_b) in gene_class.isoform_pairs:
-        print(iso_a, iso_b)
+        #print(iso_a, iso_b)
         if iso_a not in node_ids:
             continue
         if iso_b not in node_ids:
@@ -664,19 +673,23 @@ def generate_gene_interaction_network(session_id, config, outfolder, session_nam
         nintynine_perc_value = sorted_scores[-perc_number]
 
         scaled_weighted_gi_scores = [gi_score/nintynine_perc_value for gi_score in node_score_list]
-    else:
+    elif len(node_score_list) > 0:
         max_score = max(node_score_list)
         if max_score > 0:
             scaled_weighted_gi_scores = [gi_score/max_score for gi_score in node_score_list]
         else:
             scaled_weighted_gi_scores = node_score_list
+    else:
+        scaled_weighted_gi_scores = []
 
     if len(edge_weights) > 1000:
         sorted_edge_weights = sorted(edge_weights)
         perc_number = len(edge_weights) // 100
         nintynine_perc_edge_weight_value = sorted_edge_weights[-perc_number]
-    else:
+    elif len(edge_weights) > 0:
         nintynine_perc_edge_weight_value = max(edge_weights)
+    else:
+        nintynine_perc_edge_weight_value = 0.
 
     scaled_edge_weights = []
     for pos, w in enumerate(edge_weights):
@@ -749,6 +762,9 @@ def generate_gene_interaction_network(session_id, config, outfolder, session_nam
         f.write(line)
     f.close()
 
+    if len(degree_map) == 0:
+        return
+    
     pl_fit = powerlaw.Fit(numpy.array(list(degree_map.values())),xmin=1, xmax=1500)
     figure = pl_fit.plot_pdf(color = 'b')
     plt.xlabel('Node degree')
@@ -786,28 +802,47 @@ def create_gene_report(session_id, target, config, out_f, session_name):
         generate_gene_interaction_network(session_id, config, out_f, session_name)
 
     gene_isoform_score_dict, prot_db_ids = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True, target_genes = targets, return_prot_db_ids = True)
+
     outfile_stem = os.path.join(out_f, f'{session_name}')
     cmap=mpl.colormaps['RdYlGn']
 
+    whole_graph = None
     for target in targets:
         longest_isoform = create_isoform_relations_plot(target, gene_isoform_score_dict, cmap, outfile_stem)
 
         gene_class = gene_isoform_score_dict[target][5]
         input_for_sequence_plot = gene_class.generate_input_for_sequence_plot(longest_isoform)
-        print(f'Input for sequence plot for {target}:\n{input_for_sequence_plot}')
+        if config.verbosity >= 4:
+            print(f'Input for sequence plot for {target}:\n{input_for_sequence_plot}')
 
         path_to_isoform_plot = create_isoform_plot(input_for_sequence_plot, out_f, session_name, target)
-        retrieve_sub_graph(gml_file, config, out_f, session_name, target, depth = 1, filtered = False)
+        whole_graph = retrieve_sub_graph(gml_file, config, out_f, session_name, target, depth = 1, filtered = False, whole_graph = whole_graph, return_whole_graph=True)
         
-
     massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids)
     paths_to_model_plots = create_pymol_plot(out_f)
     create_markdown(out_f, paths_to_model_plots)
 
-def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2, filtered = False):
-    g = ig.Graph.Read_GML(ggin_file)
+def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2, filtered = False, whole_graph = None, return_whole_graph = False):
+    if config.verbosity >= 2:
+        print(f'Calling retrieve_sub_graph for {target} and {ggin_file}')
 
-    target_node = g.vs.find(name = target)
+    if whole_graph is None:
+        try:
+            g = ig.Graph.Read_GML(ggin_file)
+        except:
+            [e, f, g] = sys.exc_info()
+            print(f"Couldn't load graph file in retrieve_sub_graph: {ggin_file}\n{e}")
+            return None
+    else:
+        g = whole_graph
+
+    try:
+        target_node = g.vs.find(name = target)
+    except:
+        [e, f, g] = sys.exc_info()
+        print(f"Couldn't locate target: {target} in graph: {ggin_file}\n{e}")
+        return g
+    
     new_nodes = [int(target_node['id'])]
 
     print(target_node.attributes())
@@ -908,6 +943,8 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
 
     gml_file = f'{out_f}/{target}_D{depth}_subgraph{filtered_str}.gml'
     g_sub.write_gml(gml_file)
+    if return_whole_graph:
+        return g
 
 
 def create_pymol_plot(out_f):
@@ -916,13 +953,18 @@ def create_pymol_plot(out_f):
     list_of_paths = model_summary['File location']
     paths_to_plots = []
     for path_to_pdb in list_of_paths:
-        name_list = path_to_pdb.split("/models/",1)
-        name = name_list[1]
-        paths_to_plots.append(f'{out_f}/models-plots/{name}.png')
-        pymol.cmd.load(path_to_pdb)
-        pymol.cmd.spectrum("b", "rainbow", "n. and CA")
-        pymol.cmd.orient()
-        pymol.cmd.png(f'{out_f}/models-plots/{name}.png', dpi=150, ray=1)
+        try:
+            name_list = path_to_pdb.split("/models/",1)
+            name = name_list[1]
+            paths_to_plots.append(f'{out_f}/models-plots/{name}.png')
+            pymol.cmd.load(path_to_pdb)
+            pymol.cmd.spectrum("b", "rainbow", "n. and CA")
+            pymol.cmd.orient()
+            pymol.cmd.png(f'{out_f}/models-plots/{name}.png', dpi=150, ray=1)
+        except:
+            [e, f, g] = sys.exc_info()
+            g = traceback.format_exc()
+            print(f"couldn't create pymol plot for {path_to_pdb}:\n{e}\n{f}\n{g}")
     return paths_to_plots
 
 def create_markdown(out_f, paths_to_model_plots):
