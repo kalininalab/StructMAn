@@ -21,7 +21,7 @@ import colorsys
 
 import powerlaw
 import numpy
-import pymol
+import pymol.cmd as pymol_cmd
 import markdown
 
 
@@ -129,14 +129,15 @@ def calcWeightedGI(isoforms, proteins, protein_list, wt_condition_tag, disease_c
         expression_d_condition_prot_a = prot_a.retrieve_tag_value(disease_condition_tag)
         if prot_a.primary_protein_id not in isoform_expressions:
             isoform_expressions[prot_a.primary_protein_id] = expression_wt_condition_prot_a, expression_d_condition_prot_a
-        if expression_wt_condition_prot_a <= expression_d_condition_prot_a: #prot_a needs to decrease in expression
-            continue
         expression_wt_condition_prot_b = prot_b.retrieve_tag_value(wt_condition_tag)
         expression_d_condition_prot_b = prot_b.retrieve_tag_value(disease_condition_tag)
-        if expression_wt_condition_prot_b >= expression_d_condition_prot_b: #prot_b needs to increase in expression
-            continue
+
         unweighted_score = multi_mutation.get_score(proteins)
         isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = unweighted_score
+        if expression_wt_condition_prot_a <= expression_d_condition_prot_a: #prot_a needs to decrease in expression
+            continue        
+        if expression_wt_condition_prot_b >= expression_d_condition_prot_b: #prot_b needs to increase in expression
+            continue
         weighted_score = unweighted_score * (expression_wt_condition_prot_a - expression_d_condition_prot_a) * (expression_d_condition_prot_b - expression_wt_condition_prot_b)
         gi_score_sum += weighted_score
         if weighted_score > max_contribution:
@@ -299,7 +300,7 @@ def generate_gene_isoform_scores(session_id, config, outfolder, session_name):
 
     f.close()
 
-def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outfile_stem):
+def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = 'ExC1', condition_2_label = 'ExC2'):
     print(f'Creating isoform relations plot for: {gene_name}')
 
     gene_class = gene_isoform_score_dict[gene_name][5]
@@ -315,6 +316,16 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
     min_ex_change = 0
     raw_ex_changes = {}
     max_seq_len = 0
+
+    total_expression_condition_1 = 0
+    total_expression_condition_2 = 0
+    for isoform in gene_class.isoforms:
+        expression_wt_condition, expression_d_condition, prot_object = gene_class.isoforms[isoform]
+        if expression_d_condition == 0 and expression_wt_condition == 0:
+            continue
+        total_expression_condition_1 += expression_wt_condition
+        total_expression_condition_2 += expression_d_condition
+
     for isoform in gene_class.isoforms:
         expression_wt_condition, expression_d_condition, prot_object = gene_class.isoforms[isoform]
         if expression_d_condition == 0 and expression_wt_condition == 0:
@@ -328,13 +339,21 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
 
         raw_ex_changes[isoform] = ex_change
 
+        if expression_wt_condition > 0:
+            log_fold_change = round(math.log2(expression_d_condition/expression_wt_condition), 2)
+        else:
+            log_fold_change = 'inf'
+        usage_condition_1 = round(expression_wt_condition/total_expression_condition_1, 2)
+        usage_condition_2 = round(expression_d_condition/total_expression_condition_2, 2)
+        usage_change = round(usage_condition_2 - usage_condition_1, 2)
+
         node_id_list.append(isoform)
         node_ids[isoform] = len(node_ids)
         seq_len = len(prot_object.sequence)
         if seq_len > max_seq_len:
             max_seq_len = seq_len
             longest_isoform = isoform
-        label = f'{isoform} ({seq_len})\nExC1:{expression_wt_condition}\nExC2:{expression_d_condition}'
+        label = f'{isoform}, Size: {seq_len}\n{condition_1_label}: {round(expression_wt_condition, 5)}\n{condition_2_label}: {round(expression_d_condition, 5)}\nl2fc: {log_fold_change}\nUsage {condition_1_label}: {usage_condition_1}\n Usage {condition_2_label}: {usage_condition_2}\nChange in usage: {usage_change}'
         #print(label)
         node_labels.append(label)
 
@@ -362,6 +381,13 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
         if iso_b not in node_ids:
             continue
 
+        expression_wt_condition_a, expression_d_condition_a, _ = gene_class.isoforms[iso_a]
+        expression_wt_condition_b, expression_d_condition_b, _ = gene_class.isoforms[iso_b]
+
+        #Show only edges from higher expressed isoforms to lower expressed isoforms
+        if expression_wt_condition_b + expression_d_condition_b > expression_wt_condition_a + expression_d_condition_a:
+            continue
+
         SDS, multi_mutation = gene_class.isoform_pairs[(iso_a, iso_b)]
 
         l_deleted, l_inserted, l_substituted = multi_mutation.give_count()
@@ -377,14 +403,14 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
             identicals.add((iso_a, iso_b))
             continue
 
-        if raw_ex_changes[iso_a] < 0 or raw_ex_changes[iso_b] > 0:
-            continue
+        #if raw_ex_changes[iso_a] < 0 or raw_ex_changes[iso_b] > 0:
+        #    continue
 
         if SDS == 0 and len(node_labels) > 6:
             continue
 
         edge_list.append((node_ids[iso_a], node_ids[iso_b]))
-        edge_label = f'SDS:{SDS}\nDel:{l_deleted}\nIns:{l_inserted}\nSubs:{l_substituted}'
+        edge_label = f'SDS:{round(SDS, 2)}\nDel:{l_deleted}\nIns:{l_inserted}\nSubs:{l_substituted}'
         edge_labels.append(edge_label)
         edge_widths.append(SDS)
         edge_colors.append('black')
@@ -405,9 +431,9 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
 
     g.es['label'] = edge_labels
 
-    node_size = 30
+    node_size = 100
     margin = node_size
-    graph_size = ((3*math.sqrt(len(node_id_list))*node_size) // 1) + 2*margin
+    graph_size = ((2*math.sqrt(len(node_id_list))*node_size) // 1) + 2*margin
 
     layout = g.layout('circle')
     visual_style = {}
@@ -416,13 +442,13 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
     visual_style['bbox'] = (graph_size, graph_size)
 
     visual_style['vertex_label'] = g.vs['label']
-    visual_style['vertex_label_size'] = node_size // 10
+    visual_style['vertex_label_size'] = node_size // 15
     visual_style['vertex_size'] = node_size
     visual_style['vertex_color'] = node_colors
 
     visual_style['edge_label'] = g.es['label']
     visual_style['edge_width'] = [((0.9*x)/max_sds) + 0.1 for x in edge_widths]
-    visual_style['edge_label_size'] = node_size // 10
+    visual_style['edge_label_size'] = node_size // 15
     visual_style['edge_color'] = edge_colors
     
     svg_file = f'{outfile_stem}_{gene_name}_isoform_relations.svg'
@@ -808,7 +834,7 @@ def create_gene_report(session_id, target, config, out_f, session_name):
 
     whole_graph = None
     for target in targets:
-        longest_isoform = create_isoform_relations_plot(target, gene_isoform_score_dict, cmap, outfile_stem)
+        longest_isoform = create_isoform_relations_plot(target, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = config.condition_1_tag, condition_2_label = config.condition_2_tag)
 
         gene_class = gene_isoform_score_dict[target][5]
         input_for_sequence_plot = gene_class.generate_input_for_sequence_plot(longest_isoform)
@@ -957,10 +983,10 @@ def create_pymol_plot(out_f):
             name_list = path_to_pdb.split("/models/",1)
             name = name_list[1]
             paths_to_plots.append(f'{out_f}/models-plots/{name}.png')
-            pymol.cmd.load(path_to_pdb)
-            pymol.cmd.spectrum("b", "rainbow", "n. and CA")
-            pymol.cmd.orient()
-            pymol.cmd.png(f'{out_f}/models-plots/{name}.png', dpi=150, ray=1)
+            pymol_cmd.load(path_to_pdb)
+            pymol_cmd.spectrum("b", "rainbow", "n. and CA")
+            pymol_cmd.orient()
+            pymol_cmd.png(f'{out_f}/models-plots/{name}.png', dpi=150, ray=1)
         except:
             [e, f, g] = sys.exc_info()
             g = traceback.format_exc()

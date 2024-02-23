@@ -333,6 +333,9 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
         if config.verbosity >= 3:
             print('Calling og relocate_hetatm with:', chains, residue_consts.NOT_IN_MODELLER)
 
+        if config.verbosity >= 6:
+            print(f'Calling of relocate_hetatm with chains {chains} and page:\n{template_page}')
+
         template_page, removed_ligands = pdbParser.relocate_hetatm(template_page, filter_chains=set(chains), filter_het=residue_consts.NOT_IN_MODELLER)
 
         if config.verbosity >= 6:

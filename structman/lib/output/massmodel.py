@@ -167,8 +167,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                         elif wt_inserts is not None:
                             model_jobs[wildtype_protein][wt_target_struct][model_nr][10] = wt_del_flanks
             """
-            if config.verbosity >= 5:
-                print(alignment_tuple)
+
 
             if with_multi_mutations:
                 mm_position_dict = proteins[prot_id].get_mutation_positions_by_mm()

@@ -1,5 +1,7 @@
 import shutil
 import os
+import sys
+import traceback
 from structman.lib import templateFiltering
 
 
@@ -33,7 +35,12 @@ class Model:
         if self.path[-12:] != '_refined.pdb' or target_path is not None:
             self.refine_model(highlight_mutant_residue = highlight_mutant_residue, target_path = target_path)
 
-        (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, nested_processes, IAmap, interfaces, analysis_dump) = templateFiltering.structuralAnalysis(self.model_id, config, model_path=self.path, target_dict=[model_target_chain], keep_rin_files=True)
+        try:
+            (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, nested_processes, IAmap, interfaces, analysis_dump) = templateFiltering.structuralAnalysis(self.model_id, config, model_path=self.path, target_dict=[model_target_chain], keep_rin_files=True)
+        except:
+            [e, f, g] = sys.exc_info()
+            g = traceback.format_exc()
+            config.errorlog.add_error(f'structuralAnalysis failed in Model.analyze with: Path: {self.path}, Model ID: {self.model_id}, target chain: {model_target_chain}\n{e}\n{f}\n{g}')
 
         self.structural_analysis_dict = structural_analysis_dict
         self.ligand_profiles = ligand_profiles

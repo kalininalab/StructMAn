@@ -822,7 +822,10 @@ def get_ensembl_seqs(config, full_transcript_ids):
             fasta_sequences = retrieve_transcript_sequences(config.ensembl_server, missing_ids)
             transcript_id_gene_id_map = retrieve_transcript_metadata(config.ensembl_server, missing_ids)
             if config.mapping_db_is_set:
-                embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids)
+                try:
+                    embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids)
+                except:
+                    print('Updating EMBL transcipt database failed.')
         else:
             fasta_sequences = {}
             transcript_id_gene_id_map = {}

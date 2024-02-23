@@ -275,6 +275,13 @@ class Complex:
             self.chainlist = chainlist
 
         if self.page is None:
-            page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path)
+            if config.model_db_active:
+                if is_alphafold_model(self.pdb_id):
+                    model_path = alphafold_model_id_to_file_path(self.pdb_id, config)
+                else:
+                    model_path = None
+            else:
+                model_path = None
+            page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path, model_path = model_path)
             self.page = page
         return self.page
