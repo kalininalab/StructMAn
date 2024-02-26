@@ -335,7 +335,10 @@ def sequenceScan(config, proteins, indels, genes = None):
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
         if genes is not None:
-            del genes['to_fetch']
+            try:
+                del genes['to_fetch']
+            except:
+                pass
 
         if n > 0:
             mean_seq_len = mean_seq_len/n

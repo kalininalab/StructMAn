@@ -21,7 +21,7 @@ import colorsys
 
 import powerlaw
 import numpy
-import pymol.cmd as pymol_cmd
+
 import markdown
 
 
@@ -974,6 +974,13 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
 
 
 def create_pymol_plot(out_f):
+    try:
+        import pymol.cmd as pymol_cmd
+    except:
+        [e, f, g] = sys.exc_info()
+        g = traceback.format_exc()
+        print(f"importing pymol failed due to:\n{e}\n{f}\n{g}")
+        return None
     #parse models from summary
     model_summary = pd.read_csv(f"{out_f}/model_summary.tsv", sep='\t')
     list_of_paths = model_summary['File location']
