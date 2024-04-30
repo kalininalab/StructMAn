@@ -85,7 +85,7 @@ def para_classify(classification_dump, package, para=False):
                     (chains, resolution) = structure_info
 
                 (rsa, mc_rsa, sc_rsa, ssa, profile_or_str, centralities_or_str,
-                 phi, psi, intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower,
+                 phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower,
                  inter_chain_median_kd, inter_chain_dist_weighted_kd,
                  inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
                  intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
@@ -116,18 +116,28 @@ def para_classify(classification_dump, package, para=False):
 
                 qual = qualityScore(resolution, cov, seq_id)
 
-                mapping = (qual, seq_id, cov, rsa, mc_rsa, sc_rsa, ssa, lig_dist, metal_dist, ion_dist, chain_dist,
-                           rna_dist, dna_dist, homo_dist, profile, centralities,
-                           phi, psi, intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower,
-                           inter_chain_median_kd, inter_chain_dist_weighted_kd,
-                           inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
-                           intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                           inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
-                           intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
-                           b_factor, modres, rin_class, rin_simple_class,
-                           identical_aa, resolution, res_aa)
+                structural_feature_dict = {
+                    'b_factor' : b_factor, 'modres' : modres, 'ssa' : ssa, 'phi' : phi, 'psi' : psi, 'intra_ssbond' : intra_ssbond, 'inter_ssbond' : inter_ssbond, 'ssbond_length' : ssbond_length,
+                    'intra_link' : intra_link, 'inter_link' : inter_link, 'link_length' : link_length, 'cis_conformation' : cis_conformation, 'cis_follower' : cis_follower,
+                    'inter_chain_median_kd' : inter_chain_median_kd, 'inter_chain_dist_weighted_kd' : inter_chain_dist_weighted_kd,
+                    'inter_chain_median_rsa' : inter_chain_median_rsa, 'inter_chain_dist_weighted_rsa' : inter_chain_dist_weighted_rsa,
+                    'intra_chain_median_kd' : intra_chain_median_kd, 'intra_chain_dist_weighted_kd' : intra_chain_dist_weighted_kd,
+                    'intra_chain_median_rsa' : intra_chain_median_rsa, 'intra_chain_dist_weighted_rsa' : intra_chain_dist_weighted_rsa,
+                    'inter_chain_interactions_median' : inter_chain_interactions_median, 'inter_chain_interactions_dist_weighted' : inter_chain_interactions_dist_weighted,
+                    'intra_chain_interactions_median' : intra_chain_interactions_median, 'intra_chain_interactions_dist_weighted' : intra_chain_interactions_dist_weighted,
+                    'lig_dist' : lig_dist, 'metal_dist' : metal_dist, 'ion_dist' : ion_dist, 'chain_dist' : chain_dist, 'rna_dist' : rna_dist, 'dna_dist' : dna_dist, 'homo_dist' : homo_dist,
+                    'surface_value' : rsa, 'mainchain_surface_value' : mc_rsa, 'sidechain_surface_value' : sc_rsa,
+                    'rin_class' : rin_class, 'rin_simple_class' : rin_simple_class
+                }
 
-                mappings_obj.add_mapping((pdb_id, chain, res_nr), mapping)	
+                rin_based_feature_dict = {
+                    'profile' : profile,
+                    'centralities' : centralities
+                }
+
+                mapping = (qual, seq_id, cov, structural_feature_dict, rin_based_feature_dict, identical_aa, resolution, res_aa)
+
+                mappings_obj.add_mapping((pdb_id, chain, res_nr), mapping)
          	
             mappings_obj.weight_all(config, disorder_score, disorder_region)
             
@@ -166,7 +176,7 @@ def get_res_info_from_store(structure, res_nr):
     phi = structure.residues[res_nr].phi
     psi = structure.residues[res_nr].psi
 
-    intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower = structure.get_residue_link_information(res_nr)
+    intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower = structure.get_residue_link_information(res_nr)
 
     (inter_chain_median_kd, inter_chain_dist_weighted_kd,
      inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
@@ -180,7 +190,7 @@ def get_res_info_from_store(structure, res_nr):
     homomer_distances = structure.get_residue_homomer_dists(res_nr)
 
     res_info = (rsa, mc_rsa, sc_rsa, ssa, profile_or_str, centralities_or_str,
-                phi, psi, intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower,
+                phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower,
                 inter_chain_median_kd, inter_chain_dist_weighted_kd,
                 inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
                 intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
@@ -199,7 +209,7 @@ def get_res_info(structures, pdb_id, chain, res_nr):
     rsa, mc_rsa, sc_rsa = residue_obj.get_rsa(splitted = True)
     profile_or_str = residue_obj.get_interaction_profile_str()
 
-    intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower = residue_obj.get_residue_link_information()
+    intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower = residue_obj.get_residue_link_information()
 
     (inter_chain_median_kd, inter_chain_dist_weighted_kd,
      inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
@@ -213,7 +223,7 @@ def get_res_info(structures, pdb_id, chain, res_nr):
     homomer_distances = residue_obj.get_homomer_dists()
 
     res_info = (rsa, mc_rsa, sc_rsa, residue_obj.SSA, profile_or_str, centralities_or_str,
-                residue_obj.phi, residue_obj.psi, intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower,
+                residue_obj.phi, residue_obj.psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower,
                 inter_chain_median_kd, inter_chain_dist_weighted_kd,
                 inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
                 intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
@@ -342,9 +352,15 @@ def pack_packages(package_size, package, send_packages, classification_results, 
                         continue
                     [e, f, g] = sys.exc_info()
                     g = traceback.format_exc()
-                    if config.verbosity >= 4:
+                    if config.verbosity >= 5:
                         print(f'Skipped annotation of {u_ac} {pos} to {pdb_id} {chain} {res_nr}:\n{e}\n{f}\n{g}')
                     continue
+
+                if res_aa is None:
+                    if config.verbosity >= 5:
+                        print(f'Skipped annotation of {u_ac} {pos} to {pdb_id} {chain} {res_nr}: res_aa not defined')
+                    continue
+
                 identical_aa = res_aa == aacbase[0]
 
                 t_pack_21 += time.time()
@@ -1020,7 +1036,6 @@ def classification(proteins, config, background_insert_residues_process, indel_a
                 print(f'MicroMiner-lookup succesful for {len(mm_inputs) - n_empty} Complexes.')
             
             mm_inputs = new_mm_inputs
-    feature_names = microminer_feature_names
 
     prot_ids = proteins.get_protein_ids()
 
@@ -1031,14 +1046,8 @@ def classification(proteins, config, background_insert_residues_process, indel_a
                 complex_id, chain_id, res = successful_mm_annotations[(prot_id, pos)]
                 if (chain_id, res) in mm_db_dict[complex_id]:
                     mm_feat_vec = mm_db_dict[complex_id][(chain_id, res)]
-                    for feat_pos, feat_value in enumerate(mm_feat_vec):
-                        proteins.protein_map[prot_id].positions[pos].mappings.set_mm_feature(feat_value, feature_names[feat_pos])
-                else:
-                    for feat_name in feature_names:
-                        proteins.protein_map[prot_id].positions[pos].mappings.set_mm_feature(None, feat_name)
-            else:
-                for feat_name in feature_names:
-                    proteins.protein_map[prot_id].positions[pos].mappings.set_mm_feature(None, feat_name)
+                    proteins.protein_map[prot_id].positions[pos].mappings.microminer_features.set_values(mm_feat_vec)
+
 
 
     if background_insert_residues_process is not None:

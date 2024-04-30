@@ -126,17 +126,14 @@ class Position:
     def get_disorder_region(self):
         return self.disorder_region
 
-    def add_pos_res_mapping(self, pdb_id, chain, res_nr, mapping):
-        self.mappings.add_mapping((pdb_id, chain, res_nr), mapping)
-
     def classify(self, config):
         self.mappings.weight_all(config, self.disorder_score, self.disorder_region)
 
     def get_classification(self):
-        return self.mappings.rin_simple_class
+        return self.mappings.integrated_features.simple_class
 
     def get_score(self, mut_typ = 'substitution'):
-        pos_score = calculatePositionScore(mut_typ, self.mappings.rin_simple_class)
+        pos_score = calculatePositionScore(mut_typ, self.get_classification())
         return pos_score
 
     def get_recommended_structure(self):

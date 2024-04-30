@@ -47,8 +47,8 @@ except ImportError:
 
 class Config:
     def __init__(self, config_path, num_of_cores=1, output_path='', basic_util_mode=False, configure_mode=False, local_db = None, db_mode = None,
-                 util_mode=False, output_util=False, external_call=True, verbosity=None,
-                 print_all_errors=False, print_all_warns=False, restartlog=False, compute_ppi = False):
+                 util_mode=False, output_util=False, external_call=True, verbosity=None, dbname = None,
+                 print_all_errors=False, print_all_warns=False, restartlog=False, compute_ppi = True):
         self.prog_start_time = time.time()
         # read config file, auto add section header so old config files work
         self.config_parser_obj = configparser.ConfigParser()
@@ -65,6 +65,8 @@ class Config:
         self.db_user_name = cfg.get('db_user_name', fallback='')
         self.db_password = cfg.get('db_password', fallback='')
         self.db_name = cfg.get('db_name', fallback='')
+        if dbname is not None:
+            self.db_name = f'{self.db_user_name}_{dbname}'
         self.mapping_db = cfg.get('mapping_db', fallback=None)
 
         #gets custom_db_path
@@ -101,7 +103,7 @@ class Config:
         self.proc_n = 48
 
         # active options
-        self.n_of_chain_thresh = cfg.getint('n_of_chain_thresh', fallback=12)  # Structures with n_of_chain_thresh or more chains get a nested paralellization
+        self.n_of_chain_thresh = cfg.getint('n_of_chain_thresh', fallback=8)  # Structures with n_of_chain_thresh or more chains get a nested paralellization
         self.option_seq_thresh = cfg.getfloat('seq_thresh', fallback=35.0)
         if self.option_seq_thresh <= 1.0:
             self.option_seq_thresh *= 100.0
@@ -254,7 +256,7 @@ class Config:
         if self.low_mem_system:
             self.chunksize = int(min([500, max([((self.gigs_of_ram * 120) // self.proc_n) - 120, 60 // self.proc_n, 1])]))
         else:
-            self.chunksize = int(min([1500, max([((self.gigs_of_ram * 180) // self.proc_n) - 60, 120 // self.proc_n, 1])]))
+            self.chunksize = int(min([1500, max([((self.gigs_of_ram * 120) // self.proc_n) - 60, 120 // self.proc_n, 1])]))
 
         if not util_mode:
             if not external_call and not os.path.exists(self.outfolder):
@@ -760,7 +762,7 @@ def structman_cli():
     ignore_local_mapping_db = False
     skip_main_output_generation = False
     ray_local_mode = False
-    compute_ppi = False
+    compute_ppi = True
     overwrite_force_modelling = None
     condition_1_tag = None
     condition_2_tag = None
@@ -942,7 +944,7 @@ def structman_cli():
             print("No config file found, please use -c [Path to config]")
             sys.exit(2)
 
-    config = Config(config_path, num_of_cores=num_of_cores,
+    config = Config(config_path, num_of_cores=num_of_cores, dbname = dbname,
                     output_path=outfolder, util_mode=util_mode, configure_mode=configure_mode, local_db = local_db, db_mode = db_mode,
                     basic_util_mode=basic_util_mode, output_util=output_util, external_call=False, verbosity=verbosity,
                     print_all_errors=print_all_errors, print_all_warns=print_all_warns, restartlog=restartlog, compute_ppi = compute_ppi)
@@ -1085,7 +1087,6 @@ def structman_cli():
                 sys.exit(1)
             out_f = f'{outfolder}/{session_name}'
             genes_out_package.create_gene_report(session_id, target, config, out_f, session_name)
-            genes_out_package.retrieve_sub_graph(infile, config, trunk, session_name, target)
 
     elif update_util:
         if minus_p_path is not None:

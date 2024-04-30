@@ -318,7 +318,7 @@ class Interaction_type_profile:
         elif interaction_type in ligand_types:
             return self.sw_ligand.getScore(interaction_type)
         else:
-            return 0.0
+            return None
 
     def getDegree(self, interaction_type):
         if interaction_type in interchain_types:
@@ -328,7 +328,7 @@ class Interaction_type_profile:
         elif interaction_type in ligand_types:
             return self.sw_ligand.getDegree(interaction_type)
         else:
-            return 0
+            return None
 
     def setScore(self, interaction_type, score):
         if interaction_type in interchain_types:
@@ -583,6 +583,11 @@ class Centrality_scores:
                  'LengthNormalizedCentralityWithNegative', 'MinMaxNormalizedCentralityWithNegative', 'AbsoluteComplexCentrality',
                  'LengthNormalizedComplexCentrality', 'MinMaxNormalizedComplexCentrality', 'AbsoluteComplexCentralityWithNegative',
                  'LengthNormalizedComplexCentralityWithNegative', 'MinMaxNormalizedComplexCentralityWithNegative', 'cent_list']
+    
+    feature_names = ['AbsoluteCentrality', 'LengthNormalizedCentrality', 'MinMaxNormalizedCentrality', 'AbsoluteCentralityWithNegative',
+                 'LengthNormalizedCentralityWithNegative', 'MinMaxNormalizedCentralityWithNegative', 'AbsoluteComplexCentrality',
+                 'LengthNormalizedComplexCentrality', 'MinMaxNormalizedComplexCentrality', 'AbsoluteComplexCentralityWithNegative',
+                 'LengthNormalizedComplexCentralityWithNegative', 'MinMaxNormalizedComplexCentralityWithNegative']
 
     def __init__(self, AbsoluteCentrality=None, LengthNormalizedCentrality=None, MinMaxNormalizedCentrality=None,
                  AbsoluteCentralityWithNegative=None, LengthNormalizedCentralityWithNegative=None, MinMaxNormalizedCentralityWithNegative=None,
@@ -596,7 +601,7 @@ class Centrality_scores:
 
         if cent_list is not None:
             self.cent_list = cent_list
-            self.setAllByCentList(cent_list)
+            self.setAllByCentList()
             return
 
         self.cent_list = []
@@ -647,9 +652,9 @@ class Centrality_scores:
                 self.cent_list.append(float(x))
             except:
                 self.cent_list.append(None)
-        self.setAllByCentList(self.cent_list)
+        self.setAllByCentList()
 
-    def setAllByCentList(self, cent_list):
+    def setAllByCentList(self):
         self.AbsoluteCentrality = self.cent_list[0]
 
         self.LengthNormalizedCentrality = self.cent_list[1]
@@ -678,6 +683,8 @@ class Centrality_scores:
 # called by database
 # called by sdsc
 def calculateAverageProfile(profiles):
+    if len(profiles) == 0:
+        return None
     average_profile = Interaction_profile()
     for chain_type in chain_types:
         for bond_type in bond_types:

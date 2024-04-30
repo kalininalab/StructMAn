@@ -269,6 +269,9 @@ class Complex:
                 return
 
             (template_page, interaction_partners, chain_type_map, oligo, atom_count, chainlist, rare_residues) = parse_out
+
+            print(f'In complex object getPage - self_update: interaction_partners: {interaction_partners}')
+
             self.page = template_page
             self.interaction_partners = interaction_partners
             self.chains = chain_type_map

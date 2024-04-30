@@ -409,10 +409,10 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
         ensembl_ac_map = {}
         for ensembl_id in ensembl_map:
 
-            if ensembl_id in prot_gene_map:
-                gene_id = prot_gene_map[ensembl_id]
-            else:
-                gene_id = "to_fetch"
+            #if ensembl_id in prot_gene_map:
+            #    gene_id = prot_gene_map[ensembl_id]
+            #else:
+            gene_id = "to_fetch"
 
             if ensembl_id in ensembl_ac_map:
                 u_ac = ensembl_ac_map[ensembl_id]
@@ -660,10 +660,11 @@ def retrieve_transcript_metadata(server, transcript_ids):
     transcript_ids = list(transcript_ids)
     headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
     transcript_gene_id_dict = {}
-    chunksize = 950
+    chunksize = 800
     chunk = transcript_ids[:chunksize]
     i = 0
     try_number = 0
+    gene_ids = set()
     while len(chunk) > 0:
         data = json.dumps({'ids':chunk})
 
@@ -691,6 +692,7 @@ def retrieve_transcript_metadata(server, transcript_ids):
             try:
                 gene_id = decoded[transcript_id]['Parent']
                 transcript_gene_id_dict[transcript_id] = gene_id
+                gene_ids.add(gene_id)
             except:
                 #print(transcript_id)
                 continue
@@ -698,10 +700,75 @@ def retrieve_transcript_metadata(server, transcript_ids):
         i += 1
         chunk = transcript_ids[(chunksize*i):(chunksize*(i+1))]
 
+    gene_name_dict = retrieve_gene_metadata(server, gene_ids)
+    for transcript_id in transcript_gene_id_dict:
+        gene_id = transcript_gene_id_dict[transcript_id]
+        try:
+            gene_name = gene_name_dict[gene_id]
+        except:
+            gene_name = None
+        transcript_gene_id_dict[transcript_id] = (gene_id, gene_name)
+
     return transcript_gene_id_dict
 
 
-def retrieve_transcript_sequences(server, transcript_ids):
+def retrieve_gene_metadata(server, gene_ids, expand = False):
+    rest_url = f'{server}/lookup/id'
+    gene_ids = list(gene_ids)
+    headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
+    gene_name_dict = {}
+    if expand:
+        gene_transcript_dict = {}
+    chunksize = 950
+    if expand:
+        chunksize = 50
+    chunk = gene_ids[:chunksize]
+    i = 0
+    try_number = 0
+    while len(chunk) > 0:
+        data = json.dumps({'ids':chunk})
+
+        try:
+            r = requests.post(rest_url, headers = headers, data = data, params = {'expand' : int(expand)})
+        except:
+            try_number += 1
+            if try_number == 5:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+                print(f'POST request failed: {e}\n{f}\n{g}')
+                break
+            time.sleep(try_number**2)
+            continue
+
+        if not r.ok:
+            r.raise_for_status()
+            print(f'Transcript metadata Retrieval failed')
+            return None
+
+        decoded = r.json()
+        try_number = 0
+
+        for gene_id in decoded:
+            try:
+                gene_name = decoded[gene_id]['display_name']
+                gene_name_dict[gene_id] = gene_name
+                if expand:
+                    gene_transcript_dict[gene_id] = []
+                    for transcript_entry in decoded[gene_id]['Transcript']:
+                        transcript_id = transcript_entry['id']
+                        gene_transcript_dict[gene_id].append(transcript_id)
+            except:
+                continue
+                
+        i += 1
+        chunk = gene_ids[(chunksize*i):(chunksize*(i+1))]
+
+    if expand:
+        return gene_name_dict, gene_transcript_dict
+    return gene_name_dict
+
+
+def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
     rest_url = f'{server}/sequence/id'
 
     headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
@@ -711,6 +778,7 @@ def retrieve_transcript_sequences(server, transcript_ids):
     chunk = transcript_ids[:chunksize]
     i = 0
     try_number = 0
+    empty_seqs = {}
     while len(chunk) > 0:
 
         data = json.dumps({'ids':chunk})
@@ -728,9 +796,18 @@ def retrieve_transcript_sequences(server, transcript_ids):
             continue
 
         if not r.ok:
-            r.raise_for_status()
-            print(f'Transcript Sequence Retrieval failed')
-            return None
+            print(f'Transcript Sequence Retrieval failed: {data}')
+            if recursed:
+                return {}, {transcript_ids[0]:None}
+            for transcript_id in chunk:
+                seq_sub_dict, sub_empty_seqs = retrieve_transcript_sequences(server, [transcript_id], recursed=True)
+                transcript_seq_dict.update(seq_sub_dict)
+                empty_seqs.update(sub_empty_seqs)
+            i += 1
+            chunk = transcript_ids[(chunksize*i):(chunksize*(i+1))]
+            continue
+            #r.raise_for_status()
+            #return None
 
         decoded = r.json()
         try_number = 0
@@ -743,11 +820,11 @@ def retrieve_transcript_sequences(server, transcript_ids):
         i += 1
         chunk = transcript_ids[(chunksize*i):(chunksize*(i+1))]
 
-    return transcript_seq_dict
+    return transcript_seq_dict, empty_seqs
 
 def embl_database_lookup(config, transcript_ids):
     missing_ids = set(transcript_ids)
-    results = select(config, ['Transcript_ID', 'Gene_ID', 'Sequence'], 'EMBL_Transcripts', in_rows={'Transcript_ID': missing_ids}, from_mapping_db=True)
+    results = select(config, ['Transcript_ID', 'Gene_ID', 'Name', 'Sequence'], 'EMBL_Transcripts', in_rows={'Transcript_ID': missing_ids}, from_mapping_db=True)
     sequence_map = {}
     gene_id_map = {}
     broken_ids = set()
@@ -755,14 +832,21 @@ def embl_database_lookup(config, transcript_ids):
     for row in results:
         transcript_id = row[0]
         gene_id = row[1]
+        gene_name = row[2]
         try:
-            seq = base_utils.unpack(row[2])
+            seq = base_utils.unpack(row[3])
         except:
             broken_ids.add(transcript_id)
             continue
+
+        if seq is None:
+            missing_ids.remove(transcript_id)
+            continue
+
         sequence_map[transcript_id] = seq
+
         mean_seq_len += len(seq)
-        gene_id_map[transcript_id] = gene_id
+        gene_id_map[transcript_id] = (gene_id, gene_name)
         missing_ids.remove(transcript_id)
     if len(sequence_map) > 0:
         mean_seq_len = mean_seq_len / len(sequence_map)
@@ -770,29 +854,42 @@ def embl_database_lookup(config, transcript_ids):
         print(f'Embl database lookup: {len(sequence_map)} sequences, mean length: {mean_seq_len}')
     return sequence_map, missing_ids, gene_id_map, broken_ids
 
-def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken_ids):
+def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken_ids, new_no_seqs):
     values = []
+    for transcript_id in new_no_seqs:
+        if transcript_id in broken_ids:
+            continue
+        try:
+            gene_id, gene_name = transcript_id_gene_id_map[transcript_id]
+        except:
+            gene_id = None
+            gene_name = None
+
+        values.append((transcript_id, gene_id, gene_name, base_utils.pack(None)))
+
     for transcript_id in sequence_map:
         if transcript_id in broken_ids:
             continue
         try:
-            gene_id = transcript_id_gene_id_map[transcript_id]
+            gene_id, gene_name = transcript_id_gene_id_map[transcript_id]
         except:
             gene_id = None
-        values.append((transcript_id, gene_id, base_utils.pack(sequence_map[transcript_id])))
+            gene_name = None
 
-    insert('EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Sequence'], values, config, mapping_db = True)
+        values.append((transcript_id, gene_id, gene_name, base_utils.pack(sequence_map[transcript_id])))
+
+    insert('EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Name', 'Sequence'], values, config, mapping_db = True)
 
     values = []
     for transcript_id in broken_ids:
-
         try:
-            gene_id = transcript_id_gene_id_map[transcript_id]
+            gene_id, gene_name = transcript_id_gene_id_map[transcript_id]
         except:
             gene_id = None
-        values.append((transcript_id, gene_id, base_utils.pack(sequence_map[transcript_id])))
+            gene_name = None
+        values.append((transcript_id, gene_id, gene_name, base_utils.pack(sequence_map[transcript_id])))
 
-    update(config, 'EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Sequence'], values, mapping_db = True)
+    update(config, 'EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Name', 'Sequence'], values, mapping_db = True)
 
 def get_ensembl_seqs(config, full_transcript_ids):
     aa_seqs = {}
@@ -819,13 +916,16 @@ def get_ensembl_seqs(config, full_transcript_ids):
             missing_ids = transcript_ids
 
         if len(missing_ids) > 0:
-            fasta_sequences = retrieve_transcript_sequences(config.ensembl_server, missing_ids)
+            fasta_sequences, new_no_seqs = retrieve_transcript_sequences(config.ensembl_server, missing_ids)
             transcript_id_gene_id_map = retrieve_transcript_metadata(config.ensembl_server, missing_ids)
             if config.mapping_db_is_set:
                 try:
-                    embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids)
+                    embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids, new_no_seqs)
                 except:
-                    print('Updating EMBL transcipt database failed.')
+                    [e, f, g] = sys.exc_info()
+                    g = traceback.format_exc()
+                    if config.verbosity >= 3:
+                        print(f'Updating EMBL transcipt database failed:\n{e}\n{f}\n{g}')
         else:
             fasta_sequences = {}
             transcript_id_gene_id_map = {}

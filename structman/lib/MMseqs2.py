@@ -128,7 +128,7 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
     temp_outfile = '%s/tmp_outfile_%s.fasta' % (mmseqs_tmp_folder, randomString())
 
     if verbosity >= 2:
-        print(mmseqs2_path, 'easy-search', temp_fasta, search_db, temp_outfile, mmseqs_tmp_folder)
+        print(f'\nApply MMseqs2: {mmseqs2_path}, easy-search, {temp_fasta}, {search_db}, {temp_outfile}, {mmseqs_tmp_folder}\n')
 
     out_format_str = 'query,target,fident,alnlen,tlen,qcov'
 
@@ -175,10 +175,24 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
 
     if verbosity >= 3:
         print(f'MMseqs2 results parsed: size of hit map: {len(hits)}')
+    if verbosity >= 4 and len(hits) < 50:
+        print(hits)
 
     os.remove(temp_outfile)
 
     return hits, pdb_ids, debug_store
+
+
+def wipe_folder(config, folder_path):
+    for fn in os.listdir(folder_path):
+        subfolder_path = '%s/%s' % (folder_path, fn)
+        if os.path.exists(subfolder_path):
+            if os.path.getmtime(subfolder_path) > config.prog_start_time:
+                try:
+                    shutil.rmtree(subfolder_path)
+                except:
+                    if config.verbosity >= 4:
+                        config.errorlog.add_warning('Tmp folder wipe failed for: %s' % subfolder_path)
 
 
 # called by serializePipeline
@@ -235,6 +249,8 @@ def search(proteins, config, custom_db=False):
 
     t0 = time.time()
 
+    wipe_folder(config, mmseqs_tmp_folder)
+
     temp_fasta = '%s/tmp_%s.fasta' % (mmseqs_tmp_folder, randomString())
     to_fasta_out = geneSeqMapToFasta(proteins, temp_fasta, config)
 
@@ -271,15 +287,7 @@ def search(proteins, config, custom_db=False):
                     hits[u_ac] = {(pdb_id, chain): [100.0, 1.0, [chain], len(proteins.get_sequence(u_ac)), len(proteins.get_sequence(u_ac))]}
                     pdb_ids.add(pdb_id)
 
-        for fn in os.listdir(mmseqs_tmp_folder):
-            subfolder_path = '%s/%s' % (mmseqs_tmp_folder, fn)
-            if os.path.exists(subfolder_path):
-                if os.path.getmtime(subfolder_path) > config.prog_start_time:
-                    try:
-                        shutil.rmtree(subfolder_path)
-                    except:
-                        if config.verbosity >= 4:
-                            config.errorlog.add_warning('Tmp folder wipe failed for: %s' % subfolder_path)
+        wipe_folder(config, mmseqs_tmp_folder)
 
         search_results.append((hits, pdb_ids, is_model_db))
     

@@ -12,6 +12,10 @@ class OutputGenerator:
             self.header_map[header] = pos + n
             self.columns.append(header)
 
+    def add_header(self, header):
+        self.header_map[header] = len(self.header_map)
+        self.columns.append(header)
+
     def get_header(self):
         header = '\t'.join(self.columns) + '\n'
         return header
@@ -22,7 +26,11 @@ class OutputGenerator:
         if not isinstance(value, str):
             value = str(value)
 
-        pos = self.header_map[header]
+        if header in self.header_map:
+            pos = self.header_map[header]
+        else:
+            self.add_header(header)
+            pos = self.header_map[header]
         if len(self.current_line) <= pos:
             self.current_line += [OutputGenerator.null_symbol] * (1 + (pos - len(self.current_line)))
         self.current_line[pos] = value

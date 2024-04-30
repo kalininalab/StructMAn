@@ -33,7 +33,17 @@ class Model:
             print('Start model self analysis:', self.model_id, self.path, highlight_mutant_residue)
 
         if self.path[-12:] != '_refined.pdb' or target_path is not None:
-            self.refine_model(highlight_mutant_residue = highlight_mutant_residue, target_path = target_path)
+            try:
+                self.refine_model(highlight_mutant_residue = highlight_mutant_residue, target_path = target_path)
+            except:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+                config.errorlog.add_error(f'refinde_model failed in Model.analyze with: Path: {self.path},\ntarget_path: {target_path},\nModel ID: {self.model_id},\ntarget chain: {model_target_chain},\nchain_id_map:{self.chain_id_map}\n{e}\n{f}\n{g}')
+                try:
+                    os.remove(self.path)
+                except:
+                    pass
+                return
 
         try:
             (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, nested_processes, IAmap, interfaces, analysis_dump) = templateFiltering.structuralAnalysis(self.model_id, config, model_path=self.path, target_dict=[model_target_chain], keep_rin_files=True)
@@ -41,6 +51,7 @@ class Model:
             [e, f, g] = sys.exc_info()
             g = traceback.format_exc()
             config.errorlog.add_error(f'structuralAnalysis failed in Model.analyze with: Path: {self.path}, Model ID: {self.model_id}, target chain: {model_target_chain}\n{e}\n{f}\n{g}')
+            return
 
         self.structural_analysis_dict = structural_analysis_dict
         self.ligand_profiles = ligand_profiles

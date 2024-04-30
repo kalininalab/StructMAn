@@ -339,6 +339,9 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
         if config.verbosity >= 5:
             print(f'{pdb_id} {chain} from structural_analysis going into the database: {len(analysis_map)}')
 
+        max_prints_per_prot = 10
+        n_prints = 0
+
         for res_id in analysis_map:
             t_0 += time.time()
             residue = analysis_map[res_id]
@@ -389,7 +392,7 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
 
             t_8 += time.time()
 
-            intra_ssbond, ssbond_length, intra_link, link_length, cis_conformation, cis_follower = residue.get_residue_link_information()
+            intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower = residue.get_residue_link_information()
 
             t_9 += time.time()
 
@@ -405,7 +408,7 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
 
             packed_res_info = pack((one_letter, lig_dist_str, chain_dist_str, rsa, relative_main_chain_acc, relative_side_chain_acc,
                            ssa, homo_str, profile_str,
-                           centrality_score_str, b_factor, modres, phi, psi, intra_ssbond, ssbond_length, intra_link, link_length,
+                           centrality_score_str, b_factor, modres, phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length,
                            cis_conformation, cis_follower, inter_chain_median_kd, inter_chain_dist_weighted_kd,
                            inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
                            intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
@@ -418,7 +421,9 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
 
             if not (pdb_id, chain) in interacting_structure_ids:
                 if config.verbosity >= 5:
-                    print(f'Calling proteins.add_residue in insertResidues: {pdb_id} {chain} {res_id}')
+                    if n_prints < max_prints_per_prot:
+                        print(f'Calling proteins.add_residue in insertResidues: {pdb_id} {chain} {res_id}')
+                        n_prints += 1
                 proteins.add_residue(pdb_id, chain, res_id, residue)
 
             t_13 += time.time()
@@ -475,46 +480,8 @@ def createClassValues(proteins):
             position = proteins.get_position(u_ac, pos)
             mappings = position.mappings
 
-            values.append((
-                            m, pack((mappings.recommended_res, mappings.max_seq_res)),
-                            pack((
-                                mappings.weighted_location, mappings.weighted_mainchain_location,
-                                mappings.weighted_sidechain_location, mappings.weighted_surface_value,
-                                mappings.weighted_mainchain_surface_value, mappings.weighted_sidechain_surface_value,
-                                mappings.Class, mappings.rin_class, mappings.simple_class, mappings.rin_simple_class,
-                                str(mappings.interaction_recommendations), mappings.classification_conf, mappings.weighted_ssa, mappings.amount_of_structures, mappings.get_weighted_profile_str(),
-                                mappings.weighted_modres, mappings.weighted_b_factor, mappings.get_weighted_centralities_str(),
-                                mappings.weighted_phi, mappings.weighted_psi, mappings.weighted_intra_ssbond, mappings.weighted_inter_ssbond,
-                                mappings.weighted_intra_link, mappings.weighted_inter_link, mappings.weighted_cis_conformation,
-                                mappings.weighted_cis_follower,
-                                mappings.weighted_inter_chain_median_kd, mappings.weighted_inter_chain_dist_weighted_kd,
-                                mappings.weighted_inter_chain_median_rsa, mappings.weighted_inter_chain_dist_weighted_rsa,
-                                mappings.weighted_intra_chain_median_kd, mappings.weighted_intra_chain_dist_weighted_kd,
-                                mappings.weighted_intra_chain_median_rsa, mappings.weighted_intra_chain_dist_weighted_rsa,
-                                mappings.weighted_inter_chain_interactions_median, mappings.weighted_inter_chain_interactions_dist_weighted,
-                                mappings.weighted_intra_chain_interactions_median, mappings.weighted_intra_chain_interactions_dist_weighted,
-                                mappings.rsa_change_score, mappings.mc_rsa_change_score, mappings.sc_rsa_change_score,
-                                mappings.Backbone_RMSD_seq_id_high_weight, mappings.All_atom_RMSD_seq_id_high_weight, mappings.nof_site_residue_seq_id_high_weight, mappings.Site_LDDT_seq_id_high_weight,
-                                mappings.Backbone_RMSD_seq_id_low_weight, mappings.All_atom_RMSD_seq_id_low_weight, mappings.nof_site_residue_seq_id_low_weight, mappings.Site_LDDT_seq_id_low_weight,
-                                mappings.Backbone_RMSD_seq_id_greater_90, mappings.All_atom_RMSD_seq_id_greater_90, mappings.nof_site_residue_seq_id_greater_90, mappings.Site_LDDT_seq_id_greater_90,
-                                mappings.Backbone_RMSD_seq_id_between_50_and_90, mappings.All_atom_RMSD_seq_id_between_50_and_90, mappings.nof_site_residue_seq_id_between_50_and_90, mappings.Site_LDDT_seq_id_between_50_and_90,
-                                mappings.Backbone_RMSD_seq_id_lower_50, mappings.All_atom_RMSD_seq_id_lower_50, mappings.nof_site_residue_seq_id_lower_50, mappings.Site_LDDT_seq_id_lower_50,
-                                mappings.Backbone_RMSD_site_id_greater_99, mappings.All_atom_RMSD_site_id_greater_99, mappings.nof_site_residue_site_id_greater_99, mappings.Site_LDDT_site_id_greater_99,
-                                mappings.Backbone_RMSD_site_id_between_70_and_99, mappings.All_atom_RMSD_site_id_between_70_and_99, mappings.nof_site_residue_site_id_between_70_and_99, mappings.Site_LDDT_site_id_between_70_and_99,
-                                mappings.Backbone_RMSD_site_id_lower_70, mappings.All_atom_RMSD_site_id_lower_70, mappings.nof_site_residue_site_id_lower_70, mappings.Site_LDDT_site_id_lower_70,
-                                mappings.Backbone_RMSD_seq_id_greater_90_site_id_greater_99, mappings.All_atom_RMSD_seq_id_greater_90_site_id_greater_99, mappings.nof_site_residue_seq_id_greater_90_site_id_greater_99, mappings.Site_LDDT_seq_id_greater_90_site_id_greater_99,
-                                mappings.Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99, mappings.All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99, mappings.nof_site_residue_seq_id_between_50_and_90_site_id_greater_99, mappings.Site_LDDT_seq_id_between_50_and_90_site_id_greater_99,
-                                mappings.Backbone_RMSD_seq_id_lower_50_site_id_greater_99, mappings.All_atom_RMSD_seq_id_lower_50_site_id_greater_99, mappings.nof_site_residue_seq_id_lower_50_site_id_greater_99, mappings.Site_LDDT_seq_id_lower_50_site_id_greater_99,
-                                mappings.Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99, mappings.All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99, mappings.nof_site_residue_seq_id_greater_90_site_id_between_70_and_99, mappings.Site_LDDT_seq_id_greater_90_site_id_between_70_and_99,
-                                mappings.Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, mappings.All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, mappings.nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99, mappings.Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99,
-                                mappings.Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99, mappings.All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99, mappings.nof_site_residue_seq_id_lower_50_site_id_between_70_and_99, mappings.Site_LDDT_seq_id_lower_50_site_id_between_70_and_99,
-                                mappings.Backbone_RMSD_seq_id_greater_90_site_id_lower_70, mappings.All_atom_RMSD_seq_id_greater_90_site_id_lower_70, mappings.nof_site_residue_seq_id_greater_90_site_id_lower_70, mappings.Site_LDDT_seq_id_greater_90_site_id_lower_70,
-                                mappings.Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70, mappings.All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70, mappings.nof_site_residue_seq_id_between_50_and_90_site_id_lower_70, mappings.Site_LDDT_seq_id_between_50_and_90_site_id_lower_70,
-                                mappings.Backbone_RMSD_seq_id_lower_50_site_id_lower_70, mappings.All_atom_RMSD_seq_id_lower_50_site_id_lower_70, mappings.nof_site_residue_seq_id_lower_50_site_id_lower_70, mappings.Site_LDDT_seq_id_lower_50_site_id_lower_70
-                            ))
-                        ))
-            #print(f'{u_ac} {pos} {[mappings.weighted_location, mappings.weighted_mainchain_location, mappings.weighted_sidechain_location, mappings.weighted_surface_value, mappings.weighted_mainchain_surface_value, mappings.weighted_sidechain_surface_value]}')
-
+            values.append((m, pack((mappings.recommended_res, mappings.max_seq_res)), mappings.pack_features()))
+            
     return values
 
 

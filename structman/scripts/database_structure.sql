@@ -133,6 +133,7 @@ CREATE TABLE `Protein` (
 CREATE TABLE `Gene` (
   `Gene_Id` int(10) UNSIGNED NOT NULL,
   `Primary_Gene_Id` varchar(255) DEFAULT NULL,
+  `Gene_Name` varchar(255) DEFAULT NULL,  
   `Species` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 

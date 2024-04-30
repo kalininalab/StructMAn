@@ -72,7 +72,7 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                     if not retrieve_only_db_ids:
                         (one_letter, lig_dist_str, chain_dist_str, rsa, relative_main_chain_acc, relative_side_chain_acc,
                                ssa, homo_str, profile_str,
-                               centrality_score_str, b_factor, modres, phi, psi, intra_ssbond, ssbond_length, intra_link, link_length,
+                               centrality_score_str, b_factor, modres, phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length,
                                cis_conformation, cis_follower, inter_chain_median_kd, inter_chain_dist_weighted_kd,
                                inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
                                intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
@@ -92,7 +92,7 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                                        relative_main_chain_acc=relative_main_chain_acc, relative_side_chain_acc=relative_side_chain_acc,
                                        SSA=ssa, homo_dist_str=homo_str, interaction_profile_str=profile_str, centrality_score_str=centrality_score_str,
                                        modres=modres, b_factor=b_factor, database_id=row[1], stored=True, phi=phi, psi=psi,
-                                       intra_ssbond=intra_ssbond, ssbond_length=ssbond_length, intra_link=intra_link, link_length=link_length,
+                                       intra_ssbond=intra_ssbond, inter_ssbond= inter_ssbond, ssbond_length=ssbond_length, intra_link=intra_link, inter_link = inter_link, link_length=link_length,
                                        cis_conformation=cis_conformation, cis_follower=cis_follower, inter_chain_median_kd=inter_chain_median_kd,
                                        inter_chain_dist_weighted_kd=inter_chain_dist_weighted_kd, inter_chain_median_rsa=inter_chain_median_rsa,
                                        inter_chain_dist_weighted_rsa=inter_chain_dist_weighted_rsa, intra_chain_median_kd=intra_chain_median_kd,

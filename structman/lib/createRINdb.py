@@ -348,7 +348,7 @@ def calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files, st
     os.system("gzip %s" % n_res_file)
 
 
-def createRinProc(config, in_queue, lock, i, remove_tmp_files, base_path, rinerator_path, errorlog, path_to_model_db):
+def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, rinerator_path, errorlog, path_to_model_db):
     with lock:
         in_queue.put(None)
     while True:
@@ -357,39 +357,54 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, base_path, rinera
             if in_t is None:
                 #print('Terminate Rinerator Process: ',i)
                 return
-            (pdbgz_path, pdb_id) = in_t
+            (pdbgz_path, structure_id) = in_t
         try:
-
-            if (pdb_id[:3] == 'AF-'): #Not a pdb structure, but an alphafold model
-                uniprot_ac = pdb_id.split('-')[1]
-                topfolder_id = uniprot_ac[-2:]
-                subfolder_id = uniprot_ac[-4:]
-                out_path = f'{path_to_model_db}/{topfolder_id}/{subfolder_id}'
-            else:
-                out_path = "%s/%s/%s" % (base_path, pdb_id[1:-1], pdb_id)
+            out_path = get_entry_path(structure_id, path_to_model_db, path_to_rindb)
+            
             if not os.path.exists(out_path):
                 os.mkdir(out_path)
 
-            n_sif_file = "%s/%s.sif" % (out_path, pdb_id)
+            n_sif_file = "%s/%s.sif" % (out_path, structure_id)
 
             f = gzip.open(pdbgz_path, 'rb')
             page = f.read()
             f.close()
             #original_chains,ligands,page,changed_chains = parsePDB(page)
 
-            calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files)
+            calcRIN(config, page, out_path, structure_id, rinerator_path, remove_tmp_files)
 
         except:
             [e, f, g] = sys.exc_info()
             #g = traceback.format_exc(g)
             print("Error: ", e, f, g)
-            error = '\n'.join([pdb_id, pdbgz_path, str(e), str(f), str(g)])
+            error = '\n'.join([structure_id, pdbgz_path, str(e), str(f), str(g)])
             errortext = "###############################################################################\n%s\n###############################################################################\n" % (error)
 
             with lock:
                 f = open(errorlog, 'a')
                 f.write(errortext)
                 f.close()
+
+
+def get_entry_path(structure_id, path_to_model_db, path_to_rindb):
+    if (structure_id[:3] == 'AF-'): #Not a pdb structure, but an alphafold model
+        uniprot_ac = structure_id.split('-')[1]
+        topfolder_id = uniprot_ac[-2:]
+        subfolder_id = uniprot_ac[-4:]
+        out_path = f'{path_to_model_db}/{topfolder_id}/{subfolder_id}'
+    else:
+        out_path = "%s/%s/%s" % (path_to_rindb, structure_id[1:-1], structure_id)
+    return out_path
+
+
+def check_entry(structure_id, path_to_model_db, path_to_rindb):
+    out_path = get_entry_path(structure_id, path_to_model_db, path_to_rindb)
+    
+    if not os.path.exists(out_path):
+        return False
+
+    n_sif_file = "%s/%s.sif.gz" % (out_path, structure_id)
+    return os.path.isfile(n_sif_file)
 
 
 def test_single_file(config, pdb_id):
@@ -545,7 +560,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                 bio_pdbs.add(pdb_id)
 
                 if recently_modified_structures is not None:
-                    if not pdb_id in recently_modified_structures:
+                    if not pdb_id in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
                         continue
 
                 in_queue.put((pdbgz_path, pdb_id))
@@ -567,7 +582,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                 pdb_id = fn[3:7]
 
                 if recently_modified_structures is not None:
-                    if not pdb_id in recently_modified_structures:
+                    if not pdb_id in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
                         continue
 
                 if pdb_id in bio_pdbs:

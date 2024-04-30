@@ -366,7 +366,6 @@ def generate_multi_mutation_str(wt_seq, mut_seq, aligner_class = None):
 def generate_multi_mutation(wt_seq, mut_seq, config, aligner_class = None):
     
     mutation_str_results = generate_multi_mutation_str(wt_seq, mut_seq, aligner_class = aligner_class)
-    
     if mutation_str_results[0] is None:
         return mutation_str_results[1]
 

@@ -85,10 +85,11 @@ def geneCheck(genes, config):
     for gene_id in genes:
         if genes[gene_id].database_id is not None:
             continue
-        values.append([gene_id])
+        gene_name = genes[gene_id].gene_name
+        values.append([gene_id, gene_name])
 
     if len(values) > 0:
-        insert('Gene', ['Primary_Gene_Id'], values, config)
+        insert('Gene', ['Primary_Gene_Id' ,'Gene_Name'], values, config)
 
         results = select(config, ['Gene_Id', 'Primary_Gene_Id'], 'Gene')
         for row in results:
@@ -1922,12 +1923,12 @@ def getProtIdsFromSession(session_id, config, filter_mutant_proteins=False):
 
 def retrieve_gene_id_map(gene_db_ids, config):
     table = 'Gene'
-    columns = ['Gene_Id', 'Primary_Gene_Id']
+    columns = ['Gene_Id', 'Primary_Gene_Id', 'Gene_Name']
     results = binningSelect(gene_db_ids, columns, table, config)
 
     gene_id_map = {}
     for row in results:
-        gene_id_map[row[0]] = row[1]
+        gene_id_map[row[0]] = (row[1], row[2])
     return gene_id_map
 
 def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = False):
@@ -2012,7 +2013,7 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
     gene_id_map = retrieve_gene_id_map(gene_db_ids, config)
 
     for prot_id in prot_gene_db_id_map:
-        proteins[prot_id].gene = gene_id_map[prot_gene_db_id_map[prot_id]]
+        proteins[prot_id].gene = gene_id_map[prot_gene_db_id_map[prot_id]][0]
 
     if with_mappings:
         cols = ['Protein', 'Position_Number', 'Position_Id', 'Recommended_Structure_Data', 'Wildtype_Residue', 'IUPRED', 'IUPRED_Glob', 'Position_Data']
@@ -2036,72 +2037,34 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
         m_id = row[2]
         pos = row[1]
         if row[3] is not None:
-            unpacked_rec_str = unpack(row[3])[0]
+            (recommended_structure_str, max_seq_structure_str) = unpack(row[3])
         else:
-            unpacked_rec_str = row[3]
+            recommended_structure_str = None
+            max_seq_structure_str = None
+
+        recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(recommended_structure_str)
+        max_seq_structure, max_seq_seq_id, max_seq_cov, max_seq_resolution = sdsc_utils.process_recommend_structure_str(max_seq_structure_str)
+
         wt_aa = row[4]
-        recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(unpacked_rec_str)
+
         if with_mappings:
+
             if row[7] is None:
                 mapping_results = None
 
             else:
                 try:
-                    (weighted_sc, mainchain_location, sidechain_location, rsa, mainchain_rsa, sidechain_rsa, Class, rin_class, simple_class, rin_simple_class,
-                    interaction_str, conf, mv_sec_ass, amount_of_structures, rin_profile_str, modres_score, b_factor, weighted_centrality_scores, weighted_phi,
-                    weighted_psi, intra_ssbond_prop, inter_ssbond_prop, intra_link_prop, inter_link_prop, cis_conformation_prop, cis_follower_prop,
-                    inter_chain_median_kd, inter_chain_dist_weighted_kd, inter_chain_median_rsa, inter_chain_dist_weighted_rsa,
-                    intra_chain_median_kd, intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                    weighted_inter_chain_interactions_median, weighted_inter_chain_interactions_dist_weighted,
-                    weighted_intra_chain_interactions_median, weighted_intra_chain_interactions_dist_weighted,
-                    rsa_change_score, rsa_mc_change_score, rsa_sc_change_score,
-                    Backbone_RMSD_seq_id_high_weight, All_atom_RMSD_seq_id_high_weight, nof_site_residue_seq_id_high_weight, Site_LDDT_seq_id_high_weight,
-                    Backbone_RMSD_seq_id_low_weight, All_atom_RMSD_seq_id_low_weight, nof_site_residue_seq_id_low_weight, Site_LDDT_seq_id_low_weight,
-                    Backbone_RMSD_seq_id_greater_90, All_atom_RMSD_seq_id_greater_90, nof_site_residue_seq_id_greater_90, Site_LDDT_seq_id_greater_90,
-                    Backbone_RMSD_seq_id_between_50_and_90, All_atom_RMSD_seq_id_between_50_and_90, nof_site_residue_seq_id_between_50_and_90, Site_LDDT_seq_id_between_50_and_90,
-                    Backbone_RMSD_seq_id_lower_50, All_atom_RMSD_seq_id_lower_50, nof_site_residue_seq_id_lower_50, Site_LDDT_seq_id_lower_50,
-                    Backbone_RMSD_site_id_greater_99, All_atom_RMSD_site_id_greater_99, nof_site_residue_site_id_greater_99, Site_LDDT_site_id_greater_99,
-                    Backbone_RMSD_site_id_between_70_and_99, All_atom_RMSD_site_id_between_70_and_99, nof_site_residue_site_id_between_70_and_99, Site_LDDT_site_id_between_70_and_99,
-                    Backbone_RMSD_site_id_lower_70, All_atom_RMSD_site_id_lower_70, nof_site_residue_site_id_lower_70, Site_LDDT_site_id_lower_70,
-                    Backbone_RMSD_seq_id_greater_90_site_id_greater_99, All_atom_RMSD_seq_id_greater_90_site_id_greater_99, nof_site_residue_seq_id_greater_90_site_id_greater_99, Site_LDDT_seq_id_greater_90_site_id_greater_99,
-                    Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99, nof_site_residue_seq_id_between_50_and_90_site_id_greater_99, Site_LDDT_seq_id_between_50_and_90_site_id_greater_99,
-                    Backbone_RMSD_seq_id_lower_50_site_id_greater_99, All_atom_RMSD_seq_id_lower_50_site_id_greater_99, nof_site_residue_seq_id_lower_50_site_id_greater_99, Site_LDDT_seq_id_lower_50_site_id_greater_99,
-                    Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99, nof_site_residue_seq_id_greater_90_site_id_between_70_and_99, Site_LDDT_seq_id_greater_90_site_id_between_70_and_99,
-                    Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99, Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99,
-                    Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99, All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99, nof_site_residue_seq_id_lower_50_site_id_between_70_and_99, Site_LDDT_seq_id_lower_50_site_id_between_70_and_99,
-                    Backbone_RMSD_seq_id_greater_90_site_id_lower_70, All_atom_RMSD_seq_id_greater_90_site_id_lower_70, nof_site_residue_seq_id_greater_90_site_id_lower_70, Site_LDDT_seq_id_greater_90_site_id_lower_70,
-                    Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70, All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70, nof_site_residue_seq_id_between_50_and_90_site_id_lower_70, Site_LDDT_seq_id_between_50_and_90_site_id_lower_70,
-                    Backbone_RMSD_seq_id_lower_50_site_id_lower_70, All_atom_RMSD_seq_id_lower_50_site_id_lower_70, nof_site_residue_seq_id_lower_50_site_id_lower_70, Site_LDDT_seq_id_lower_50_site_id_lower_70) = unpack(row[7])
+                    (
+                        interaction_str,
+                        amount_of_structures,
+                        raw_structural_features,
+                        raw_rin_features,
+                        raw_microminer_features,
+                        raw_integrated_features
+                    ) = unpack(row[7])
 
-                    mapping_results = (None, None, None, rsa, mainchain_rsa, sidechain_rsa, weighted_sc, mainchain_location,
-                                        sidechain_location, rin_profile_str, weighted_centrality_scores, b_factor,
-                                        modres_score, mv_sec_ass, weighted_phi, weighted_psi, intra_ssbond_prop, 
-                                        inter_ssbond_prop, None, intra_link_prop, inter_link_prop, None, cis_conformation_prop,
-                                        cis_follower_prop, inter_chain_median_kd, inter_chain_dist_weighted_kd, 
-                                        inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd, 
-                                        intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                                        weighted_inter_chain_interactions_median, weighted_inter_chain_interactions_dist_weighted,
-                                        weighted_intra_chain_interactions_median, weighted_intra_chain_interactions_dist_weighted,
-                                        None, None, None, None, None, None, None, rin_class, rin_simple_class, Class, 
-                                        simple_class, interaction_str, None, None, None, None, None, None, None, 
-                                        None, None, amount_of_structures, rsa_change_score, rsa_mc_change_score, rsa_sc_change_score,
-                                        Backbone_RMSD_seq_id_high_weight, All_atom_RMSD_seq_id_high_weight, nof_site_residue_seq_id_high_weight, Site_LDDT_seq_id_high_weight,
-                                        Backbone_RMSD_seq_id_low_weight, All_atom_RMSD_seq_id_low_weight, nof_site_residue_seq_id_low_weight, Site_LDDT_seq_id_low_weight,
-                                        Backbone_RMSD_seq_id_greater_90, All_atom_RMSD_seq_id_greater_90, nof_site_residue_seq_id_greater_90, Site_LDDT_seq_id_greater_90,
-                                        Backbone_RMSD_seq_id_between_50_and_90, All_atom_RMSD_seq_id_between_50_and_90, nof_site_residue_seq_id_between_50_and_90, Site_LDDT_seq_id_between_50_and_90,
-                                        Backbone_RMSD_seq_id_lower_50, All_atom_RMSD_seq_id_lower_50, nof_site_residue_seq_id_lower_50, Site_LDDT_seq_id_lower_50,
-                                        Backbone_RMSD_site_id_greater_99, All_atom_RMSD_site_id_greater_99, nof_site_residue_site_id_greater_99, Site_LDDT_site_id_greater_99,
-                                        Backbone_RMSD_site_id_between_70_and_99, All_atom_RMSD_site_id_between_70_and_99, nof_site_residue_site_id_between_70_and_99, Site_LDDT_site_id_between_70_and_99,
-                                        Backbone_RMSD_site_id_lower_70, All_atom_RMSD_site_id_lower_70, nof_site_residue_site_id_lower_70, Site_LDDT_site_id_lower_70,
-                                        Backbone_RMSD_seq_id_greater_90_site_id_greater_99, All_atom_RMSD_seq_id_greater_90_site_id_greater_99, nof_site_residue_seq_id_greater_90_site_id_greater_99, Site_LDDT_seq_id_greater_90_site_id_greater_99,
-                                        Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99, nof_site_residue_seq_id_between_50_and_90_site_id_greater_99, Site_LDDT_seq_id_between_50_and_90_site_id_greater_99,
-                                        Backbone_RMSD_seq_id_lower_50_site_id_greater_99, All_atom_RMSD_seq_id_lower_50_site_id_greater_99, nof_site_residue_seq_id_lower_50_site_id_greater_99, Site_LDDT_seq_id_lower_50_site_id_greater_99,
-                                        Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99, nof_site_residue_seq_id_greater_90_site_id_between_70_and_99, Site_LDDT_seq_id_greater_90_site_id_between_70_and_99,
-                                        Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99, Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99,
-                                        Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99, All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99, nof_site_residue_seq_id_lower_50_site_id_between_70_and_99, Site_LDDT_seq_id_lower_50_site_id_between_70_and_99,
-                                        Backbone_RMSD_seq_id_greater_90_site_id_lower_70, All_atom_RMSD_seq_id_greater_90_site_id_lower_70, nof_site_residue_seq_id_greater_90_site_id_lower_70, Site_LDDT_seq_id_greater_90_site_id_lower_70,
-                                        Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70, All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70, nof_site_residue_seq_id_between_50_and_90_site_id_lower_70, Site_LDDT_seq_id_between_50_and_90_site_id_lower_70,
-                                        Backbone_RMSD_seq_id_lower_50_site_id_lower_70, All_atom_RMSD_seq_id_lower_50_site_id_lower_70, nof_site_residue_seq_id_lower_50_site_id_lower_70, Site_LDDT_seq_id_lower_50_site_id_lower_70)
+
+                    mapping_results = ([], recommended_structure, max_seq_structure, None, amount_of_structures, raw_structural_features, raw_microminer_features, raw_rin_features, raw_integrated_features)
 
                 except:
                     error_count += 1
@@ -2128,6 +2091,9 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=False, with_mappings = False,
                    with_snvs=False, with_indels = False, with_multi_mutations = False, mutate_snvs=False,
                    with_alignments=False, with_complexes=False, keep_ray_alive=False, current_chunk = None, prot_db_id_dict = None):
+
+    if config.verbosity >= 2:
+        print(f'Calling proteinsFromDb, session {session}, with_residues {with_residues}, with_mappings {with_mappings}')
 
     if with_alignments:
         with_complexes = True
@@ -2221,6 +2187,9 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             wt_prot = proteins.getByDbId(wt_prot_db_id).primary_protein_id
 
             indel_notation = row[2]
+
+            if indel_db_id not in indel_tags_map:
+                continue
 
             tags = indel_tags_map[indel_db_id]
             if isinstance(tags, str):

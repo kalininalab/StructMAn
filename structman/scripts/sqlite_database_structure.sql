@@ -72,6 +72,7 @@ CREATE TABLE `Protein` (
 CREATE TABLE `Gene` (
   `Gene_Id` integer  NOT NULL PRIMARY KEY AUTOINCREMENT,
   `Primary_Gene_Id` varchar(255) DEFAULT NULL,
+  `Gene_Name` varchar(255) DEFAULT NULL,
   `Species` varchar(255) DEFAULT NULL
 );
 

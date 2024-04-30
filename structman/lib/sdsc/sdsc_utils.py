@@ -1,5 +1,5 @@
 import itertools
-import os
+import numpy as np
 
 from collections import deque
 from sys import getsizeof, stderr
@@ -163,6 +163,32 @@ def rin_classify(interaction_profile, location):
         rin_simple_class = raw_rin_simple_class
     return rin_class, rin_simple_class
 
+def classify(config, profile, sidechain_location, disorder_score, disorder_region):
+    structural_classification, simple_class = rin_classify(profile, sidechain_location)
+    if structural_classification is None:
+        structural_classification, _ = disorderCheck(config, disorder_score, disorder_region)
+        simple_class = structural_classification
+
+    return structural_classification, simple_class
+
+
+MobiDB_map = {'D_PA': 'Polyampholite', 'D_WC': 'Weak polyampholie', 'D_NPE': 'D_NPE', 'D_PPE': 'D_PPE'}
+def disorderCheck(config, disorder_score, region):
+    if region is None or disorder_score is None:
+        return None, None
+    glob = True
+    if region == 'disorder':
+        glob = False
+    elif region == 'globular':
+        glob = True
+    elif region in MobiDB_map:
+        glob = False
+    elif config.verbosity >= 3:
+        print('Unknown disorder region: ', region)
+    if not glob:
+        return 'Disorder', disorder_score
+    else:
+        return None, None
 
 def process_alignment_data(alignment):
     if alignment is None:

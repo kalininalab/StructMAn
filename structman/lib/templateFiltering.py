@@ -973,16 +973,28 @@ def analysis_chain(target_chain, analysis_dump):
 
         if (target_chain, target_res_id) in ssbond_map:
             (chain_2, res_nr_2, ssbond_len) = ssbond_map[(target_chain, target_res_id)]
-            intra_ssbond = target_chain == chain_2
+            if target_chain == chain_2:
+                intra_ssbond = True
+                inter_ssbond = False
+            else:
+                intra_ssbond = False
+                inter_ssbond = True
         else:
-            intra_ssbond = None
+            intra_ssbond = False
+            inter_ssbond = False
             ssbond_len = None
 
         if (target_chain, target_res_id) in link_map:
             (atom_1, res_name_1, atom_2, res_name_2, res_nr_2, chain_2, link_dist) = link_map[(target_chain, target_res_id)]
-            intra_link = target_chain == chain_2
+            if target_chain == chain_2:
+                intra_link = True
+                inter_link = False
+            else:
+                intra_link = False
+                inter_link = True
         else:
-            intra_link = None
+            intra_link = False
+            inter_link = False
             link_dist = None
 
         if (target_chain, target_res_id) in cis_conformation_map:
@@ -1000,8 +1012,8 @@ def analysis_chain(target_chain, analysis_dump):
         residue = residue_package.Residue(target_res_id, aa=one_letter, lig_dists=lig_dists, chain_distances=min_chain_dists, RSA=rsa,
                            relative_main_chain_acc=relative_main_chain_acc, relative_side_chain_acc=relative_side_chain_acc,
                            SSA=ssa, homomer_distances=homomer_map, interaction_profile=profile, centralities=centrality_scores,
-                           modres=modres, b_factor=avg_b_factor, phi=phi, psi=psi, intra_ssbond=intra_ssbond, ssbond_length=ssbond_len,
-                           intra_link=intra_link, link_length=link_dist, cis_conformation=cis_conformation, cis_follower=cis_follower,
+                           modres=modres, b_factor=avg_b_factor, phi=phi, psi=psi, intra_ssbond=intra_ssbond, inter_ssbond= inter_ssbond, ssbond_length=ssbond_len,
+                           intra_link=intra_link, inter_link = inter_link, link_length=link_dist, cis_conformation=cis_conformation, cis_follower=cis_follower,
                            inter_chain_median_kd=inter_chain_median_kd, inter_chain_dist_weighted_kd=inter_chain_dist_weighted_kd,
                            inter_chain_median_rsa=inter_chain_median_rsa, inter_chain_dist_weighted_rsa=inter_chain_dist_weighted_rsa,
                            intra_chain_median_kd=intra_chain_median_kd, intra_chain_dist_weighted_kd=intra_chain_dist_weighted_kd,
@@ -1305,8 +1317,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
     chunksize = min([8,max([n_of_small_comps // (4 * config.proc_n), 1])])
 
     if config.verbosity >= 2:
-        print('Starting structural analysis with', n_of_comps, 'complexes.', n_of_stored_complexes, ' complexes are already stored.')
-        print('Total amount in structure_list:', len(structure_list), '. Amount of structures to analyze:', n_of_chains_to_analyze)
+        print(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}')
+        print(f'Total amount in structure_list: {len(structure_list)}. Amount of structures to analyze: {n_of_chains_to_analyze}')
 
     sorted_sizes = sorted(size_map.keys(), reverse=True)
 

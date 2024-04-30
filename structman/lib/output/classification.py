@@ -5,7 +5,7 @@ from ast import literal_eval
 import ray
 from structman import settings
 from structman.lib import rin
-from structman.lib.sdsc import sdsc_utils
+from structman.lib.sdsc import sdsc_utils, mappings
 from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.database import database
 from structman.lib.output.feature import init_feature_table
@@ -168,21 +168,11 @@ def create_structguy_project_file(config, outfolder, session_id, structguy_proje
 
 def init_classification_table(class_file, obj_only = False):
     classification_output = out_generator.OutputGenerator()
-    headers = [
-        'Input Protein ID', 'Primary Protein ID', 'Uniprot-Ac', 'Uniprot ID', 'Refseq', 'Residue ID', 'Amino Acid', 'Position', 'Tags',
-        'Weighted Location', 'Weighted Mainchain Location', 'Weighted Sidechain Location',
-        'Class', 'Simple Class', 'RIN Class', 'RIN Simple Class', 'Individual Interactions',
-        'Confidence Value', 'Secondary Structure', 'Recommended Structure', 'Sequence-ID', 'Coverage', 'Resolution',
-        'Max Seq Id Structure', 'Max Sequence-ID', 'Max Seq Id Coverage', 'Max Seq Id Resolution', 'Amount of mapped structures' 
-    ]
 
-
-    classification_output.add_headers(headers)
     if obj_only:
         return classification_output
 
     f = open(class_file, 'a')
-    f.write(classification_output.get_header())
 
     return classification_output, f
 
@@ -210,6 +200,8 @@ def unpack_rows(package, store_data, tag_map, snv_map, snv_tag_map, protein_dict
     if config.verbosity >= 7:
         if len(snv_map) > 0:
             print(f'SNV map in unpack_rows:\n{snv_map}')
+
+    errors = []
 
     for row in package:
         m = row[0]
@@ -253,7 +245,7 @@ def unpack_rows(package, store_data, tag_map, snv_map, snv_tag_map, protein_dict
                 rin_profile = rin.Interaction_profile(profile_str=rin_profile_str)
 
             except:
-                print('Error in retrieving position data, couldnt unpack:', m)
+                errors.append(f'Error in retrieving position data, couldnt unpack position: {m}')
                 continue
         
         input_res_id = input_res_id_dict[m]
@@ -483,7 +475,7 @@ def unpack_rows(package, store_data, tag_map, snv_map, snv_tag_map, protein_dict
             with open(interface_file_path, 'a') as f:
                 f.write(''.join(interface_lines))
 
-    return stat_dict
+    return (stat_dict, errors)
 
 def classificationOutput(config, outfolder, session_name, session_id, ligand_filter=None):
     outfile = '%s/%s' % (outfolder, session_name)
@@ -756,6 +748,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
     stat_dict = {}
     interface_numbers = {}
 
+    feature_header_written = False
+    classification_header_written = False
 
     while((main_loop_counter)*max_rows_at_a_time <= len(all_results)):
         if config.verbosity >= 2:
@@ -843,7 +837,9 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
             while True:
                 ready, not_ready = ray.wait(unpackaging_remote_ids)
                 if len(ready) > 0:
-                    for sub_stat_dict in ray.get(ready):
+                    for sub_stat_dict, errors in ray.get(ready):
+                        for error in errors:
+                            print(error)
                         stat_dict.update(sub_stat_dict)
                 unpackaging_remote_ids = not_ready
                 if len(unpackaging_remote_ids) == 0:
@@ -859,6 +855,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
             if config.verbosity >= 7:
                 if len(snv_map) > 0:
                     print(f'SNV map going into unpacked rows part:\n{snv_map}')
+
+            warn_count = 0
 
             for row in results:
                 m = row[0]
@@ -878,7 +876,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     max_seq_structure_str = None
                 row = list(row)
                 if row[7] is None:
-                    row[7] = [None]*109
+                    row[7] = [None]*6
                     if config.verbosity >= 5:
                         print(f'Position Data is None for Mutation db id {m} (Protein db id {prot_db_id})')
                 else:
@@ -888,37 +886,29 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                         print('Error in retrieving position data, couldnt unpack:', m)
                         continue
 
-                (weighted_sc, mainchain_location, sidechain_location, rsa, mainchain_rsa, sidechain_rsa, Class, rin_class, simple_class, rin_simple_class,
-                    interaction_str, conf, mv_sec_ass, amount_of_structures, rin_profile_str, modres_score, b_factor, weighted_centrality_scores, weighted_phi,
-                    weighted_psi, intra_ssbond_prop, inter_ssbond_prop, intra_link_prop, inter_link_prop, cis_conformation_prop, cis_follower_prop,
-                    inter_chain_median_kd, inter_chain_dist_weighted_kd, inter_chain_median_rsa, inter_chain_dist_weighted_rsa,
-                    intra_chain_median_kd, intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                    weighted_inter_chain_interactions_median, weighted_inter_chain_interactions_dist_weighted,
-                    weighted_intra_chain_interactions_median, weighted_intra_chain_interactions_dist_weighted, rsa_change_score, mc_rsa_change_score, sc_rsa_change_score,
-                    Backbone_RMSD_seq_id_high_weight, All_atom_RMSD_seq_id_high_weight, nof_site_residue_seq_id_high_weight, Site_LDDT_seq_id_high_weight,
-                    Backbone_RMSD_seq_id_low_weight, All_atom_RMSD_seq_id_low_weight, nof_site_residue_seq_id_low_weight, Site_LDDT_seq_id_low_weight,
-                    Backbone_RMSD_seq_id_greater_90, All_atom_RMSD_seq_id_greater_90, nof_site_residue_seq_id_greater_90, Site_LDDT_seq_id_greater_90,
-                    Backbone_RMSD_seq_id_between_50_and_90, All_atom_RMSD_seq_id_between_50_and_90, nof_site_residue_seq_id_between_50_and_90, Site_LDDT_seq_id_between_50_and_90,
-                    Backbone_RMSD_seq_id_lower_50, All_atom_RMSD_seq_id_lower_50, nof_site_residue_seq_id_lower_50, Site_LDDT_seq_id_lower_50,
-                    Backbone_RMSD_site_id_greater_99, All_atom_RMSD_site_id_greater_99, nof_site_residue_site_id_greater_99, Site_LDDT_site_id_greater_99,
-                    Backbone_RMSD_site_id_between_70_and_99, All_atom_RMSD_site_id_between_70_and_99, nof_site_residue_site_id_between_70_and_99, Site_LDDT_site_id_between_70_and_99,
-                    Backbone_RMSD_site_id_lower_70, All_atom_RMSD_site_id_lower_70, nof_site_residue_site_id_lower_70, Site_LDDT_site_id_lower_70,
-                    Backbone_RMSD_seq_id_greater_90_site_id_greater_99, All_atom_RMSD_seq_id_greater_90_site_id_greater_99, nof_site_residue_seq_id_greater_90_site_id_greater_99, Site_LDDT_seq_id_greater_90_site_id_greater_99,
-                    Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99, nof_site_residue_seq_id_between_50_and_90_site_id_greater_99, Site_LDDT_seq_id_between_50_and_90_site_id_greater_99,
-                    Backbone_RMSD_seq_id_lower_50_site_id_greater_99, All_atom_RMSD_seq_id_lower_50_site_id_greater_99, nof_site_residue_seq_id_lower_50_site_id_greater_99, Site_LDDT_seq_id_lower_50_site_id_greater_99,
-                    Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99, nof_site_residue_seq_id_greater_90_site_id_between_70_and_99, Site_LDDT_seq_id_greater_90_site_id_between_70_and_99,
-                    Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99, nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99, Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99,
-                    Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99, All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99, nof_site_residue_seq_id_lower_50_site_id_between_70_and_99, Site_LDDT_seq_id_lower_50_site_id_between_70_and_99,
-                    Backbone_RMSD_seq_id_greater_90_site_id_lower_70, All_atom_RMSD_seq_id_greater_90_site_id_lower_70, nof_site_residue_seq_id_greater_90_site_id_lower_70, Site_LDDT_seq_id_greater_90_site_id_lower_70,
-                    Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70, All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70, nof_site_residue_seq_id_between_50_and_90_site_id_lower_70, Site_LDDT_seq_id_between_50_and_90_site_id_lower_70,
-                    Backbone_RMSD_seq_id_lower_50_site_id_lower_70, All_atom_RMSD_seq_id_lower_50_site_id_lower_70, nof_site_residue_seq_id_lower_50_site_id_lower_70, Site_LDDT_seq_id_lower_50_site_id_lower_70
+                (
+                    interaction_str,
+                    amount_of_structures,
+                    raw_structural_features,
+                    raw_rin_based_features,
+                    raw_microminer_features,
+                    raw_integrated_features
                 ) = row[7]
+
+                rin_based_features = mappings.RIN_based_features()
+                rin_based_features.set_values(raw_rin_based_features)
+
+                microminer_features = mappings.Microminer_features()
+                microminer_features.set_values(raw_microminer_features)
+
+                structural_features = mappings.Structural_features()
+                structural_features.set_values(raw_structural_features)
+
+                integrated_features = mappings.Integrated_features()
+                integrated_features.set_values(raw_integrated_features)
 
                 if config.verbosity >= 6:
                     print(f'Position data unpacked rows part: {m} {position_number} {wt_aa} {prot_db_id}:\n{row[7]}')
-
-                centrality_scores = rin.Centrality_scores(code_str=weighted_centrality_scores)
-                rin_profile = rin.Interaction_profile(profile_str=rin_profile_str)
 
                 recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(recommended_structure_str)
                 max_seq_structure, max_seq_seq_id, max_seq_cov, max_seq_resolution = sdsc_utils.process_recommend_structure_str(max_seq_structure_str)
@@ -927,17 +917,11 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 if input_res_id is None:
                     input_res_id = ''
 
-                if disorder_state is not None:
-                    if Class is None and (disorder_state == 'disorder' or disorder_state[0] == 'D'):
-                        Class = 'Disorder'
-                        simple_class = 'Disorder'
-                        rin_class = 'Disorder'
-                        rin_simple_class = 'Disorder'
 
                 if max_seq_seq_id == '-':
-                    stat_dict[m] = (Class, 0., recommended_structure)
+                    stat_dict[m] = (integrated_features.structural_classification, 0., recommended_structure)
                 else:
-                    stat_dict[m] = (Class, float(max_seq_seq_id), recommended_structure)
+                    stat_dict[m] = (integrated_features.structural_classification, float(max_seq_seq_id), recommended_structure)
 
                 (prot_id, u_ac, refseq, u_id, error_code, error, input_id, gene_db_id, sequence) = protein_dict[prot_db_id]
 
@@ -952,16 +936,11 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 classification_output.add_value('Amino Acid', wt_aa)
                 classification_output.add_value('Position', position_number)
                 classification_output.add_value('Tags', tag_map[m])
-                classification_output.add_value('Weighted Location', weighted_sc)
-                classification_output.add_value('Weighted Mainchain Location', mainchain_location)
-                classification_output.add_value('Weighted Sidechain Location', sidechain_location)
-                classification_output.add_value('Class', Class)
-                classification_output.add_value('Simple Class', simple_class)
-                classification_output.add_value('RIN Class', rin_class)
-                classification_output.add_value('RIN Simple Class', rin_simple_class)
+                classification_output.add_value('Sidechain Location', integrated_features.sidechain_location)
+                classification_output.add_value('Classification', integrated_features.structural_classification)
+                classification_output.add_value('Simple Class', integrated_features.simple_class)
                 classification_output.add_value('Individual Interactions', interaction_str)
-                classification_output.add_value('Confidence Value', conf)
-                classification_output.add_value('Secondary Structure', mv_sec_ass)
+                classification_output.add_value('Secondary Structure', structural_features.ssa)
                 classification_output.add_value('Recommended Structure', recommended_structure)
                 classification_output.add_value('Sequence-ID', seq_id)
                 classification_output.add_value('Coverage', cov)
@@ -972,6 +951,9 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 classification_output.add_value('Max Seq Id Resolution', max_seq_resolution)
                 classification_output.add_value('Amount of mapped structures', amount_of_structures)
 
+                if not classification_header_written:
+                    f.write(classification_output.get_header())
+                    classification_header_written = True
                 f.write(classification_output.pop_line())
 
                 if config.compute_ppi:
@@ -1017,39 +999,32 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     feature_output.add_value('Mut Amino Acid', new_aa)
                     feature_output.add_value('AA change', '%s%s' % (wt_aa, new_aa))
                     feature_output.add_value('Tags', tags)
-                    feature_output.add_value('Distance-based classification', Class)
-                    feature_output.add_value('Distance-based simple classification', simple_class)
-                    feature_output.add_value('RIN-based classification', rin_class)
-                    feature_output.add_value('RIN-based simple classification', rin_simple_class)
-                    feature_output.add_value('Classification confidence', conf)
-                    feature_output.add_value('Structure Location', weighted_sc)
-                    feature_output.add_value('Mainchain Location', mainchain_location)
-                    feature_output.add_value('Sidechain Location', sidechain_location)
-                    feature_output.add_value('RSA', rsa)
-                    feature_output.add_value('Mainchain RSA', mainchain_rsa)
-                    feature_output.add_value('Sidechain RSA', sidechain_rsa)
-                    feature_output.add_value('RSA change score', rsa_change_score)
-                    feature_output.add_value('Mainchain RSA change score', mc_rsa_change_score)
-                    feature_output.add_value('Sidechain RSA change score',  sc_rsa_change_score)
-                    feature_output.add_value('Amount of mapped structures', amount_of_structures)
-                    feature_output.add_value('Secondary structure assignment', mv_sec_ass)
-                    feature_output.add_value('IUPred value', iupred)
-                    feature_output.add_value('Region structure type', disorder_state)
-                    feature_output.add_value('Modres score', modres_score)
-                    feature_output.add_value('Phi', weighted_phi)
-                    feature_output.add_value('Psi', weighted_psi)
 
-                    KDmean = abs(residue_consts.HYDROPATHY[wt_aa] - residue_consts.HYDROPATHY[new_aa])
+                    integrated_features.add_to_output_object(feature_output)
+                    structural_features.add_to_output_object(feature_output)
+                    rin_based_features.add_to_output_object(feature_output)
+                    microminer_features.add_to_output_object(feature_output)
+
+                    try:
+                        KDmean = abs(residue_consts.HYDROPATHY[wt_aa] - residue_consts.HYDROPATHY[new_aa])
+                    except:
+                        KDmean = 0
+                        warn_count += 1
+                        if warn_count < 10:
+                            print(f'Calculating KDmean failed: Protein: {prot_id} Position: {position_number} WTAA: {wt_aa} MUTAA: {new_aa} SNV DB Id: {snv_database_id}')
                     feature_output.add_value('KD mean', KDmean)
 
-                    d_vol = abs(residue_consts.VOLUME[wt_aa] - residue_consts.VOLUME[new_aa])
+                    try:
+                        d_vol = abs(residue_consts.VOLUME[wt_aa] - residue_consts.VOLUME[new_aa])
+                    except:
+                        d_vol = 0
                     feature_output.add_value('Volume mean', d_vol)
 
                     chemical_distance = database.getChemicalDistance(aac)
                     feature_output.add_value('Chemical distance', chemical_distance)
 
                     blosum_value = database.getBlosumValue(aac)
-                    feature_output.add_value('Blosum62', aac)
+                    feature_output.add_value('Blosum62', blosum_value)
 
                     aliphatic_change = int((wt_aa in residue_consts.AA_MAP_ALIPHATIC) != (new_aa in residue_consts.AA_MAP_ALIPHATIC))
                     hydrophobic_change = int((wt_aa in residue_consts.AA_MAP_HYDROPHOBIC) != (new_aa in residue_consts.AA_MAP_HYDROPHOBIC))
@@ -1071,125 +1046,15 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     feature_output.add_value('Small change', small_change)
                     feature_output.add_value('Tiny change', tiny_change)
                     feature_output.add_value('Total change', total_change)
-                    feature_output.add_value('B Factor', b_factor)
 
-                    feature_output.add_value('AbsoluteCentrality', centrality_scores.AbsoluteCentrality)
-                    feature_output.add_value('LengthNormalizedCentrality', centrality_scores.LengthNormalizedCentrality)
-                    feature_output.add_value('MinMaxNormalizedCentrality', centrality_scores.MinMaxNormalizedCentrality)
-                    feature_output.add_value('AbsoluteCentralityWithNegative', centrality_scores.AbsoluteCentralityWithNegative)
-                    feature_output.add_value('LengthNormalizedCentralityWithNegative', centrality_scores.LengthNormalizedCentralityWithNegative)
-                    feature_output.add_value('MinMaxNormalizedCentralityWithNegative', centrality_scores.MinMaxNormalizedCentralityWithNegative)
-                    feature_output.add_value('AbsoluteComplexCentrality', centrality_scores.AbsoluteComplexCentrality)
-                    feature_output.add_value('LengthNormalizedComplexCentrality', centrality_scores.LengthNormalizedComplexCentrality)
-                    feature_output.add_value('MinMaxNormalizedComplexCentrality', centrality_scores.MinMaxNormalizedComplexCentrality)
-                    feature_output.add_value('AbsoluteComplexCentralityWithNegative', centrality_scores.AbsoluteComplexCentralityWithNegative)
-                    feature_output.add_value('LengthNormalizedComplexCentralityWithNegative', centrality_scores.LengthNormalizedComplexCentralityWithNegative)
-                    feature_output.add_value('MinMaxNormalizedComplexCentralityWithNegative', centrality_scores.MinMaxNormalizedComplexCentralityWithNegative)
-
-                    feature_output.add_value('Intra_SSBOND_Propensity', intra_ssbond_prop)
-                    feature_output.add_value('Inter_SSBOND_Propensity', inter_ssbond_prop)
-                    feature_output.add_value('Intra_Link_Propensity', intra_link_prop)
-                    feature_output.add_value('Inter_Link_Propensity', inter_link_prop)
-                    feature_output.add_value('CIS_Conformation_Propensity', cis_conformation_prop)
-                    feature_output.add_value('CIS_Follower_Propensity', cis_follower_prop)
-                    feature_output.add_value('Inter Chain Median KD', inter_chain_median_kd)
-                    feature_output.add_value('Inter Chain Distance Weighted KD', inter_chain_dist_weighted_kd)
-                    feature_output.add_value('Inter Chain Median RSA', inter_chain_median_rsa)
-                    feature_output.add_value('Inter Chain Distance Weighted RSA', inter_chain_dist_weighted_rsa)
-                    feature_output.add_value('Intra Chain Median KD', intra_chain_median_kd)
-                    feature_output.add_value('Intra Chain Distance Weighted KD', intra_chain_dist_weighted_kd)
-                    feature_output.add_value('Intra Chain Median RSA', intra_chain_median_rsa)
-                    feature_output.add_value('Intra Chain Distance Weighted RSA', intra_chain_dist_weighted_rsa)
-
-                    feature_output.add_value('Inter Chain Interactions Median', weighted_inter_chain_interactions_median)
-                    feature_output.add_value('Inter Chain Interactions Distance Weighted', weighted_inter_chain_interactions_dist_weighted)
-                    feature_output.add_value('Intra Chain Interactions Median', weighted_intra_chain_interactions_median)
-                    feature_output.add_value('Intra Chain Interactions Distance Weighted', weighted_intra_chain_interactions_dist_weighted)
-
-                    for chaintype in ['mc', 'sc']:
-                        for interaction_type in ['neighbor', 'short', 'long', 'ligand', 'ion', 'metal', 'Protein', 'DNA', 'RNA', 'Peptide']:
-                            feature_name = '%s %s score' % (chaintype, interaction_type)
-                            value = rin_profile.getChainSpecificCombiScore(chaintype, interaction_type)
-                            feature_output.add_value(feature_name, value)
-
-                            feature_name = '%s %s degree' % (chaintype, interaction_type)
-                            value = rin_profile.getChainSpecificCombiDegree(chaintype, interaction_type)
-                            feature_output.add_value(feature_name, value)
-
-                            feature_name = '%s %s H-bond score' % (chaintype, interaction_type)
-                            value = rin_profile.getScore(chaintype, 'hbond', interaction_type)
-                            feature_output.add_value(feature_name, value)
-
-                    feature_output.add_value('Backbone_RMSD_seq_id_high_weight', Backbone_RMSD_seq_id_high_weight)
-                    feature_output.add_value('All_atom_RMSD_seq_id_high_weight', All_atom_RMSD_seq_id_high_weight)
-                    feature_output.add_value('nof_site_residue_seq_id_high_weight', nof_site_residue_seq_id_high_weight)
-                    feature_output.add_value('Site_LDDT_seq_id_high_weight', Site_LDDT_seq_id_high_weight)
-                    feature_output.add_value('Backbone_RMSD_seq_id_low_weight', Backbone_RMSD_seq_id_low_weight)
-                    feature_output.add_value('All_atom_RMSD_seq_id_low_weight', All_atom_RMSD_seq_id_low_weight)
-                    feature_output.add_value('nof_site_residue_seq_id_low_weight', nof_site_residue_seq_id_low_weight)
-                    feature_output.add_value('Site_LDDT_seq_id_low_weight', Site_LDDT_seq_id_low_weight)
-                    feature_output.add_value('Backbone_RMSD_seq_id_greater_90', Backbone_RMSD_seq_id_greater_90)
-                    feature_output.add_value('All_atom_RMSD_seq_id_greater_90', All_atom_RMSD_seq_id_greater_90)
-                    feature_output.add_value('nof_site_residue_seq_id_greater_90', nof_site_residue_seq_id_greater_90)
-                    feature_output.add_value('Site_LDDT_seq_id_greater_90', Site_LDDT_seq_id_greater_90)
-                    feature_output.add_value('Backbone_RMSD_seq_id_between_50_and_90', Backbone_RMSD_seq_id_between_50_and_90)
-                    feature_output.add_value('All_atom_RMSD_seq_id_between_50_and_90', All_atom_RMSD_seq_id_between_50_and_90)
-                    feature_output.add_value('nof_site_residue_seq_id_between_50_and_90', nof_site_residue_seq_id_between_50_and_90)
-                    feature_output.add_value('Site_LDDT_seq_id_between_50_and_90', Site_LDDT_seq_id_between_50_and_90)
-                    feature_output.add_value('Backbone_RMSD_seq_id_lower_50', Backbone_RMSD_seq_id_lower_50)
-                    feature_output.add_value('All_atom_RMSD_seq_id_lower_50', All_atom_RMSD_seq_id_lower_50)
-                    feature_output.add_value('nof_site_residue_seq_id_lower_50', nof_site_residue_seq_id_lower_50)
-                    feature_output.add_value('Site_LDDT_seq_id_lower_50', Site_LDDT_seq_id_lower_50)
-                    feature_output.add_value('Backbone_RMSD_site_id_greater_99', Backbone_RMSD_site_id_greater_99)
-                    feature_output.add_value('All_atom_RMSD_site_id_greater_99', All_atom_RMSD_site_id_greater_99)
-                    feature_output.add_value('nof_site_residue_site_id_greater_99', nof_site_residue_site_id_greater_99)
-                    feature_output.add_value('Site_LDDT_site_id_greater_99', Site_LDDT_site_id_greater_99)
-                    feature_output.add_value('Backbone_RMSD_site_id_between_70_and_99', Backbone_RMSD_site_id_between_70_and_99)
-                    feature_output.add_value('All_atom_RMSD_site_id_between_70_and_99', All_atom_RMSD_site_id_between_70_and_99)
-                    feature_output.add_value('nof_site_residue_site_id_between_70_and_99', nof_site_residue_site_id_between_70_and_99)
-                    feature_output.add_value('Site_LDDT_site_id_between_70_and_99', Site_LDDT_site_id_between_70_and_99)
-                    feature_output.add_value('Backbone_RMSD_site_id_lower_70', Backbone_RMSD_site_id_lower_70)
-                    feature_output.add_value('All_atom_RMSD_site_id_lower_70', All_atom_RMSD_site_id_lower_70)
-                    feature_output.add_value('nof_site_residue_site_id_lower_70', nof_site_residue_site_id_lower_70)
-                    feature_output.add_value('Site_LDDT_site_id_lower_70', Site_LDDT_site_id_lower_70)
-                    feature_output.add_value('Backbone_RMSD_seq_id_greater_90_site_id_greater_99', Backbone_RMSD_seq_id_greater_90_site_id_greater_99)
-                    feature_output.add_value('All_atom_RMSD_seq_id_greater_90_site_id_greater_99', All_atom_RMSD_seq_id_greater_90_site_id_greater_99)
-                    feature_output.add_value('nof_site_residue_seq_id_greater_90_site_id_greater_99', nof_site_residue_seq_id_greater_90_site_id_greater_99)
-                    feature_output.add_value('Site_LDDT_seq_id_greater_90_site_id_greater_99', Site_LDDT_seq_id_greater_90_site_id_greater_99)
-                    feature_output.add_value('Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99', Backbone_RMSD_seq_id_between_50_and_90_site_id_greater_99)
-                    feature_output.add_value('All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99', All_atom_RMSD_seq_id_between_50_and_90_site_id_greater_99)
-                    feature_output.add_value('nof_site_residue_seq_id_between_50_and_90_site_id_greater_99', nof_site_residue_seq_id_between_50_and_90_site_id_greater_99)
-                    feature_output.add_value('Site_LDDT_seq_id_between_50_and_90_site_id_greater_99', Site_LDDT_seq_id_between_50_and_90_site_id_greater_99)
-                    feature_output.add_value('Backbone_RMSD_seq_id_lower_50_site_id_greater_99', Backbone_RMSD_seq_id_lower_50_site_id_greater_99)
-                    feature_output.add_value('All_atom_RMSD_seq_id_lower_50_site_id_greater_99', All_atom_RMSD_seq_id_lower_50_site_id_greater_99)
-                    feature_output.add_value('nof_site_residue_seq_id_lower_50_site_id_greater_99', nof_site_residue_seq_id_lower_50_site_id_greater_99)
-                    feature_output.add_value('Site_LDDT_seq_id_lower_50_site_id_greater_99', Site_LDDT_seq_id_lower_50_site_id_greater_99)
-                    feature_output.add_value('Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99', Backbone_RMSD_seq_id_greater_90_site_id_between_70_and_99)
-                    feature_output.add_value('All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99', All_atom_RMSD_seq_id_greater_90_site_id_between_70_and_99)
-                    feature_output.add_value('nof_site_residue_seq_id_greater_90_site_id_between_70_and_99', nof_site_residue_seq_id_greater_90_site_id_between_70_and_99)
-                    feature_output.add_value('Site_LDDT_seq_id_greater_90_site_id_between_70_and_99', Site_LDDT_seq_id_greater_90_site_id_between_70_and_99)
-                    feature_output.add_value('Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99', Backbone_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99)
-                    feature_output.add_value('All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99', All_atom_RMSD_seq_id_between_50_and_90_site_id_between_70_and_99)
-                    feature_output.add_value('nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99', nof_site_residue_seq_id_between_50_and_90_site_id_between_70_and_99)
-                    feature_output.add_value('Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99', Site_LDDT_seq_id_between_50_and_90_site_id_between_70_and_99)
-                    feature_output.add_value('Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99', Backbone_RMSD_seq_id_lower_50_site_id_between_70_and_99)
-                    feature_output.add_value('All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99', All_atom_RMSD_seq_id_lower_50_site_id_between_70_and_99)
-                    feature_output.add_value('nof_site_residue_seq_id_lower_50_site_id_between_70_and_99', nof_site_residue_seq_id_lower_50_site_id_between_70_and_99)
-                    feature_output.add_value('Site_LDDT_seq_id_lower_50_site_id_between_70_and_99', Site_LDDT_seq_id_lower_50_site_id_between_70_and_99)
-                    feature_output.add_value('Backbone_RMSD_seq_id_greater_90_site_id_lower_70', Backbone_RMSD_seq_id_greater_90_site_id_lower_70)
-                    feature_output.add_value('All_atom_RMSD_seq_id_greater_90_site_id_lower_70', All_atom_RMSD_seq_id_greater_90_site_id_lower_70)
-                    feature_output.add_value('nof_site_residue_seq_id_greater_90_site_id_lower_70', nof_site_residue_seq_id_greater_90_site_id_lower_70)
-                    feature_output.add_value('Site_LDDT_seq_id_greater_90_site_id_lower_70', Site_LDDT_seq_id_greater_90_site_id_lower_70)
-                    feature_output.add_value('Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70', Backbone_RMSD_seq_id_between_50_and_90_site_id_lower_70)
-                    feature_output.add_value('All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70', All_atom_RMSD_seq_id_between_50_and_90_site_id_lower_70)
-                    feature_output.add_value('nof_site_residue_seq_id_between_50_and_90_site_id_lower_70', nof_site_residue_seq_id_between_50_and_90_site_id_lower_70)
-                    feature_output.add_value('Site_LDDT_seq_id_between_50_and_90_site_id_lower_70', Site_LDDT_seq_id_between_50_and_90_site_id_lower_70)
-                    feature_output.add_value('Backbone_RMSD_seq_id_lower_50_site_id_lower_70', Backbone_RMSD_seq_id_lower_50_site_id_lower_70)
-                    feature_output.add_value('All_atom_RMSD_seq_id_lower_50_site_id_lower_70', All_atom_RMSD_seq_id_lower_50_site_id_lower_70)
-                    feature_output.add_value('nof_site_residue_seq_id_lower_50_site_id_lower_70', nof_site_residue_seq_id_lower_50_site_id_lower_70)
-                    feature_output.add_value('Site_LDDT_seq_id_lower_50_site_id_lower_70', Site_LDDT_seq_id_lower_50_site_id_lower_70)
+                    if not feature_header_written:
+                        feat_f.write(feature_output.get_header())
+                        feature_header_written = True
 
                     feat_f.write(feature_output.pop_line())
+
+            if warn_count >= 10:
+                print(f'In total {warn_count} warnings happened')
 
     if not use_ray:
         f.close()
@@ -1203,7 +1068,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
             prot_a_db_id, structure_rec_prot_a = interface_dict[interface_a_db_id]
             (prot_a_id, u_ac_a, refseq_a, u_id_a, error_code_a, error_a, input_id_a, gene_db_id_a, seq_a) = protein_dict[prot_a_db_id]
             if gene_db_id_a is not None:
-                gene_name_a = gene_id_map[gene_db_id_a]
+                gene_name_a, _ = gene_id_map[gene_db_id_a]
             else:
                 gene_name_a = None
 
@@ -1231,7 +1096,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
 
                 (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, seq_b) = protein_dict[prot_b_db_id]
                 if gene_db_id is not None:
-                    gene_name_b = gene_id_map[gene_db_id_b]
+                    gene_name_b, _ = gene_id_map[gene_db_id_b]
                 else:
                     gene_name_b = None
                 prot_prot_output.add_value('Gene B', gene_name_b)

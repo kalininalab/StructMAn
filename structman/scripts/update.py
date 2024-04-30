@@ -13,7 +13,7 @@ from structman.scripts.createMMDB import update_microminer_db
 
 
 def create_mmseqs_index(infile, outfolder, mmseqs2_tmp):
-    p = subprocess.Popen(['mmseqs', 'createdb', infile, 'pdbba_search_db_mmseqs2'], cwd=outfolder)
+    p = subprocess.Popen(['mmseqs', 'createdb', infile, f'{infile}_search_db'], cwd=outfolder)
     p.wait()
 
     p = subprocess.Popen(['rm', '-R', mmseqs2_tmp], cwd=outfolder)
@@ -25,7 +25,7 @@ def create_mmseqs_index(infile, outfolder, mmseqs2_tmp):
     p = subprocess.Popen(['chmod', '777', '-R', mmseqs2_tmp], cwd=outfolder)
     p.wait()
 
-    p = subprocess.Popen(['mmseqs', 'createindex', 'pdbba_search_db_mmseqs2', mmseqs2_tmp, '-s', '7.5'], cwd=outfolder)
+    p = subprocess.Popen(['mmseqs', 'createindex', f'{infile}_search_db', mmseqs2_tmp, '-s', '7.5'], cwd=outfolder)
     p.wait()
 
 def main(

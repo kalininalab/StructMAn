@@ -29,7 +29,7 @@ def aggregate_positions(position_objects, config):
     if position_objects is None:
         return mappings, None, None
     for pos_obj in position_objects:
-        result = pos_obj.mappings.get_result_for_indel_aggregation()
+        result = pos_obj.mappings.get_raw_result()
         mappings.add_result(pos_obj.pos, result, 1.0, 1.0, 1.0)
         if pos_obj.disorder_score is None:
             continue
@@ -116,10 +116,10 @@ class Indel:
         wt_pos_objs, mut_pos_objs = self.get_positions(proteins, config)
 
         wt_mappings, wt_disorder_score, wt_disorder_region = aggregate_positions(wt_pos_objs, config)
-        self.wt_aggregates = wt_mappings.get_database_result_for_indel_aggregation(), wt_disorder_score, wt_disorder_region
+        self.wt_aggregates = wt_mappings.get_raw_result(), wt_disorder_score, wt_disorder_region
 
         mut_mappings, mut_disorder_score, mut_disorder_region = aggregate_positions(mut_pos_objs, config)
-        self.mut_aggregates = mut_mappings.get_database_result_for_indel_aggregation(), mut_disorder_score, mut_disorder_region
+        self.mut_aggregates = mut_mappings.get_raw_result(), mut_disorder_score, mut_disorder_region
 
     def get_flank_positions(self, proteins, config):
         left_flank_wt_position_objs, left_flank_mut_position_objs = self.get_left_flank_positions(proteins, config)
@@ -130,16 +130,16 @@ class Indel:
         left_flank_wt_position_objs, left_flank_mut_position_objs, right_flank_wt_position_objs, right_flank_mut_position_objs = self.get_flank_positions(proteins, config)
 
         left_flank_wt_mappings, left_flank_wt_disorder_score, left_flank_wt_disorder_region = aggregate_positions(left_flank_wt_position_objs, config)
-        self.left_flank_wt_aggregates = left_flank_wt_mappings.get_database_result_for_indel_aggregation(), left_flank_wt_disorder_score, left_flank_wt_disorder_region
+        self.left_flank_wt_aggregates = left_flank_wt_mappings.get_raw_result(), left_flank_wt_disorder_score, left_flank_wt_disorder_region
 
         left_flank_mut_mappings, left_flank_mut_disorder_score, left_flank_mut_disorder_region = aggregate_positions(left_flank_mut_position_objs, config)
-        self.left_flank_mut_aggregates = left_flank_mut_mappings.get_database_result_for_indel_aggregation(), left_flank_mut_disorder_score, left_flank_mut_disorder_region
+        self.left_flank_mut_aggregates = left_flank_mut_mappings.get_raw_result(), left_flank_mut_disorder_score, left_flank_mut_disorder_region
 
         right_flank_wt_mappings, right_flank_wt_disorder_score, right_flank_wt_disorder_region = aggregate_positions(right_flank_wt_position_objs, config)
-        self.right_flank_wt_aggregates = right_flank_wt_mappings.get_database_result_for_indel_aggregation(), right_flank_wt_disorder_score, right_flank_wt_disorder_region
+        self.right_flank_wt_aggregates = right_flank_wt_mappings.get_raw_result(), right_flank_wt_disorder_score, right_flank_wt_disorder_region
 
         right_flank_mut_mappings, right_flank_mut_disorder_score, right_flank_mut_disorder_region = aggregate_positions(right_flank_mut_position_objs, config)
-        self.right_flank_mut_aggregates = right_flank_mut_mappings.get_database_result_for_indel_aggregation(), right_flank_mut_disorder_score, right_flank_mut_disorder_region
+        self.right_flank_mut_aggregates = right_flank_mut_mappings.get_raw_result(), right_flank_mut_disorder_score, right_flank_mut_disorder_region
 
 class Insertion(Indel):
     __slots__ = super_slots + ['inserted_sequence']
@@ -231,11 +231,11 @@ class Insertion(Indel):
         if self.terminal_end =='left':
             lf_function_factor = 0.
         else:
-            lf_function_factor = function_factor[proteins[self.wt_prot].positions[self.left_flank_pos].mappings.rin_simple_class]
+            lf_function_factor = function_factor[proteins[self.wt_prot].positions[self.left_flank_pos].get_classification()]
         if self.terminal_end =='right':
             rf_function_factor = 0.
         else:
-            rf_function_factor = function_factor[proteins[self.wt_prot].positions[self.right_flank_pos].mappings.rin_simple_class]
+            rf_function_factor = function_factor[proteins[self.wt_prot].positions[self.right_flank_pos].get_classification()]
 
         insertion_function_factor = 0.5 * (lf_function_factor + rf_function_factor)
 
@@ -665,11 +665,11 @@ class Substitution(Indel):
                 if self.terminal_end =='left':
                     lf_function_factor = 0.
                 else:
-                    lf_function_factor = function_factor[proteins[self.wt_prot].positions[self.left_flank_pos].mappings.rin_simple_class]
+                    lf_function_factor = function_factor[proteins[self.wt_prot].positions[self.left_flank_pos].get_classification()]
                 if self.terminal_end =='right':
                     rf_function_factor = 0.
                 else:
-                    rf_function_factor = function_factor[proteins[self.wt_prot].positions[self.right_flank_pos].mappings.rin_simple_class]
+                    rf_function_factor = function_factor[proteins[self.wt_prot].positions[self.right_flank_pos].get_classification()]
 
                 insertion_function_factor = 0.5 * (lf_function_factor + rf_function_factor)
 
@@ -700,7 +700,7 @@ class Substitution(Indel):
             over_insertion = ''
             ins_start = None
             for ipos, aa in enumerate(self.inserted_sequence):
-                if (ipos + 1) < deleted_seq_len:
+                if (ipos) < deleted_seq_len:
                     seq_pos = self.left_flank_pos + ipos
                     subs.append((seq_pos, aa))
                 else:

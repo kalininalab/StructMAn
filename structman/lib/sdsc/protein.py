@@ -262,7 +262,7 @@ class Protein:
             if functionally_weighted:
                 weight = self.positions[pos].get_score()
 
-            #print(pos, recommended_structure, weight, self.positions[pos].mappings.rin_simple_class)
+            #print(pos, recommended_structure, weight, self.positions[pos].get_classification())
 
             rec_structs[struct_tuple] += weight
 
@@ -465,7 +465,10 @@ class Protein:
             if key != tag_key:
                 continue
             elif float_type:
-                tag_value = float(value)
+                try:
+                    tag_value = float(value)
+                except:
+                    tag_value = None
         return tag_value
 
     def add_annotation(self, pdb_id, chain, anno_obj):
@@ -538,9 +541,6 @@ class Protein:
     def set_aggregated_interface_map(self, aggregated_interface_map):
         self.aggregated_interface_map = aggregated_interface_map
 
-    def add_pos_res_mapping(self, pos, pdb_id, chain, res_nr, mapping):
-        self.positions[pos].add_pos_res_mapping(pdb_id, chain, res_nr, mapping)
-
     def classify(self, pos, config):
         self.positions[pos].classify(config)
 
@@ -548,7 +548,7 @@ class Protein:
         classifications = []
         for _pos in range(len(self.positions)):
             pos = _pos + 1
-            c = self.positions[pos].mappings.rin_simple_class
+            c = self.positions[pos].get_classification()
             classifications.append(c)
         return classifications
 
@@ -1294,9 +1294,6 @@ class Proteins:
             if len(target_dict[chain]) == 0:
                 del target_dict[chain]
         return target_dict
-
-    def add_pos_res_mapping(self, u_ac, pos, pdb_id, chain, res_nr, mapping):
-        self.protein_map[u_ac].add_pos_res_mapping(pos, pdb_id, chain, res_nr, mapping)
 
     def classify(self, u_ac, pos, config):
         self.protein_map[u_ac].classify(pos, config)

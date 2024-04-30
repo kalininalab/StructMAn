@@ -44,7 +44,7 @@ setup(
         "numpy>=1.22.3",
         "psutil>=5.8.0",
         "pymysql>=1.0.2",
-        "ray==2.9.1",
+        "ray==2.10.0",
         "msgpack>=1.0.3",
         "zstd>=1.5.2.5",
         "pandas>=1.3.3",
@@ -55,7 +55,8 @@ setup(
         "pycairo>=1.23.0",
         "powerlaw>=1.5",
         "biotite>=0.38.0",
-        "markdown>=2.6.9"
+        "markdown>=2.6.9",
+        "pdfkit==1.0.0"
     ],
 
     package_data = {

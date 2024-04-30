@@ -112,7 +112,7 @@ class Structure:
             return self.residues[res_nr].get_aa()
         except:
             #print(f'Length of self.residues in get_residue_aa({res_nr}): {len(self.residues)}')
-            return self.residues[res_nr].get_aa()
+            return None
 
     def get_residue_sld(self, res_nr):
         return self.residues[res_nr].get_ligand_distances()

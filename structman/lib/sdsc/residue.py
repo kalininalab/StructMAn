@@ -9,7 +9,7 @@ class Residue(object):
                  'relative_main_chain_acc', 'relative_side_chain_acc', 'SSA',
                  'homo_dist_str', 'homomer_distances',
                  'interaction_profile', 'interaction_profile_str', 'centrality_score_str', 'centralities', 'modres', 'b_factor', 'database_id', 'stored', 'phi', 'psi',
-                 'intra_ssbond', 'ssbond_length', 'intra_link', 'link_length', 'cis_conformation', 'cis_follower',
+                 'intra_ssbond', 'inter_ssbond', 'ssbond_length', 'intra_link', 'inter_link', 'link_length', 'cis_conformation', 'cis_follower',
                  'inter_chain_median_kd', 'inter_chain_dist_weighted_kd', 'inter_chain_median_rsa',
                  'inter_chain_dist_weighted_rsa', 'intra_chain_median_kd', 'intra_chain_dist_weighted_kd',
                  'inter_chain_interactions_median', 'inter_chain_interactions_dist_weighted',
@@ -22,7 +22,7 @@ class Residue(object):
                  relative_main_chain_acc=None, relative_side_chain_acc=None,
                  SSA=None, homo_dist_str=None, homomer_distances=None, interaction_profile=None, interaction_profile_str=None,
                  centrality_score_str=None, centralities=None, modres=None, b_factor=None, database_id=None, stored=False, phi=None, psi=None,
-                 intra_ssbond=None, ssbond_length=None, intra_link=None, link_length=None, cis_conformation=None, cis_follower=None,
+                 intra_ssbond=None, inter_ssbond=None, ssbond_length=None, intra_link=None, inter_link = None, link_length=None, cis_conformation=None, cis_follower=None,
                  inter_chain_median_kd=None, inter_chain_dist_weighted_kd=None, inter_chain_median_rsa=None,
                  inter_chain_dist_weighted_rsa=None, intra_chain_median_kd=None, intra_chain_dist_weighted_kd=None,
                  intra_chain_median_rsa=None, intra_chain_dist_weighted_rsa=None,
@@ -54,9 +54,11 @@ class Residue(object):
         self.stored = stored
         self.phi = phi
         self.psi = psi
-        self.intra_ssbond = intra_ssbond  # True if ssbond to another chain, False if ssbond to same chain, None if no ssbond
+        self.intra_ssbond = intra_ssbond
+        self.inter_ssbond = inter_ssbond
         self.ssbond_length = ssbond_length
         self.intra_link = intra_link
+        self.inter_link = inter_link
         self.link_length = link_length
         self.cis_conformation = cis_conformation
         self.cis_follower = cis_follower
@@ -295,7 +297,7 @@ class Residue(object):
         return self.phi, self.psi
 
     def get_residue_link_information(self):
-        return (self.intra_ssbond, self.ssbond_length, self.intra_link, self.link_length, self.cis_conformation, self.cis_follower)
+        return (self.intra_ssbond, self.inter_ssbond, self.ssbond_length, self.intra_link, self.inter_link, self.link_length, self.cis_conformation, self.cis_follower)
 
     def get_interaction_profile(self, get_whats_there=False):
         if get_whats_there:

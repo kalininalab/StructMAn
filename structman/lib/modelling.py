@@ -188,7 +188,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
     serializedPipeline.ray_hack()
 
     if config.verbosity >= 3:
-        print('Begin modelling of:', prot_id, pdb_id, tchain, label_add)
+        print('Begin modelling of:', prot_id, pdb_id, tchain, label_add, compl_obj.pdb_id)
 
     # Step zero: create process-specific temporary cwd folder
     truncated_prot_id = prot_id[:50]
@@ -253,8 +253,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
     else:
         template_page = compl_obj.getPage(config)
 
-    (coordinate_map, siss_coord_map, res_contig_map, ligands, metals, ions, box_map, chain_type_map, chainlist,
-     b_factors, modres_map, ssbond_map, link_map, cis_conformation_map, cis_follower_map) = templateFiltering.parsePDB(template_page)
+    (_, _, res_contig_map, _, _, _, box_map, _, _, _, _, _, _, _, _) = templateFiltering.parsePDB(template_page)
 
     chains = compl_obj.chainlist
     reduced_chains = []
@@ -263,11 +262,22 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
             reduced_chains.append(tchain)
             continue
 
-        if chain not in box_map:
+        if chain in compl_obj.homomers[tchain]:
+            reduced_chains.append(chain)
+            continue
+
+        if tchain not in box_map:
             return 'Chain not in box_map %s %s %s %s' % (prot_id, pdb_id, tchain, chain)
 
-        neighbors, center_dist = templateFiltering.box_check(box_map[tchain], box_map[chain], distance_threshold=config.short_distance_threshold)
-        if neighbors:
+        if chain not in box_map:
+            continue
+        neighbors, _ = templateFiltering.box_check(box_map[tchain], box_map[chain], distance_threshold=config.short_distance_threshold)
+        homo_neighbor = False
+        for homochain in compl_obj.homomers[tchain]:
+            _neighbors, _ = templateFiltering.box_check(box_map[homochain], box_map[chain], distance_threshold=config.short_distance_threshold)
+            if _neighbors:
+                homo_neighbor = True
+        if neighbors or homo_neighbor:
             reduced_chains.append(chain)
 
     chains = reduced_chains
@@ -365,7 +375,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
         f.close()
 
         # Step three: model
-        if config.verbosity <= 5:
+        if config.verbosity <= 4:
             with contextlib.redirect_stdout(None), contextlib.redirect_stderr(None):
                 model_core()
         else:
@@ -415,8 +425,8 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
             highlight_mutant_residue = None
 
     structman_model_obj = model_class.Model(model_id=model_id, path=model_path, tmp_folder=process_folder, template_structure=(pdb_id, tchain),
-                                            target_protein=prot_id, chain_id_map=modeller_chain_id_map, truncated_prot_id = truncated_prot_id,
-                                            template_resolution=compl_obj.resolution, sequence_identity=seq_id, coverage=cov, template_contig_map = res_contig_map, label_add = label_add)
+                                            target_protein=prot_id, label_add=label_add, chain_id_map=modeller_chain_id_map, truncated_prot_id = truncated_prot_id,
+                                            template_resolution=compl_obj.resolution, sequence_identity=seq_id, coverage=cov, template_contig_map = res_contig_map)
 
     structman_model_obj.analyze(config, highlight_mutant_residue =  highlight_mutant_residue, target_path = f'{target_path}/{model_id}.pdb')
 

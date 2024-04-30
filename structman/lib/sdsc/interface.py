@@ -252,13 +252,24 @@ class Aggregated_interface:
         return mi, ma, me, len(pos_list)
 
     def print_interface(self):
+        max_prints = 100
         print(f'Aggregated interface object: {self.protein}')
         print(f'Recommended complex: {self.recommended_complex} {self.chain} {self.interacting_chain}')
-        print(f'Positions:\n{self.positions}')
+        if len(self.positions) < max_prints:
+            print(f'Positions:\n{self.positions}')
+        else:
+            print(f'Positions, in total {len(self.positions)}')
         print('Interactions:')
+
+        n = 0
         for pos in self.pos_pos_interactions:
             for (i_prot, i_pos) in self.pos_pos_interactions[pos]:
                 print(f'{self.pos_pos_interactions[pos][(i_prot, i_pos)].protein_a} {self.pos_pos_interactions[pos][(i_prot, i_pos)].position_a} <-> {self.pos_pos_interactions[pos][(i_prot, i_pos)].protein_b} {self.pos_pos_interactions[pos][(i_prot, i_pos)].position_b}')
+                n += 1
+                if n >= max_prints:
+                    break
+            if n >= max_prints:
+                break
 
 class Position_Position_Interaction:
     __slots__ = ['protein_a', 'position_a', 'protein_b', 'position_b', 

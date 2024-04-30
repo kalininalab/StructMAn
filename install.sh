@@ -38,12 +38,15 @@ do
     esac
 done
 
+verbose_stdout=3
+verbose_stderr=4
+
 if [ "$verbose" = true ]; then
-    verbose_stdout=/dev/stdout
-    verbose_stderr=/dev/stderr
+    eval "exec $verbose_stdout>&1"
+    eval "exec $verbose_stderr>&2"
 else
-    verbose_stdout=/dev/null
-    verbose_stderr=/dev/null
+    eval "exec $verbose_stdout>/dev/null"
+    eval "exec $verbose_stderr>/dev/null"
 fi
 
 #Check if conda environment already exits, create it if not
@@ -51,7 +54,7 @@ env_list_result=$(conda env list | grep "$env_name")
 if [ -z "$env_list_result" ]
 then
     echo "Conda environment with name $env_name not in current environment list, setting up new environment ..."
-    conda create -n "$env_name" python=$current_python_version -y >$verbose_stdout
+    conda create -n "$env_name" python=$current_python_version -y >&$verbose_stdout
 else
     echo "Conda environment with name $env_name already in environment list."
 fi
@@ -68,13 +71,13 @@ new_env_path=$(conda env list | awk -v name="$env_name" '/^[^#]/{ if ($1 == name
     source "$conda_bash_path"
     conda activate "$env_name"
     echo "$new_env_path"" activated"
-} >$verbose_stdout
+} >&$verbose_stdout
 
 mamba_version_test_output=$(mamba --version 2>/dev/null)
 
 if [ -z "$mamba_version_test_output" ]
 then
-    conda install -y -c conda-forge mamba >$verbose_stdout 2>$verbose_stderr
+    conda install -y -c conda-forge mamba >&$verbose_stdout 2>&$verbose_stderr
 fi
 
 #install dependencies
@@ -94,15 +97,18 @@ fi
     mamba install -y requests-toolbelt
     echo "Installing package pymol ..."    
     mamba install -y -c conda-forge pymol-open-source
-} >$verbose_stdout
+} >&$verbose_stdout
 
 #install the main package
 echo "Installing StructMAn source code using pip ..."
-pip install "$SCRIPTPATH" >$verbose_stdout
+pip install "$SCRIPTPATH" >&$verbose_stdout
 
 #install mmseqs2
 echo "Installing MMseqs2 ..."
-mamba install -y -c bioconda mmseqs2 >$verbose_stdout
+mamba install -y -c bioconda mmseqs2 >&$verbose_stdout
+
+#install wkhtmltopdf
+mamba install -y -c conda-forge wkhtmltopdf >&$verbose_stdout
 
 if [ -z $storage_folder ]
 then
@@ -134,10 +140,10 @@ fi
 cp "$path_to_dssp_binary" "$new_env_path"/bin/smssp
 
 #Installing specific boost
-mamba install -y libboost==1.82 >$verbose_stdout
+mamba install -y libboost==1.82 >&$verbose_stdout
 
 #Installing grpc
-mamba install -y conda-forge::grpc-cpp==1.51.1 >$verbose_stdout
+pip install grpcio >$verbose_stdout
 
 #Init config file
 structman_config_path="$new_env_path"/lib/python"$current_python_version"/site-packages/structman/structman_config.txt
@@ -148,7 +154,7 @@ echo "    $structman_config_path"
     structman config mmseqs_tmp_folder "$tmp_folder_path" -c "$structman_config_path"
     structman config dssp_path smssp -c "$structman_config_path"
     structman config mmseqs2_db_path "$storage_folder"/pdbba_search_db_mmseqs2
-} >$verbose_stdout 2>$verbose_stderr
+} >&$verbose_stdout 2>&$verbose_stderr
 
 #install modeller
 if ! [ -z "$modeller_key" ]
@@ -161,7 +167,7 @@ then
         mamba install -y modeller
         echo "Setting the given modeller key to the modeller config ..."
         structman set_m_key "$modeller_key"
-    } >$verbose_stdout 2>$verbose_stderr
+    } >&$verbose_stdout 2>&$verbose_stderr
 fi
 
 echo "Setting StructMAn config and database ..."
@@ -177,7 +183,7 @@ then
         structman config db_address "$database_server" -c "$structman_config_path"
         echo "Setting up the database ..."
         structman database create --compute_ppi
-    } >$verbose_stdout 2>$verbose_stderr
+    } >&$verbose_stdout 2>&$verbose_stderr
 else
     database_name=main_db
     local_database_path="$local_database_folder"/local_structman_database.db
@@ -187,10 +193,10 @@ else
         structman config db_name "$database_name" -c "$structman_config_path"
         structman config db_address "-"
         structman database create --compute_ppi
-    } >$verbose_stdout 2>$verbose_stderr
+    } >&$verbose_stdout 2>&$verbose_stderr
 fi
 
-structman update check_search_db >$verbose_stdout 2>$verbose_stderr
+structman update check_search_db >&$verbose_stdout 2>&$verbose_stderr
 
 
 echo "StructMAn successfully installed, please activate the right conda environment before using it:"

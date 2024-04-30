@@ -40,15 +40,17 @@ def get_optimal_templates(prot_id, proteins, config):
 
 # called by structman_main
 def mass_model(session_id, config, outfolder, include_snvs=False, template_selection_scheme = "functional_annotation", with_multi_mutations = True,
-                prot_db_ids = None, model_wts = False):
+                prot_db_ids = None, model_wts = False, skip_individual_indel_mutants = False, blacklist = None):
     current_chunk = 1
     proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True, with_mappings = True,
                                        with_snvs=True, mutate_snvs=include_snvs, with_alignments=True, with_multi_mutations = with_multi_mutations,
                                        with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_ids)
 
+    if blacklist is None:
+        blacklist = set([])
     while proteins is not None:
 
-        print(f'Mass Modelling Pipeline\n####################### Processing Chunk {current_chunk} ########################################\n')
+        print(f'Mass Modelling Pipeline, tss: {template_selection_scheme}\n####################### Processing Chunk {current_chunk} ########################################\n')
 
         prot_ids = proteins.get_protein_ids()
 
@@ -65,6 +67,11 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
         model_jobs = {}
 
         for prot_id in prot_ids:
+            if proteins[prot_id].mutant_type == 'indel' and skip_individual_indel_mutants:
+                continue
+
+            if prot_id in blacklist:
+                continue
 
             print(f'Processing: {prot_id}')
 
@@ -176,6 +183,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                     print(f'mm_position_dict for {prot_id}\n{mm_position_dict}\n')
 
                 for mut_prot_id in mm_position_dict:
+                    if mut_prot_id in blacklist:
+                        continue
                     sav_pos, inserts, del_flanks = mm_position_dict[mut_prot_id]
 
                     inv_inserts = invert_deletion_flanks(del_flanks)
@@ -201,6 +210,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                         except:
                             print(f'Error: getting the alignments failed in the modelling process of {prot_id} with highlighting {mut_prot_id}')
                             continue
+                    else:
+                        continue
 
                     if prot_id not in model_jobs:
                         model_jobs[prot_id] = {}
@@ -252,7 +263,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
         if current_chunk == 1:
             model_output = out_generator.OutputGenerator()
-            headers = ['Input ID', 'Wildtype protein', 'Protein ID', 'Template PDB ID', 'Template chain',
+            headers = ['Input ID', 'Wildtype protein', 'Protein ID', 'Additional Label', 'Template PDB ID', 'Template chain',
                        'Model chain', 'Template resolution', 'Sequence identity', 'Coverage', 'File location']
             model_output.add_headers(headers)
             f = open(summary_file, 'a')
@@ -273,6 +284,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                 target_file_name = f'{model.truncated_prot_id}-{label_add}_{pdb_id}:{tchain}.pdb'
 
                 target_path = f'{model_database}/{target_file_name}'
+                if not os.path.isfile(model.path):
+                    continue
                 shutil.copy(model.path, target_path)
 
                 input_id = proteins[model.target_protein].input_id
@@ -282,6 +295,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                 model_output.add_value('Input ID', input_id)
                 model_output.add_value('Wildtype protein', proteins[model.target_protein].wildtype_protein)
                 model_output.add_value('Protein ID', model.target_protein)
+                model_output.add_value('Additional Label', model.label_add)
                 model_output.add_value('Template PDB ID', pdb_id)
                 model_output.add_value('Template chain', tchain)
                 model_output.add_value('Model chain', model_chain)

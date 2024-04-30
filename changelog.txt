@@ -1,3 +1,9 @@
+Version 1.5.0
+    - Gene report function is now functional
+    - Reorganized features into classes, making adding new features in the future easier
+        This how features are stored and retrieved from the database, thus a new major version change was necessary.
+    - Improved the installer
+
 Version 1.4.1
     - Paralellized th MicroMiner lookup pipeline
     - Continued implementation of the gene report function

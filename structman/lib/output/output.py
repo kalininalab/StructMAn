@@ -111,8 +111,8 @@ def appendOutput(proteins, outfolder, session_name, out_objects=None):
 
             iupred = position.get_disorder_score()
             disorder_state = position.get_disorder_region()
-            centrality_scores = mappings.get_weighted_centralities()
-            rin_profile = mappings.get_weighted_profile()
+            centrality_scores = mappings.rin_based_features.get_centralities()
+            rin_profile = mappings.rin_based_features.get_profile()
 
             mut_aas = position.get_mut_aas()
             snv_tag_map = {}
@@ -383,9 +383,9 @@ def main(sess_id, output_path, config, custom_db_mode=False, intertable=False):
         t01 = time.time()
         if config.verbosity >= 2:
             print("Time for classificationOutput: ", t01 - t00)
-        for classfile in classfiles:
-            out_utils.classDistributionFromFile(classfile, output_path, session_name, config)
-            out_utils.classDistributionFromFile(classfile, output_path, session_name, config, rin_classes=True)
+        #for classfile in classfiles:
+        #    out_utils.classDistributionFromFile(classfile, output_path, session_name, config)
+        #    out_utils.classDistributionFromFile(classfile, output_path, session_name, config, rin_classes=True)
         t02 = time.time()
         if config.verbosity >= 2:
             print("Time for producing classification distributions: ", t02 - t01)
@@ -401,10 +401,10 @@ def main(sess_id, output_path, config, custom_db_mode=False, intertable=False):
     if config.verbosity >= 2:
         print("Time for producing classification file: ", t1 - t0)
 
-    if config.indels_given_by_input:
-        if config.verbosity >= 2:
-            print('Starting indel analysis output generation')
-        indel_package.create_indel_results_table(config, output_path, session_name, session_id)
+    #if config.indels_given_by_input:
+        #if config.verbosity >= 2:
+        #    print('Starting indel analysis output generation')
+        #indel_package.create_indel_results_table(config, output_path, session_name, session_id)
 
     db, cursor = config.getDB()
 

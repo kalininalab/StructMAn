@@ -7,11 +7,11 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
-
+import ray
 
 import biotite.sequence as seq
 import biotite.sequence.align as align
-import matplotlib.pyplot as plt
+
 import biotite.sequence.graphics as graphics
 import numpy as np
 import matplotlib.colors as mcolors
@@ -23,17 +23,18 @@ import powerlaw
 import numpy
 
 import markdown
-
+import pdfkit
 
 from structman.lib.database import database
 from structman.lib.database.database_core_functions import select
 from structman.lib.lib_utils import fuse_multi_mutations
 from structman.lib.output import out_generator, out_utils, massmodel
-from structman.base_utils.base_utils import resolve_path
+from structman.base_utils.base_utils import resolve_path, calculate_chunksizes
 
 class Gene:
 
-    def __init__(self, name, isoform_pair_multimutations, isoform_pair_scores, isoform_expressions, isoform_prot_objs):
+    def __init__(self, gene_id, name, isoform_pair_multimutations, isoform_pair_scores, isoform_expressions, isoform_prot_objs):
+        self.gene_id = gene_id
         self.name = name
         isoforms = {}
         self.all_expression_values_none = True
@@ -55,19 +56,27 @@ class Gene:
         self.isoforms = isoforms
         self.isoform_pairs = isoform_pairs
 
-    def generate_input_for_sequence_plot(self, isoform_id):
+    def generate_input_for_sequence_plot(self, isoform_id, insignificant_isoforms):
         prot = self.isoforms[isoform_id][2]
         seq = prot.sequence
         classifications = prot.get_ordered_classifications()
         isoform_differences = {}
+        isoform_sequences = {}
+        isoform_classifications = {}
         for iso_a, iso_b in self.isoform_pairs:
             if iso_a != isoform_id:
+                continue
+            if iso_a in insignificant_isoforms:
+                continue
+            if iso_b in insignificant_isoforms:
                 continue
             insertions, dels, subs = self.isoform_pairs[(iso_a, iso_b)][1].get_affected_positions()
             #print(iso_a, iso_b)
             #self.isoform_pairs[(iso_a, iso_b)][1].print_indels()
             isoform_differences[iso_b] = insertions, dels, subs
-        return seq, isoform_id, classifications, isoform_differences
+            isoform_sequences[iso_b] = self.isoforms[iso_b][2].sequence
+            isoform_classifications[iso_b] = self.isoforms[iso_b][2].get_ordered_classifications()
+        return seq, isoform_id, classifications, isoform_differences, isoform_sequences, isoform_classifications
 
 def init_gene_isoform_table(out_file, obj_only = False):
     genes_output = out_generator.OutputGenerator()
@@ -132,6 +141,15 @@ def calcWeightedGI(isoforms, proteins, protein_list, wt_condition_tag, disease_c
         expression_wt_condition_prot_b = prot_b.retrieve_tag_value(wt_condition_tag)
         expression_d_condition_prot_b = prot_b.retrieve_tag_value(disease_condition_tag)
 
+        if expression_wt_condition_prot_a is None:
+            continue
+        if expression_d_condition_prot_a is None:
+            continue
+        if expression_wt_condition_prot_b is None:
+            continue
+        if expression_d_condition_prot_b is None:
+            continue
+
         unweighted_score = multi_mutation.get_score(proteins)
         isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = unweighted_score
         if expression_wt_condition_prot_a <= expression_d_condition_prot_a: #prot_a needs to decrease in expression
@@ -148,6 +166,10 @@ def calcWeightedGI(isoforms, proteins, protein_list, wt_condition_tag, disease_c
     for prot in protein_list:
         expression_wt_condition = prot.retrieve_tag_value(wt_condition_tag)
         expression_d_condition = prot.retrieve_tag_value(disease_condition_tag)
+        if expression_wt_condition is None:
+            continue
+        if expression_d_condition is None:
+            continue
         total_expression += expression_wt_condition + expression_d_condition
 
     if total_expression == 0:
@@ -194,15 +216,18 @@ def calculateGeneIsoformScore(isoforms, proteins, wt = None, wt_condition_tag = 
         #print(f'Isoform: {prot_b.primary_protein_id} with indels:')
         #multi_mutation.print_indels()
 
-    fused_multi_mutation = fuse_multi_mutations(wt_reduced_multi_mutations)
-
-    #print(f'Fused Isoform:')
-    #fused_multi_mutation.print_indels()
-
-    try:
-        GI_score = fused_multi_mutation.get_score(proteins)
-    except:
+    if len(wt_reduced_multi_mutations) == 0:
         GI_score = None
+    else:
+        fused_multi_mutation = fuse_multi_mutations(wt_reduced_multi_mutations)
+
+        #print(f'Fused Isoform:')
+        #fused_multi_mutation.print_indels()
+
+        try:
+            GI_score = fused_multi_mutation.get_score(proteins)
+        except:
+            GI_score = None
 
     return GI_score, wt.primary_protein_id, weighted_gi_score, max_contribution_isoform, normalized_max_contribution, isoform_pair_scores, isoform_expressions
 
@@ -241,12 +266,16 @@ def calculate_gene_isoform_score_dict(session_id, config, proteins = None, creat
 
     prot_db_ids = set()
 
+    overwrite_targets = []
+
     for gene_db_id in gene_isoform_map:
-        gene_name = gene_id_map[gene_db_id]
+        gene_id, gene_name = gene_id_map[gene_db_id]
 
         if target_genes is not None:
-            if gene_name not in target_genes:
+            if gene_id not in target_genes:
                 continue
+        else:
+            overwrite_targets.append(gene_id)
 
         isoforms = []
         isoform_prot_objs = {}
@@ -262,28 +291,31 @@ def calculate_gene_isoform_score_dict(session_id, config, proteins = None, creat
             
 
         if config.verbosity >= 3:
-            print(f'Call of calculateGeneIsoformScore for {gene_name}\n')
+            print(f'Call of calculateGeneIsoformScore for {gene_id}\n')
 
         gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score, isoform_pair_scores, isoform_expressions = calculateGeneIsoformScore(isoforms, proteins, wt_condition_tag = config.condition_1_tag, disease_condition_tag = config.condition_2_tag)
 
         if config.verbosity >= 3:
-            print(f'GI Score for {gene_name}: {gi_score}')
+            print(f'GI Score for {gene_id}: {gi_score}')
 
         if create_gene_class:
-            gene_class = Gene(gene_name, isoforms, isoform_pair_scores, isoform_expressions, isoform_prot_objs)
-            gene_isoform_score_dict[gene_name] = gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score, gene_class
+            gene_class = Gene(gene_id, gene_name, isoforms, isoform_pair_scores, isoform_expressions, isoform_prot_objs)
+            gene_isoform_score_dict[gene_id] = gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score, gene_class
         else:
-            gene_isoform_score_dict[gene_name] = gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score
+            gene_isoform_score_dict[gene_id] = gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score
+
+    if len(overwrite_targets) > 0:
+        target_genes = overwrite_targets
 
     if return_prot_db_ids:
-        return gene_isoform_score_dict, prot_db_ids
+        return gene_isoform_score_dict, target_genes, prot_db_ids
 
-    return gene_isoform_score_dict
+    return gene_isoform_score_dict, target_genes
 
 def generate_gene_isoform_scores(session_id, config, outfolder, session_name):
     outfile = out_utils.generate_gis_filename(outfolder, session_name)
 
-    gene_isoform_score_dict = calculate_gene_isoform_score_dict(session_id, config)
+    gene_isoform_score_dict, _ = calculate_gene_isoform_score_dict(session_id, config)
 
     genes_output, f = init_gene_isoform_table(outfile)
 
@@ -300,14 +332,35 @@ def generate_gene_isoform_scores(session_id, config, outfolder, session_name):
 
     f.close()
 
-def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = 'ExC1', condition_2_label = 'ExC2'):
-    print(f'Creating isoform relations plot for: {gene_name}')
+def make_barplot(title, label_a, label_b, value_a, value_b, outfile, color = 'grey', measure_label = 'Transcript Usage'):
+    x_pos = np.arange(2)
+    plt.bar(x_pos, [value_a, value_b], color = color)
+    plt.title(title)
+    plt.ylabel(measure_label)
+    plt.xticks(x_pos, [label_a, label_b])
+    plt.savefig(outfile)
+    plt.clf()
+    plt.cla()
+    plt.close()
+
+
+def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = 'ExC1', condition_2_label = 'ExC2'):
+    if config.verbosity >= 3:
+        print(f'Creating isoform relations plot for: {gene_name}')
 
     gene_class = gene_isoform_score_dict[gene_name][5]
 
     if gene_class.all_expression_values_none:
-        print(f'Creating isoform relations invalid for {gene_class.name}, expression values are not defined. Please set the condition tags with --condition_1 "tag name" and --condition_2 "tag name"')
+        print(f'Creating isoform relations invalid for {gene_class.gene_id}, expression values are not defined. Please set the condition tags with --condition_1 "tag name" and --condition_2 "tag name"')
         return None
+
+    barplot_folder = f'{outfile_stem}_barplots'
+    if not os.path.isdir(barplot_folder):
+        os.mkdir(barplot_folder)
+
+    relation_plot_folder = f'{outfile_stem}_relationplots'
+    if not os.path.isdir(relation_plot_folder):
+        os.mkdir(relation_plot_folder)    
 
     node_id_list = []
     node_ids = {}
@@ -321,15 +374,49 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
     total_expression_condition_2 = 0
     for isoform in gene_class.isoforms:
         expression_wt_condition, expression_d_condition, prot_object = gene_class.isoforms[isoform]
-        if expression_d_condition == 0 and expression_wt_condition == 0:
+        if (expression_d_condition == 0 and expression_wt_condition == 0) or expression_wt_condition is None or expression_d_condition is None:
             continue
         total_expression_condition_1 += expression_wt_condition
         total_expression_condition_2 += expression_d_condition
 
+    path_to_gene_expression_plot = f'{barplot_folder}/{gene_name}_total_expression_plot.png'
+    make_barplot(gene_name, 'Condition 1', 'Condition 2', total_expression_condition_1, total_expression_condition_2, path_to_gene_expression_plot, color = 'grey', measure_label = 'Total Expression')
+
+    identicals = set()
+    insignificant_isoforms = set()
+    top_4_isoforms = []
+    longest_isoform = None
+    usage_plots = {}
     for isoform in gene_class.isoforms:
         expression_wt_condition, expression_d_condition, prot_object = gene_class.isoforms[isoform]
-        if expression_d_condition == 0 and expression_wt_condition == 0:
+        if (expression_d_condition == 0 and expression_wt_condition == 0) or expression_wt_condition is None or expression_d_condition is None:
+            insignificant_isoforms.add(isoform)
             continue
+        if isoform in identicals:
+            continue
+
+        fused_label = isoform
+        fused_label_short = 0
+        for isoform_b in gene_class.isoforms:
+            if isoform_b == isoform:
+                continue
+            try:
+                _, multi_mutation = gene_class.isoform_pairs[(isoform, isoform_b)]
+            except:
+                try:
+                    _, multi_mutation = gene_class.isoform_pairs[(isoform_b, isoform)]
+                except:
+                    continue
+
+            l_deleted, l_inserted, l_substituted = multi_mutation.give_count()
+
+            if l_deleted == 0 and l_inserted == 0 and l_substituted == 0:
+                identicals.add(isoform_b)
+                fused_label = f'{fused_label}\n{isoform_b}'
+                fused_label_short += 1
+                expression_wt_condition_b, expression_d_condition_b, _ = gene_class.isoforms[isoform_b]
+                expression_wt_condition += expression_wt_condition_b
+                expression_d_condition += expression_d_condition_b
 
         ex_change = expression_wt_condition - expression_d_condition
         if ex_change > max_ex_change:
@@ -339,12 +426,30 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
 
         raw_ex_changes[isoform] = ex_change
 
-        if expression_wt_condition > 0:
+        if expression_wt_condition > 0 and expression_d_condition > 0:
             log_fold_change = round(math.log2(expression_d_condition/expression_wt_condition), 2)
         else:
             log_fold_change = 'inf'
         usage_condition_1 = round(expression_wt_condition/total_expression_condition_1, 2)
         usage_condition_2 = round(expression_d_condition/total_expression_condition_2, 2)
+
+        combined_usage = usage_condition_1 + usage_condition_2
+        #Filter out insignificant isoforms
+        if combined_usage < 0.01:
+            insignificant_isoforms.add(isoform)
+            continue
+
+        top_4_isoforms.append((isoform, combined_usage))
+
+        if fused_label_short == 0:
+            fused_label_short = isoform
+        else:
+            fused_label_short = f'{isoform}_and_{fused_label_short}_others'
+
+        outfile = f'{barplot_folder}/{gene_name}_{fused_label_short}_usage_plot.png'
+        make_barplot(fused_label, 'Condition 1', 'Condition 2', usage_condition_1, usage_condition_2, outfile, color = 'grey', measure_label = 'Transcript Usage')
+        usage_plots[isoform] = outfile
+
         usage_change = round(usage_condition_2 - usage_condition_1, 2)
 
         node_id_list.append(isoform)
@@ -353,9 +458,22 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
         if seq_len > max_seq_len:
             max_seq_len = seq_len
             longest_isoform = isoform
-        label = f'{isoform}, Size: {seq_len}\n{condition_1_label}: {round(expression_wt_condition, 5)}\n{condition_2_label}: {round(expression_d_condition, 5)}\nl2fc: {log_fold_change}\nUsage {condition_1_label}: {usage_condition_1}\n Usage {condition_2_label}: {usage_condition_2}\nChange in usage: {usage_change}'
+        label = f'{fused_label}, Size: {seq_len}\n{condition_1_label}: {round(expression_wt_condition, 5)}\n{condition_2_label}: {round(expression_d_condition, 5)}\nl2fc: {log_fold_change}\nUsage {condition_1_label}: {usage_condition_1}\n Usage {condition_2_label}: {usage_condition_2}\nChange in usage: {usage_change}'
         #print(label)
         node_labels.append(label)
+
+    #print(list(gene_class.isoforms.keys()))
+
+    top_4_isoforms = sorted(top_4_isoforms, key=lambda x:x[1], reverse=True)[:4]
+    top_4_isoforms = set([x[0] for x in top_4_isoforms])
+    #print(top_4_isoforms)
+    for isoform in gene_class.isoforms:
+        if isoform in identicals:
+            insignificant_isoforms.add(isoform)
+        if isoform not in top_4_isoforms:
+            insignificant_isoforms.add(isoform)
+
+    #print(insignificant_isoforms)
 
     node_colors = []
     for isoform in node_id_list:
@@ -374,11 +492,20 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
     edge_colors = []
     identicals = set()
     max_sds = 0
+    uninterresting_isoform_pairs = []
     for (iso_a, iso_b) in gene_class.isoform_pairs:
         #print(iso_a, iso_b)
         if iso_a not in node_ids:
+            uninterresting_isoform_pairs.append((iso_a, iso_b))
             continue
         if iso_b not in node_ids:
+            uninterresting_isoform_pairs.append((iso_a, iso_b))
+            continue
+        if iso_a in insignificant_isoforms:
+            uninterresting_isoform_pairs.append((iso_a, iso_b))
+            continue
+        if iso_b in insignificant_isoforms:
+            uninterresting_isoform_pairs.append((iso_a, iso_b))
             continue
 
         expression_wt_condition_a, expression_d_condition_a, _ = gene_class.isoforms[iso_a]
@@ -401,12 +528,14 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
             edge_widths.append('max')
             edge_colors.append('blue')
             identicals.add((iso_a, iso_b))
+            uninterresting_isoform_pairs.append((iso_a, iso_b))
             continue
 
         #if raw_ex_changes[iso_a] < 0 or raw_ex_changes[iso_b] > 0:
         #    continue
 
         if SDS == 0 and len(node_labels) > 6:
+            uninterresting_isoform_pairs.append((iso_a, iso_b))
             continue
 
         edge_list.append((node_ids[iso_a], node_ids[iso_b]))
@@ -451,22 +580,22 @@ def create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outf
     visual_style['edge_label_size'] = node_size // 15
     visual_style['edge_color'] = edge_colors
     
-    svg_file = f'{outfile_stem}_{gene_name}_isoform_relations.svg'
+    svg_file = f'{relation_plot_folder}/{gene_name}_isoform_relations.svg'
 
     ig.plot(g, svg_file, **visual_style)
 
-    return longest_isoform
+    return svg_file, longest_isoform, uninterresting_isoform_pairs, path_to_gene_expression_plot, usage_plots, insignificant_isoforms
 
 
 def generate_isoform_relations(session_id, config, outfolder, session_name):
     outfile_stem = os.path.join(outfolder, f'{session_name}')
 
-    gene_isoform_score_dict = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True)
+    gene_isoform_score_dict, _ = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True)
 
     cmap=mpl.colormaps['RdYlGn']
 
     for gene_name in gene_isoform_score_dict:
-        create_isoform_relations_plot(gene_name, gene_isoform_score_dict, cmap, outfile_stem)
+        create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cmap, outfile_stem)
        
 
 
@@ -536,7 +665,7 @@ def generate_gene_interaction_network(session_id, config, outfolder, session_nam
         gene_isoform_score_dict = parse_gis_file(gis_file)
     else:
         proteins = database.proteinsFromDb(session_id, config, with_multi_mutations = True, with_mappings = True)
-        gene_isoform_score_dict = calculate_gene_isoform_score_dict(session_id, config, proteins = proteins)
+        gene_isoform_score_dict, _ = calculate_gene_isoform_score_dict(session_id, config, proteins = proteins)
 
     node_ids = {}
     node_id_list = []
@@ -791,16 +920,24 @@ def generate_gene_interaction_network(session_id, config, outfolder, session_nam
     if len(degree_map) == 0:
         return
     
-    pl_fit = powerlaw.Fit(numpy.array(list(degree_map.values())),xmin=1, xmax=1500)
-    figure = pl_fit.plot_pdf(color = 'b')
-    plt.xlabel('Node degree')
-    plt.ylabel('PDF (blue), CCDF (red)')
-    pl_fit.power_law.plot_pdf(color = 'b', linestyle = 'dashed', ax = figure)
-    pl_fit.plot_ccdf(color = 'r', ax = figure)
-    pl_fit.power_law.plot_ccdf(color = 'r', linestyle = 'dashed', ax = figure)    
+    try:
+        pl_fit = powerlaw.Fit(numpy.array(list(degree_map.values())),xmin=1, xmax=1500)
+        figure = pl_fit.plot_pdf(color = 'b')
+        plt.xlabel('Node degree')
+        plt.ylabel('PDF (blue), CCDF (red)')
+        pl_fit.power_law.plot_pdf(color = 'b', linestyle = 'dashed', ax = figure)
+        pl_fit.plot_ccdf(color = 'r', ax = figure)
+        pl_fit.power_law.plot_ccdf(color = 'r', linestyle = 'dashed', ax = figure)    
 
-    powerlaw_file = f'{outfile_stem}_powerlaw_plot.png'
-    plt.savefig(powerlaw_file)
+        powerlaw_file = f'{outfile_stem}_powerlaw_plot.png'
+        plt.savefig(powerlaw_file)
+        plt.clf()
+        plt.cla()
+        plt.close()
+    except:
+        [e, f, g] = sys.exc_info()
+        g = traceback.format_exc()
+        print(f"Creating the power law plot failed due to:\n{e}\n{f}\n{g}")
 
 def parse_target_list_file(path):
     f = open(path, 'r')
@@ -816,41 +953,154 @@ def parse_target_list_file(path):
 
     return targets
 
+@ray.remote(max_calls = 1)
+def gene_report_preprocess(chunk, store):
+    (config, gene_isoform_score_dict, cmap, outfile_stem, out_f, session_name) = store
+    whole_graph = None
+    uninterresting_isoform_pairs_dict = {}
+    plot_dict = {}
+    errors = []
+    for target in chunk:
+        gene_class = gene_isoform_score_dict[target][5]
+        if config.verbosity >= 3:
+            print(f'Creating Gene Report for {gene_class.gene_id} - {gene_class.name}')
+
+        path_to_isoform_relations_plot, longest_isoform, uninterresting_isoform_pairs, path_to_gene_expression_plot, usage_plots, insignificant_isoforms = create_isoform_relations_plot(config, target, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = config.condition_1_tag, condition_2_label = config.condition_2_tag)
+
+        uninterresting_isoform_pairs_dict[target] = (insignificant_isoforms, uninterresting_isoform_pairs)
+
+        if longest_isoform is None:
+            errors.append(f'Creating isoform relations plot failed for {target}')
+            continue
+        
+        input_for_sequence_plot = gene_class.generate_input_for_sequence_plot(longest_isoform, insignificant_isoforms)
+        if config.verbosity >= 5:
+            print(f'Input for sequence plot for {target}:\n{input_for_sequence_plot}')
+
+        try:
+            paths_to_isoform_plot = create_isoform_plot(input_for_sequence_plot, out_f, session_name, target)
+        except:
+            paths_to_isoform_plot = None
+            [e, f, g] = sys.exc_info()
+            g = traceback.format_exc()
+            errors.append(f"Creating the isoform plot failed due to:\n{e}\n{f}\n{g}")
+
+        plot_dict[target] = (path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots)
+
+        #whole_graph = retrieve_sub_graph(gml_file, config, out_f, session_name, target, depth = 1, filtered = False, whole_graph = whole_graph, return_whole_graph=True)
+    return plot_dict, uninterresting_isoform_pairs_dict, errors
+    
+
 def create_gene_report(session_id, target, config, out_f, session_name):
+
+    if config.verbosity >= 2:
+        print(f'Calling create_gene_report: session_id {session_id}, target {target}, out folder {out_f}, session_name {session_name}')
     if os.path.isfile(resolve_path(target)):
         targets = parse_target_list_file(resolve_path(target))
     else:
         targets = [target]
 
-    gene_gene_stem = os.path.join(out_f, f'{session_name}_gene_gene_network')
-    gml_file = f'{gene_gene_stem}.gml'
-    if not os.path.isfile(gml_file):
-        generate_gene_interaction_network(session_id, config, out_f, session_name)
+    if target == 'all':
+        targets = None
 
-    gene_isoform_score_dict, prot_db_ids = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True, target_genes = targets, return_prot_db_ids = True)
+    #gene_gene_stem = os.path.join(out_f, f'{session_name}_gene_gene_network')
+    #gml_file = f'{gene_gene_stem}.gml'
+    #if not os.path.isfile(gml_file):
+    #    generate_gene_interaction_network(session_id, config, out_f, session_name)
+
+    gene_isoform_score_dict, targets, prot_db_ids = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True, target_genes = targets, return_prot_db_ids = True)
 
     outfile_stem = os.path.join(out_f, f'{session_name}')
     cmap=mpl.colormaps['RdYlGn']
 
-    whole_graph = None
-    for target in targets:
-        longest_isoform = create_isoform_relations_plot(target, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = config.condition_1_tag, condition_2_label = config.condition_2_tag)
+    store = ray.put((config, gene_isoform_score_dict, cmap, outfile_stem, out_f, session_name))
 
+    small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(config.proc_n, len(targets))
+
+    chunks = []
+    chunk = []
+    for target in targets:
+        chunk.append(target)
+        if n_of_big_chunks > 0 and len(chunks) < n_of_big_chunks:
+            if len(chunk) == big_chunksize:
+                chunks.append(chunk)
+                chunk = []
+        elif n_of_small_chunks > 0:
+            if len(chunk) == small_chunksize:
+                chunks.append(chunk)
+                chunk = []
+
+    print(f'Amount of chunks: {len(chunks)}')
+
+    gene_report_preprocess_ids = []
+    for chunk in chunks:
+        gene_report_preprocess_ids.append(gene_report_preprocess.remote(chunk, store))
+
+    """
+    whole_graph = None
+    uninterresting_isoform_pairs_dict = {}
+    plot_dict = {}
+    for target in targets:
         gene_class = gene_isoform_score_dict[target][5]
+        if config.verbosity >= 3:
+         print(f'Creating Gene Report for {gene_class.gene_id} - {gene_class.name}')
+
+        path_to_isoform_relations_plot, longest_isoform, uninterresting_isoform_pairs, path_to_gene_expression_plot, usage_plots, insignificant_isoforms = create_isoform_relations_plot(config, target, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = config.condition_1_tag, condition_2_label = config.condition_2_tag)
+
+        uninterresting_isoform_pairs_dict[target] = (insignificant_isoforms, uninterresting_isoform_pairs)
+
+
+        if longest_isoform is None:
+            print(f'Creating isoform relations plot failed for {target}')
+            continue
+
+        
         input_for_sequence_plot = gene_class.generate_input_for_sequence_plot(longest_isoform)
-        if config.verbosity >= 4:
+        if config.verbosity >= 5:
             print(f'Input for sequence plot for {target}:\n{input_for_sequence_plot}')
 
-        path_to_isoform_plot = create_isoform_plot(input_for_sequence_plot, out_f, session_name, target)
-        whole_graph = retrieve_sub_graph(gml_file, config, out_f, session_name, target, depth = 1, filtered = False, whole_graph = whole_graph, return_whole_graph=True)
-        
-    massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids)
-    paths_to_model_plots = create_pymol_plot(out_f)
-    create_markdown(out_f, paths_to_model_plots)
+        try:
+            paths_to_isoform_plot = create_isoform_plot(input_for_sequence_plot, out_f, session_name, target)
+        except:
+            paths_to_isoform_plot = None
+            [e, f, g] = sys.exc_info()
+            g = traceback.format_exc()
+            print(f"Creating the isoform plot failed due to:\n{e}\n{f}\n{g}")
+
+        plot_dict[target] = (path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots)
+
+        #whole_graph = retrieve_sub_graph(gml_file, config, out_f, session_name, target, depth = 1, filtered = False, whole_graph = whole_graph, return_whole_graph=True)
+    
+    """
+
+    uninterresting_isoform_pairs_dict = {}
+    plot_dict = {}
+    for chunk_result in ray.get(gene_report_preprocess_ids):
+        sub_plot_dict, sub_uninterresting_isoform_pairs_dict, errors = chunk_result
+        for error in errors:
+            print(error)
+        plot_dict.update(sub_plot_dict)
+        uninterresting_isoform_pairs_dict.update(sub_uninterresting_isoform_pairs_dict)
+
+    blacklist = set()
+    for target in uninterresting_isoform_pairs_dict:
+        (insignificant_isoforms, uninterresting_isoform_pairs) = uninterresting_isoform_pairs_dict[target]
+        blacklist = blacklist | insignificant_isoforms
+
+    massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids, skip_individual_indel_mutants = True, blacklist = blacklist)
+    md_lines = [f"# **--- Gene Report for {session_name} ---**\n\n\n"]
+    for target in targets:
+        gene_class = gene_isoform_score_dict[target][5]
+        model_plot_dicts = {}
+        for isoform in gene_class.isoforms:
+           model_plot_dicts[isoform] = create_pymol_plot(config, out_f, isoform, uninterresting_isoform_pairs_dict[target][1])
+        md_lines += create_markdown(config, out_f, model_plot_dicts, gene_class.name, target, plot_dict[target])
+    
+    fuse_markdown(md_lines, session_name, out_f)
 
 def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2, filtered = False, whole_graph = None, return_whole_graph = False):
     if config.verbosity >= 2:
-        print(f'Calling retrieve_sub_graph for {target} and {ggin_file}')
+        print(f'Calling retrieve_sub_graph for {target} and {ggin_file}, whole_graph: {whole_graph}')
 
     if whole_graph is None:
         try:
@@ -973,7 +1223,7 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
         return g
 
 
-def create_pymol_plot(out_f):
+def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs):
     try:
         import pymol.cmd as pymol_cmd
     except:
@@ -981,339 +1231,402 @@ def create_pymol_plot(out_f):
         g = traceback.format_exc()
         print(f"importing pymol failed due to:\n{e}\n{f}\n{g}")
         return None
+    
     #parse models from summary
     model_summary = pd.read_csv(f"{out_f}/model_summary.tsv", sep='\t')
+
+    pymol_out_f = f"{out_f}/models_pymol_plots"
+
+    if config.verbosity >= 2:
+        print(f'Calling of create_pymol_plot: target protein: {target}, outfolder: {pymol_out_f}')
+
     list_of_paths = model_summary['File location']
-    paths_to_plots = []
-    for path_to_pdb in list_of_paths:
-        try:
-            name_list = path_to_pdb.split("/models/",1)
-            name = name_list[1]
-            paths_to_plots.append(f'{out_f}/models-plots/{name}.png')
-            pymol_cmd.load(path_to_pdb)
-            pymol_cmd.spectrum("b", "rainbow", "n. and CA")
-            pymol_cmd.orient()
-            pymol_cmd.png(f'{out_f}/models-plots/{name}.png', dpi=150, ray=1)
-        except:
-            [e, f, g] = sys.exc_info()
-            g = traceback.format_exc()
-            print(f"couldn't create pymol plot for {path_to_pdb}:\n{e}\n{f}\n{g}")
-    return paths_to_plots
+    prot_ids = model_summary['Input ID']
+    mut_prot_ids = model_summary['Additional Label']
+    plot_dict = {}
+    
+    if not os.path.exists(pymol_out_f):
+        os.makedirs(pymol_out_f)
 
-def create_markdown(out_f, paths_to_model_plots):
-    path_to_md = f"{out_f}/gene_report.md"
-    path_to_html = f"{out_f}/gene_report.html"
-    with open(path_to_md, 'w') as f:
-        f.write("# Gene Report")
-        #ToDo
+    #produce one png with all structures
+    pymol_cmd.set("grid_mode", 1)
 
+    for pos, prot_id in enumerate(prot_ids):
+        if prot_id != target:
+            continue
+        file = list_of_paths[pos]
+        mut_prot_id = mut_prot_ids[pos]
+        if (prot_id, mut_prot_id) in uninterresting_isoform_pairs:
+            continue
+        pymol_cmd.load(file)
+        pymol_cmd.spectrum("b", "rainbow", "n. ca")
+        pymol_cmd.orient()
+
+        outfile = f"{pymol_out_f}/{target}_{mut_prot_id}_pymol_grid_mode.png"
+        pymol_cmd.png(outfile, width=1200, dpi=300, ray=1)
+        pymol_cmd.delete('all')
+
+        plot_dict[mut_prot_id] = outfile
+
+    return plot_dict
+
+def add_figure_to_md(md_lines, figure_title, path_to_plot):
+    md_lines.append(f'![{figure_title}]({path_to_plot})\n')
+
+def create_markdown(config, out_f, model_plot_dicts, gene_name, target, plots):
+    if config.verbosity >= 2:
+        print(f'Calling of create_markdown: target {target}')
+
+    path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots = plots
+    md_lines = []
+    md_lines.append(f"\n\n# Report for {target} - {gene_name}\n\n")
+    if paths_to_isoform_plot is not None:
+        md_lines.append(f"## Alignment plot: \n")
+        for path_to_isoform_plot in paths_to_isoform_plot:
+            add_figure_to_md(md_lines, 'isoforms', path_to_isoform_plot)
+
+    md_lines.append(f'## Gene expression plot:\n')
+    add_figure_to_md(md_lines, 'gene_expressions', path_to_gene_expression_plot)
+    md_lines.append(f'## Isoform usages:\n')
+    for isoform in usage_plots:
+        add_figure_to_md(md_lines, f'isoform_usage_{isoform}', usage_plots[isoform])
+
+    md_lines.append(f"## Isoform relation graph: \n")
+    add_figure_to_md(md_lines, 'isoforms', path_to_isoform_relations_plot)
+    
+    for isoform in model_plot_dicts:
+        md_lines.append(f'## Structure models for: {isoform}:\n')
+        for mutant_isoform in model_plot_dicts[isoform]:
+            md_lines.append(f'### Difference to {mutant_isoform}:\n')
+            add_figure_to_md(md_lines, f'structure_{isoform}_{mutant_isoform}', model_plot_dicts[isoform][mutant_isoform])
+    return md_lines
+
+    
+
+def fuse_markdown(md_lines, session_name, out_f, path_add = ''):
+    path_to_md = f"{out_f}/{session_name}{path_add}_gene_report.md"
+    path_to_html = f"{out_f}/{session_name}{path_add}_gene_report.html"
+    path_to_pdf = f"{out_f}/{session_name}{path_add}_gene_report.pdf"
+
+    f = open(path_to_md, 'w')
+    f.write(''.join(md_lines))
+    f.close()
+        
     html_string = ""
     with open(path_to_md, 'r') as r:
         list = r.readlines()
         for obj in list:
-            html_string = html_string = markdown.markdown(obj)
+            html_string += markdown.markdown(obj)
 
     with open(path_to_html, 'w') as w:
         w.write(html_string)
 
+    pdfkit.from_file(path_to_html, path_to_pdf)
+
 class MyPlotter(graphics.LetterPlotter):
-    class_list = []
-    class_color_dict = dict([])
-    trace = []
+
     #returns color at trace[column_i, seq_i]
-    def set_classifications(self, classification_list: list, classification_color_dict: dict, trace: list):
+    def set_classifications(self, classification_list: list, classification_color_dict: dict, trace):
         self.class_list = classification_list
         self.class_color_dict = classification_color_dict
         self.trace = trace
+
     def get_color(self, alignment, column_i, seq_i):
-        color = self.class_color_dict[self.class_list[column_i]]
         if seq_i == 0:
             return 'w'
-        if self.trace[column_i][seq_i]==-1:
-            amount = 0.5
-            c = colorsys.rgb_to_hls(*mcolors.to_rgb(color))
-            return colorsys.hls_to_rgb(c[0], 1 - amount * (1 - c[1]), c[2])
+        if self.trace[column_i][seq_i] == -1:
+            #case gap, return white
+            return 'w'
+        color = self.class_color_dict[self.class_list[seq_i - 1][column_i]]
         return color
-    
-def create_isoform_plot(obj, out_f, session_name, target):
-    sequence = obj[0]
-    id = obj[1]
-    protein_sequence = seq.ProteinSequence(sequence)
-    classifications = obj[2]
-    isoforms = obj[3]
-    
-    isoform_triples = isoforms_as_triples(sequence, isoforms)
-    classification_color_dict = parse_classifications(classifications)
-    
-    labels = ['position', id]
-    for key in isoforms.keys():
-        labels.append(key)
-        
-       # produce isoform strings, transform them to isoforms as ProteinSequences and produce trace
-    isoform_sequences, trace, classification_list = produce_isoform_sequences(sequence, isoform_triples, classifications)
-          
-    i = 0
-    trace_final = []
-    positions = []
-    for entry in trace:
-        positions.append(i+1)
-        entry = [i] + entry[0:]
-        trace_final.append(entry)
-        i += 1
-        
-    protein_seq_isoforms = [positions, protein_sequence]
-    for iso in isoform_sequences:
-        p_seq_iso = seq.ProteinSequence(iso)
-        protein_seq_isoforms.append(p_seq_iso)
-    
-    trace_array = np.asarray(trace_final, dtype=np.int64)
-    
-    alignment = align.Alignment(protein_seq_isoforms, trace_array)
+
+def align_by_mutation_list(major_sequence_raw, isoform_sequences, isoform_dict, major_isoform_id):
+    raw_major_gaps = []
+    transformed_isoform_dict = {}
+    for isoform_id in isoform_dict:
+        insertions = isoform_dict[isoform_id][0]
+        deletions = isoform_dict[isoform_id][1]
+        transformed_insertions = {}
+        transformed_deletions = set(deletions)
+        for insertion_pos, inserted_sequence in insertions:
+            raw_major_gaps.append((insertion_pos, len(inserted_sequence)))
+            transformed_insertions[insertion_pos] = len(inserted_sequence)
+        transformed_isoform_dict[isoform_id] = (transformed_insertions, transformed_deletions)
 
 
+    fused_major_gaps = {}
+    for insertion_pos, gap_len in raw_major_gaps:
+        if insertion_pos not in fused_major_gaps:
+            fused_major_gaps[insertion_pos] = gap_len
+        elif gap_len > fused_major_gaps[insertion_pos]:
+            fused_major_gaps[insertion_pos] = gap_len
+    
+    aligned_major_sequence = ''
+
+    if 0 in fused_major_gaps:
+        aligned_major_sequence = '-'*fused_major_gaps[0]
+
+    for seq_pos_zero, aa in enumerate(major_sequence_raw):
+        seq_pos = seq_pos_zero + 1
+
+        aligned_major_sequence += aa
+        if seq_pos in fused_major_gaps:
+            aligned_major_sequence += '-'*fused_major_gaps[seq_pos]
+
+    aligned_isoforms = {major_isoform_id : aligned_major_sequence}
+    for isoform_id in transformed_isoform_dict:
+        insertions = transformed_isoform_dict[isoform_id][0]
+        deletions = transformed_isoform_dict[isoform_id][1]
+        raw_seq = isoform_sequences[isoform_id]
+        aligned_seq = ''
+        seq_pos = 0
+        iso_pos = 0
+        current_insert_len = 0
+
+        for aa in aligned_major_sequence:
+            if aa == '-':
+                if seq_pos in insertions:
+                    insert_len = insertions[seq_pos]
+                    if insert_len > current_insert_len:
+                        aligned_seq += raw_seq[iso_pos]
+                        iso_pos += 1
+                        current_insert_len += 1
+                    else:
+                        aligned_seq += '-'
+                else:
+                    aligned_seq += '-'
+            else:
+                current_insert_len = 0
+                seq_pos += 1
+
+                if seq_pos in deletions:
+                    aligned_seq += '-'
+                else:
+                    aligned_seq += raw_seq[iso_pos]
+                    iso_pos += 1
+        aligned_isoforms[isoform_id] = aligned_seq
+
+    return aligned_isoforms
+
+def plot_alignment_chunk(alignment, classification_color_dict, order_classifications, labels, trace, outfile, dpi=100, font_size = 12):
     handles = []
-    for key in classification_color_dict:
-        patch = mpatches.Patch(color=classification_color_dict[key], label=key)
-        handles.append(patch)
 
-    
+    for key in classification_color_dict:
+        if key == 'gap':
+            continue
+        else:
+            patch = mpatches.Patch(color=classification_color_dict[key], label=key)
+            handles.append(patch)
+
+    trace_array = alignment.trace
+    plt.rcParams.update({'font.size':font_size})
+
     if len(alignment) > 50:
-        total_height = math.ceil(len(alignment)/50)*(len(trace_array[0]))
-        row_height = len(trace_array[0])+2
-        plt.rcParams.update({'font.size':20+row_height})
-        fig, ax = plt.subplots(figsize=(50+int(total_height/10), total_height))
+        total_height = 0.8*math.ceil(len(alignment)/50)*(len(trace_array[0]))
+        fig, ax = plt.subplots(figsize=(font_size*1.2, total_height))
         plotter = MyPlotter(ax)
-        plotter.set_classifications(classification_list, classification_color_dict, trace_final)
-        
+        plotter.set_classifications(order_classifications, classification_color_dict, trace)
+
         graphics.plot_alignment(
             ax, alignment, plotter, symbols_per_line=50, labels=labels)
         ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05), ncol=math.ceil(len(handles)/len(trace_array[0])))
     else:   
-         fig, ax = plt.subplots(figsize=(len(alignment), len(trace_array[0])*0.5))
-         plotter = MyPlotter(ax)
-         plotter.set_classifications(classification_list, classification_color_dict, trace_final)
-         graphics.plot_alignment(
+        fig, ax = plt.subplots(figsize=(len(alignment), len(trace_array[0])*0.5))
+        plotter = MyPlotter(ax)
+        plotter.set_classifications(order_classifications, classification_color_dict, trace)
+        graphics.plot_alignment(
             ax, alignment, plotter, symbols_per_line=len(alignment), labels=labels)
-         ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05))
+        ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05))
 
-    path = f'{out_f}/{target}_isoform_plot.png'
-    plt.savefig(path,bbox_inches='tight')
-    return path
     
-def parse_classifications(data: list) -> list:
-    classification_dict = dict([])
-    colors = list(mcolors.TABLEAU_COLORS.values())
-    i = 0
-    for elem in data:
-        if i == 10:
-            colors = list(mcolors.XKCD_COLORS.values())
-        if elem in classification_dict:
-            continue
-        else:
-            classification_dict[elem] = colors[i]
-            i += 1
-    return classification_dict
+    plt.savefig(outfile, bbox_inches='tight', dpi = dpi)
+    plt.clf()
+    plt.cla()
+    plt.close()
     
-def isoforms_as_triples(sequence: str, isoforms: dict) -> list:
-    triple_list = []
-    for key in isoforms.keys():
-        iso = isoforms.get(key)
-        triple_list.append(iso)
-        
-    return triple_list
 
 
-def produce_isoform_sequences(sequence: str, triples: list, classifications: list) -> list:
-    isoform_list = []
-    trace = []
-    inserted_isoforms = []
-    i = 0
-    for char in sequence:
-        trace.append([i])
-        # append inserted_isoforms, where the length of inserted isoforms is stored at the index which is the same as the trace index
-        inserted_isoforms.append(0)
-        i += 1
-    isoform_count_i = 1
-    
-    for isoform in triples:
-        insertions = isoform[0]
-        deletions = isoform[1]
-        substitutions = isoform[2]
-        inserted_deletions = []
-        
-        # insert indices as if isoforms are equal to sequence, insert -1 if entry in trace was created by an insertion
+def create_isoform_plot(obj, out_f, session_name, target):
+    major_sequence_raw = obj[0]
+    major_isoform_id = obj[1]
+    protein_sequence = seq.ProteinSequence(major_sequence_raw)
+    classifications = obj[2]
+    isoforms = obj[3]
+    isoform_sequences = obj[4]
+    isoform_classifications = obj[5]
+
+    aligned_sequences = align_by_mutation_list(major_sequence_raw, isoform_sequences, isoforms, major_isoform_id)
+    isoform_classifications[major_isoform_id] = classifications
+
+    all_classifications = {}
+    #insert gaap classifications
+   
+    isoform_plot_folder = f'{out_f}/isoform_plots'
+    if not os.path.isdir(isoform_plot_folder):
+        os.mkdir(isoform_plot_folder)
+
+    for isoform_id in aligned_sequences:
+        all_classifications[isoform_id] = []
         i = 0
-        index  = 0
-        j = 0
-        for entry in trace:
-            if j > 0:
-                entry.append(-1)
-                j -= 1
-            elif (inserted_isoforms[index] != 0):
-                j = inserted_isoforms[index]-1
-                entry.append(-1)
+        for char in aligned_sequences[isoform_id]:
+
+            if char == '-':
+                all_classifications[isoform_id].append('gap')
             else:
-                entry.append(i)
-                i +=1
-            index += 1
-            inserted_deletions.append(0)
+                original_classification = isoform_classifications[isoform_id][i]
+                if original_classification == "None":
+                    all_classifications[isoform_id].append("NA")
 
-        seq = sequence
-        # substitutions
-        # substitutions don't change the trace, they just change the seq
-        for entry in substitutions:
-            index = entry[0]-1
-            new_char = entry[1]
-            seq = seq[:index] + new_char + seq[index+1:]
-
-        # deletions
-        # deletions insert a -1 in the trace and remove the letter in seq
-        # n counts deletions in current isoform
-        n = 0
-        for entry in deletions: 
-            index = entry-1
-            # count the isoforms already inserted in the alignment to adapt the trace index
-            sum = 0
-            i = 0
-            while i <= index:
-                sum += inserted_isoforms[i]
-                i += 1
-            # calculate index for trace
-            trace_index = index + sum
-            if inserted_isoforms[trace_index] != 0:
-                trace_index += inserted_isoforms[trace_index]
-            # sequence index depends on the deletions in current isoform
-            index_seq = index - n
-
-            seq = seq[:index_seq] + seq[index_seq+1:]
-
-            # insert a -1 at position which has to be deleted
-            trace[trace_index][isoform_count_i] = -2
-            # decrease index in all following entries
-            i = 1
-            while i < (len(trace)-trace_index):
-                if trace[len(trace)-i][isoform_count_i] == -2:
-                    i+=1
                 else:
-                    trace[len(trace)-i][isoform_count_i] -=1
-                    i +=1
-                    
-            inserted_deletions[trace_index] = 1
-            n += 1
-            
-        # insertions
-        # insertions add a new entry in the trace, they add chars to the seq
-        m = 0
-        for entry in insertions:
-            # calculate index and modify sequence
-            # m tracks insertion lengths in the current isoform
-            # sum checks how often stuff has been inserted before index in other isoforms and how long thse insertions are
-            index = entry[0]-1
-            
-            sum_i = 0
-            sum_d = 0
-            i = 0
-            while i < index:
-                sum_i += inserted_isoforms[i]
-                sum_d += inserted_deletions[i]
-                i += 1
-            # calculate index for trace
-            trace_index = index + sum_i 
-            
-            if len(inserted_deletions) > trace_index:
-                i = index
-                while i < trace_index:
-                    sum_d += inserted_deletions[i]
-                    i += 1
-            # calculate index for sequence
-            seq_index = index - sum_d + m
-
-            new_char = entry[1]
-            seq = seq[:seq_index] + new_char + seq[seq_index:]
-            length = len(entry[1])
-            m += length
-            
-            
-            # insert an entry in trace filled with -1, insert an entry for every char
-            n = length - inserted_isoforms[trace_index] 
-            while n > 0:
-                insert = []
-                for entry in trace[0]:
-                    insert.append(-1)
-                # insert -1 entry in trace
-                left = trace[:trace_index]
-                right = trace[trace_index:]
-                trace = left + [insert] + right
-                
-                insert_c = classifications[trace_index]
-                left_c = classifications[:trace_index]
-                right_c = classifications[trace_index:]
-                classifications = left_c + [insert_c] + right_c
-                
-                left_d = inserted_deletions[:trace_index]
-                right_d = inserted_deletions[trace_index:]
-                deletions = left_d + [0] + right_d
-                n -= 1
-            # insert the length of insertion in the insertion tracking list
-            if inserted_isoforms[trace_index] != 0:
-                # an insertion already exists at this position
-                # -> overwrite and insert (length-1) times a 0
-                if length > inserted_isoforms[trace_index]:
-                    inserted_isoforms[trace_index] = length
-                
-            else:
-                # insertion does not exist yet
-                # insert position and (length-1) times a 0
-                left_i = inserted_isoforms[:trace_index]
-                right_i = inserted_isoforms[trace_index:]
-                inserted_isoforms = left_i + [length] + right_i
-                
-            i = 1
-            while i < length:
-                left_i = inserted_isoforms[:trace_index+i]
-                right_i = inserted_isoforms[trace_index+i:]
-                inserted_isoforms = left_i + [0] + right_i
+                    all_classifications[isoform_id].append(original_classification)
                 i += 1
 
-            # insert an non -1 index at the insertion position
-            if trace_index == 0:
-                start = -1
-            else:
-                start = trace[trace_index-1][isoform_count_i]
-                a = 1
-                while start==-2 or start==-1:
-                    start = trace[trace_index-1-a][isoform_count_i]
-                    a+=1
-            trace[trace_index][isoform_count_i] = start + 1
-            # adapt following entrys
-            j = length - 1
-            i = 1
-            while trace_index+i < len(trace):
-                if j > 0:
-                    trace[trace_index+i][isoform_count_i] = start + 2
-                    i += 1
-                    start += 1
-                    j -= 1
-                else:    
-                    if trace[trace_index+i][isoform_count_i] == -2 or trace[trace_index+i][isoform_count_i] == -1:
-                        i += 1
-                    else:
-                        trace[trace_index+i][isoform_count_i] = start + 2
-                        i += 1
-                        start += 1
+    classification_color_dict = parse_classifications(all_classifications)
+    
+    labels = ['position', major_isoform_id]
+    for key in isoforms.keys():
+        labels.append(key)
 
-        # finish isoform by adding the sequence to the isoform_list
-        isoform_list.append(seq)
-        isoform_count_i += 1
-        
-        # finish trace, replace deletions -2 with -1
-        i = 0
-        while i < len(trace):
-            j = 0
-            while j < len(trace[i]):
-                if trace[i][j] == -2:
-                    trace[i][j] = -1
-                j += 1
+    ordered_isoforms = [major_isoform_id]
+    for isoform_id in isoform_sequences:
+        ordered_isoforms.append(isoform_id)
+
+    order_classifications = []
+    for isoform in ordered_isoforms:
+        order_classifications.append(all_classifications[isoform])
+
+    positions = list(range(1,len(aligned_sequences[major_isoform_id])+1))
+
+    paths = []
+    alignment_chunksize = 500
+
+    aligned_sequences_chunks = []
+    for isoform_id in ordered_isoforms:
+        aligned_sequences_chunks.append(aligned_sequences[isoform_id][:alignment_chunksize])
+
+    chunked_classifications = []
+    for classifications in order_classifications:
+        chunked_classifications.append(classifications[:alignment_chunksize])
+
+    #chunked_trace = trace_final[:alignment_chunksize]
+    raw_chunked_positions = positions[:alignment_chunksize]
+    chunked_positions = []
+    count = 1
+    for pos in raw_chunked_positions:
+        if pos < 101:
+            chunked_positions.append(pos)
+        elif count == 5:
+            chunked_positions.append(pos)
+            count = 1
+        else:
+            chunked_positions.append('')
+            count += 1
+
+    plotting_done = False
+    i = 0
+    dpi = 100
+    while not plotting_done:
+        ungapped_sequences = []
+        for aligned_seq in aligned_sequences_chunks:  
+            ungapped_sequences.append(aligned_seq.replace('-',''))
+
+        protein_sequences = [chunked_positions]
+        for sequence in ungapped_sequences:
+            protein_sequence = seq.ProteinSequence(sequence)
+            protein_sequences.append(protein_sequence)
+
+        trace = produce_trace(aligned_sequences_chunks)
+
+        j = 0
+        trace_final = []
+
+        for entry in trace:
+            entry = [j] + entry[0:]
+            trace_final.append(entry)
+            j += 1
+
+        trace_array = np.asarray(trace_final, dtype=np.int64)
+    
+        alignment = align.Alignment(protein_sequences, trace_array)
+
+        outfile = f'{isoform_plot_folder}/{target}_isoform_plot_{i}.png'
+        plot_alignment_chunk(alignment, classification_color_dict, chunked_classifications, labels, trace_final, outfile, dpi=dpi)
+        paths.append(outfile)
+
+        if len(positions) < (i+1)*alignment_chunksize:
+            plotting_done = True
+        else:
+            aligned_sequences_chunks = []
+            for isoform_id in ordered_isoforms:
+                aligned_sequences_chunks.append(aligned_sequences[isoform_id][(i+1)*alignment_chunksize:(i+2)*alignment_chunksize])
+
+            chunked_classifications = []
+            for classifications in order_classifications:
+                chunked_classifications.append(classifications[(i+1)*alignment_chunksize:(i+2)*alignment_chunksize])
+
+            #chunked_trace = trace_final[(i+1)*alignment_chunksize:(i+2)*alignment_chunksize]
+            raw_chunked_positions = positions[(i+1)*alignment_chunksize:(i+2)*alignment_chunksize]
+            chunked_positions = []
+            
+            count = 1
+            for pos in raw_chunked_positions:
+                if pos < 101:
+                    chunked_positions.append(pos)
+                elif count == 5:
+                    chunked_positions.append(pos)
+                    count = 1
+                else:
+                    chunked_positions.append('')
+                    count += 1
             i += 1
+    return paths
 
-    return isoform_list, trace, classifications
+def divide_in_chunks(alignment, n):
+    for i in range(0, len(alignment), n):
+        yield alignment[i:i + n]
+
+def produce_trace(aligned_sequences):
+    n_rows = 0
+    n_cols = len(aligned_sequences)
+    for entry in aligned_sequences:
+        if len(entry) > n_rows:
+            n_rows = len(entry)
+
+    #initialize trace with -2
+    trace = [[-2 for _ in range(n_cols)] for _ in range(n_rows)]
+
+    column_i = 0
+    seq_j = 0
+    for seq_j, sequence in enumerate(aligned_sequences):
+        id_counter = 0
+        for column_i, symbol in enumerate(sequence):
+            if symbol == "-":
+                trace_elem = -1
+            else:
+                trace_elem = id_counter
+                id_counter+=1
+            trace[column_i][seq_j] = trace_elem
+    return trace
+    
+
+    
+def parse_classifications(data):
+    classification_color_dict = {}
+    colors = list(mcolors.TABLEAU_COLORS.values())
+    
+    i = 0
+    for isoform_id in data:
+        classification_sequence = data[isoform_id]
+
+        classification_dict = {}
+        for classification in classification_sequence:
+            if classification in classification_color_dict:
+                continue
+            if classification == 'gap':
+                continue
+ 
+            classification_color_dict[classification] = colors[i]
+            i += 1
+            if i == 10:
+                colors = list(mcolors.XKCD_COLORS.values())
+    return classification_color_dict

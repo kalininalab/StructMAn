@@ -313,9 +313,9 @@ def sequenceScan(config, proteins, indels, genes = None):
             mean_seq_len += len(seq)
 
             if genes is not None:
-                gene_id = gene_id_map[transcript_id]
+                gene_id, gene_name = gene_id_map[transcript_id]
                 if gene_id not in genes:
-                    gene_obj = gene_package.Gene(gene_id, proteins = [primary_protein_id])
+                    gene_obj = gene_package.Gene(gene_id, proteins = [primary_protein_id], gene_name = gene_name)
                     genes[gene_id] = gene_obj
                 else:
                     genes[gene_id].proteins.add(primary_protein_id)
@@ -832,11 +832,11 @@ def buildQueue(config, filename, already_split=False):
 
     t1 = time.time()
     if config.verbosity >= 2:
-        print("buildQueue Part 1: ", str(t1 - t0), len(ac_map))
+        print("buildQueue Part 1: ", str(t1 - t0), len(ac_map), len(prot_tags_map))
 
     proteins, indel_map, genes = uniprot.IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map)
 
-    gene_isoform_check(proteins, genes, indel_map, config)
+    genes = gene_isoform_check(proteins, genes, indel_map, config)
 
     t2 = time.time()
     if config.verbosity >= 2:
@@ -965,12 +965,12 @@ def gene_isoform_check(proteins, genes, indel_map, config):
             indel_map_entry = indel_map[iso1]
             proteins[iso1].add_multi_mutation(multi_mutation, indel_map_entry, mut_prot_id = iso2)
 
-    return
+    return genes
 
 @ray.remote(max_calls = 1)
 def para_mm_generation(config, packages):
     mm_results = []
-    aligner_class = globalAlignment.init_bp_aligner_class(open_gap_score = -2.0)
+    aligner_class = globalAlignment.init_bp_aligner_class()
     for sequence_map, iso_pairs in unpack(packages):
         for iso1, iso2 in iso_pairs:
             seq_iso1 = sequence_map[iso1]

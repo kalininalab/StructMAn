@@ -7,6 +7,11 @@ from zlib import adler32
 
 from structman import settings
 
+try:
+    from structguy.sampleSpace import CrossValidationSlice
+except:
+    pass
+
 import structman.lib.sdsc as sdsc
 
 import zstd
@@ -330,6 +335,32 @@ def custom_encoder(obj):
             serialized_snv.append(obj.__getattribute__(attribute_name))
         return {'__snv__': True, 'as_list': serialized_snv}
 
+    if 'Microminer_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Microminer_features__': True, 'as_list': serialized_object}
+    
+    if 'Structural_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Structural_features__': True, 'as_list': serialized_object}
+    
+    if 'Integrated_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Integrated_features__': True, 'as_list': serialized_object}
+
+    if 'RIN_based_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = obj.get_raw_list()
+        return {'__RIN_based_features__': True, 'as_list': serialized_object}
+
+    if 'CrossValidationSlice' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = obj.get_raw_list()
+        return {'__CrossValidationSlice__': True, 'as_list': serialized_object}
+
     return obj
 
 def custom_decoder(obj):
@@ -449,6 +480,40 @@ def custom_decoder(obj):
         for i, attribute_name in enumerate(snv_obj.__slots__):
             snv_obj.__setattr__(attribute_name, serialized_snv[i])
         return snv_obj
+    
+    if '__Microminer_features__' in obj:
+        serialized_object = obj['as_list']
+        rebuild_obj = sdsc.mappings.Microminer_features()
+        for i, attribute_name in enumerate(rebuild_obj.__slots__):
+            rebuild_obj.__setattr__(attribute_name, serialized_object[i])
+        return rebuild_obj
+    
+    if '__Structural_features__' in obj:
+        serialized_object = obj['as_list']
+        rebuild_obj = sdsc.mappings.Structural_features()
+        for i, attribute_name in enumerate(rebuild_obj.__slots__):
+            rebuild_obj.__setattr__(attribute_name, serialized_object[i])
+        return rebuild_obj
+
+    if '__Integrated_features__' in obj:
+        serialized_object = obj['as_list']
+        rebuild_obj = sdsc.mappings.Integrated_features()
+        for i, attribute_name in enumerate(rebuild_obj.__slots__):
+            rebuild_obj.__setattr__(attribute_name, serialized_object[i])
+        return rebuild_obj
+
+    if '__RIN_based_features__' in obj:
+        raw_rin_based_features = obj['as_list']
+        rebuild_obj = sdsc.mappings.RIN_based_features()
+        rebuild_obj.set_values(raw_rin_based_features)
+        return rebuild_obj
+
+    if '__CrossValidationSlice__' in obj:
+        serialized_object = obj['as_list']
+        rebuild_obj = CrossValidationSlice(raw_init =  True)
+        for i, attribute_name in enumerate(rebuild_obj.__slots__):
+            rebuild_obj.__setattr__(attribute_name, serialized_object[i])
+        return rebuild_obj
 
     return obj
 

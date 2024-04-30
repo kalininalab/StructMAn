@@ -8,7 +8,7 @@ import traceback
 import sqlite3
 
 import structman
-from structman.lib.database import database
+from structman.lib.database.database_core_functions import binningSelect, select
 from structman import _version
 
 # Tries to reclassify all positions with no classification in the database
@@ -21,7 +21,7 @@ def reclass_null(config):
     columns = ['Position_Id', 'Gene']
     table = 'Position'
     null_columns = set(['Class'])
-    results = database.select(db, cursor, columns, table, null_columns=null_columns)
+    results = select(db, cursor, columns, table, null_columns=null_columns)
 
     prot_ids = set()
     for row in results:
@@ -31,7 +31,7 @@ def reclass_null(config):
 
     rows = ['Gene', 'Structure', 'Alignment']
     table = 'Alignment'
-    results = database.binningSelect(prot_ids, rows, table, db, cursor)
+    results = binningSelect(prot_ids, rows, table, db, cursor)
 
     # try to map the positions into the alignments
     # for all positions, which could be mapped, reclassify
@@ -149,7 +149,7 @@ def reduceToStructures(config, infile):
 
     table = 'Structure'
     rows = ['Structure_Id', 'PDB']
-    results = database.select(config, rows, table)
+    results = select(config, rows, table)
 
     list_of_doom = []
     for row in results:
@@ -157,7 +157,7 @@ def reduceToStructures(config, infile):
             continue
         list_of_doom.append(row[0])
 
-    results = database.select(config, ['Complex_Id', 'PDB'], 'Complex')
+    results = select(config, ['Complex_Id', 'PDB'], 'Complex')
 
     list_of_doom_c = []
     for row in results:
@@ -357,11 +357,11 @@ def load(config):
 
 def check_structman_version(config):
 
-    meta = database.select(config, ['StructMAn_Version', 'PPI_Feature'], 'Database_Metadata')
+    meta = select(config, ['StructMAn_Version', 'PPI_Feature'], 'Database_Metadata')
 
     if len(meta) == 0:
         insert_meta_data(config)
-        meta = database.select(config, ['StructMAn_Version', 'PPI_Feature'], 'Database_Metadata')
+        meta = select(config, ['StructMAn_Version', 'PPI_Feature'], 'Database_Metadata')
 
     version_in_db, ppi_feature = meta[0]
 
