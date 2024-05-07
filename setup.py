@@ -52,7 +52,7 @@ setup(
         "scipy==1.11.3",
         "requests==2.28.1",
         "more-itertools>=9.1.0",
-        "pycairo>=1.23.0",
+        "pycairo==1.23.0",
         "powerlaw>=1.5",
         "biotite>=0.38.0",
         "markdown>=2.6.9",

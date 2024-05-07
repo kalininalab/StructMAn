@@ -82,8 +82,12 @@ fi
 
 #install dependencies
 {
+    echo "Installing package charset-normalizer ..."
+    mamba install -y charset-normalizer==2.0.4
+    echo "Installing package harfbuzz ..."
+    mamba install -y harfbuzz==8.2.1 -c conda-forge
     echo "Installing package cairo ..."
-    mamba install -y cairo
+    mamba install -y cairo==1.6.0 -c conda-forge
     export PKG_CONFIG_PATH="$new_env_path"/envs/"$env_name"/lib/pkgconfig:"$PKG_CONFIG_PATH"
     echo "Installing package pycairo ..."
     mamba install -y pycairo    
@@ -95,7 +99,7 @@ fi
     mamba install -y pkginfo
     echo "Installing package requests-toolbelt ..."
     mamba install -y requests-toolbelt
-    echo "Installing package pymol ..."    
+    echo "Installing package pymol ..."
     mamba install -y -c conda-forge pymol-open-source
 } >&$verbose_stdout
 
@@ -115,6 +119,15 @@ then
     storage_folder="$new_env_path"/share/structman
     mkdir "$storage_folder"
 fi
+
+if [ -d $storage_folder ]
+then
+    storage_folder=$(realpath "$storage_folder")
+else
+    mkdir "$storage_folder"
+    storage_folder=$(realpath "$storage_folder")
+fi
+
 
 if ! [ -d "$storage_folder/$username" ]
 then
@@ -136,6 +149,14 @@ then
     local_database_folder="$storage_folder"
 fi
 
+if [ -d "$local_database_folder" ]
+then
+    local_database_folder=$(realpath "$local_database_folder")
+else
+    mkdir "$local_database_folder"
+    local_database_folder=$(realpath "$local_database_folder")
+fi
+
 #Installing custom DSSP binary
 cp "$path_to_dssp_binary" "$new_env_path"/bin/smssp
 
@@ -153,7 +174,7 @@ echo "    $structman_config_path"
 {
     structman config mmseqs_tmp_folder "$tmp_folder_path" -c "$structman_config_path"
     structman config dssp_path smssp -c "$structman_config_path"
-    structman config mmseqs2_db_path "$storage_folder"/pdbba_search_db_mmseqs2
+    structman config mmseqs2_db_path "$storage_folder"/pdbba_mmseqs2_search_db
 } >&$verbose_stdout 2>&$verbose_stderr
 
 #install modeller
@@ -161,10 +182,8 @@ if ! [ -z "$modeller_key" ]
 then
     echo "Installing Modeller ..."
     {
-        echo "Adding salilab to the conda channels ..."
-        mamba config --add channels salilab
         echo "Installing modeller package ..."
-        mamba install -y modeller
+        mamba install -y modeller -c salilab
         echo "Setting the given modeller key to the modeller config ..."
         structman set_m_key "$modeller_key"
     } >&$verbose_stdout 2>&$verbose_stderr

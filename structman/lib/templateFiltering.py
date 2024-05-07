@@ -1318,7 +1318,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
     if config.verbosity >= 2:
         print(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}')
-        print(f'Total amount in structure_list: {len(structure_list)}. Amount of structures to analyze: {n_of_chains_to_analyze}')
+        print(f'Total amount in structure_list: {len(structure_list)}. Amount of structures to analyze: {n_of_chains_to_analyze}, Threads: {config.proc_n}')
 
     sorted_sizes = sorted(size_map.keys(), reverse=True)
 
