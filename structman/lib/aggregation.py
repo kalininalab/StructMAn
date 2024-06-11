@@ -309,7 +309,7 @@ def pack_packages(package_size, package, send_packages, classification_results, 
                     t_pack_12 += time.time()
                 except:
                     if config.verbosity >= 4:
-                        print('Skipped classification of', u_ac, 'due to pos', pos, 'was not in sub_infos (len:', len(sub_infos), ')')
+                        print('Skipped classification of', u_ac, 'due to pos', pos, 'was not in sub_infos')
 
                     t_pack_12 += time.time()
                     continue
@@ -523,7 +523,7 @@ def generate_classification_dump(size_sorted, config, proteins = None, protein_m
                 try:
                     complex_store[structure_id] = (complexes[structure_id].chains, complexes[structure_id].resolution)
                 except:
-                    config.errorlog.add_warning(f'{structure_id} not complexes')
+                    config.errorlog.add_warning(f'{structure_id} not in complexes. Proteins is None: {proteins is None}')
                     continue
 
             if proteins is None:
@@ -949,10 +949,11 @@ def classification(proteins, config, background_insert_residues_process, indel_a
                 print(f'Calling MicroMiner-lookup for {len(mm_inputs)} Complexes.')
             n_empty = 0
             new_mm_inputs = set()
-            small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(config.proc_n//4, len(mm_inputs))
-            n_of_chunks = n_of_small_chunks + n_of_big_chunks
-            if n_of_chunks < config.proc_n//4:
-                n_sub_procs = (config.proc_n//4) // n_of_chunks
+            n_of_chunks = max([1, config.proc_n//4])
+            small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(n_of_chunks, len(mm_inputs))
+            real_n_of_chunks = n_of_small_chunks + n_of_big_chunks
+            if real_n_of_chunks < config.proc_n//2:
+                n_sub_procs = config.proc_n // real_n_of_chunks
             else:
                 n_sub_procs = 1
 

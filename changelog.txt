@@ -1,3 +1,9 @@
+Version 1.5.1
+    - Improved the Gene report feature
+    - Improved the installer
+    - Changed how multi-SAVs are processed, will no longer generate mutant protein objects (like indels still do)
+    - Adjustments for newest StructGuy version 1.0.0
+
 Version 1.5.0
     - Gene report function is now functional
     - Reorganized features into classes, making adding new features in the future easier

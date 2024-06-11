@@ -53,6 +53,7 @@ def doomsday_protocol(obj, immunity = None):
         except:
             pass
 
+            
 def boring(abr):
     if abr in residues.METAL_ATOMS or abr in residues.ION_ATOMS or abr in ligands.NON_BORING_SHORT_LIGANDS:
         return False

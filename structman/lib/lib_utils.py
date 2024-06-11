@@ -90,7 +90,7 @@ def processAAChange(aachange, pdb_style=False):
     return aachange, aa1, aa2, pos
 
 
-def process_mutations_str(config, mutation_str, tags, pdb_style=False):
+def process_mutations_str(config, mutation_str, tags, pos_set = None, pdb_style=False):
     if isinstance(tags, str):
         tags = set(tags.split(','))
     tags, gene_id = extract_dedicated_tags(tags)
@@ -98,20 +98,32 @@ def process_mutations_str(config, mutation_str, tags, pdb_style=False):
     positions = []
     aachanges = mutation_str.split(',')
     skipped_aachanges = 0
+    if pos_set is None:
+        pos_set = set()
+
     for aachange in aachanges:
         if aachange == '':
             skipped_aachanges += 1
             continue
         if aachange.count('delins') == 1:
-            indel = indel_package.Substitution(raw_str=aachange, tags=tags)
+            if len(aachanges) == 1:
+                indel = indel_package.Substitution(raw_str=aachange, tags=tags)
+            else:
+                indel = indel_package.Substitution(raw_str=aachange)
             multi_mutations.append(indel)
 
         elif aachange.count('del') == 1:
-            indel = indel_package.Deletion(raw_str=aachange, tags=tags)
+            if len(aachanges) == 1:
+                indel = indel_package.Deletion(raw_str=aachange, tags=tags)
+            else:
+                indel = indel_package.Deletion(raw_str=aachange)
             multi_mutations.append(indel)
 
         elif aachange.count('ins') == 1:
-            indel = indel_package.Insertion(raw_str=aachange, tags=tags)
+            if len(aachanges) == 1:
+                indel = indel_package.Insertion(raw_str=aachange, tags=tags)
+            else:
+                indel = indel_package.Insertion(raw_str=aachange)
             multi_mutations.append(indel)
 
         else:
@@ -129,22 +141,42 @@ def process_mutations_str(config, mutation_str, tags, pdb_style=False):
                     position = position_package.Position(pdb_res_nr=pos, wt_aa=aa1, tags=tags)
                     positions.append(position)
                 else:
-                    position = position_package.Position(pdb_res_nr=pos, wt_aa=aa1, mut_aas=set(aa2), tags=tags, mut_tags_map={aa2: tags})
+                    if len(aachanges) == 1:
+                        position = position_package.Position(pdb_res_nr=pos, wt_aa=aa1, mut_aas=set(aa2), mut_tags_map={aa2: tags})
+                    else:
+                        position = position_package.Position(pdb_res_nr=pos, wt_aa=aa1, mut_aas=set(aa2))
                     multi_mutations.append((position, aa2))
             else:
                 if aa2 is None:
-                    position = position_package.Position(pos=pos, wt_aa=aa1, tags=tags)
-                    positions.append(position)
+                    if aachange not in pos_set:
+                        position = position_package.Position(pos=pos, wt_aa=aa1, tags=tags)
+                        positions.append(position)
+                        pos_set.add(aachange)
                 else:
-                    position = position_package.Position(pos=pos, wt_aa=aa1, mut_aas=set(aa2), tags=tags, mut_tags_map={aa2: tags})
+                    if len(aachanges) == 1:
+                        position = position_package.Position(pos=pos, wt_aa=aa1, mut_aas=set(aa2), mut_tags_map={aa2: tags})
+                        positions.append(position)
+                        pos_set.add(aachange)
+                    elif aachange not in pos_set:
+                        position = position_package.Position(pos=pos, wt_aa=aa1, mut_aas=set(aa2))
+                        positions.append(position)
+                        pos_set.add(aachange)
+                    else:
+                        position = pos
                     multi_mutations.append((position, aa2))
+            
 
     if len(aachanges) == skipped_aachanges:
         protein_specific_tags = tags
     else:
-        protein_specific_tags = set()
+        protein_specific_tags = None
 
-    return positions, multi_mutations, gene_id, protein_specific_tags
+    if len(multi_mutations) > 1:
+        multi_mutation_tags = tags
+    else:
+        multi_mutation_tags = None
+
+    return positions, multi_mutations, gene_id, protein_specific_tags, multi_mutation_tags, pos_set
 
 
 def fuse_multi_mutations(list_of_multi_mutations):
@@ -369,7 +401,7 @@ def generate_multi_mutation(wt_seq, mut_seq, config, aligner_class = None):
     if mutation_str_results[0] is None:
         return mutation_str_results[1]
 
-    positions, multi_mutation, _, _ = process_mutations_str(config, mutation_str_results[1], None)
+    positions, multi_mutation, _, _, _, _ = process_mutations_str(config, mutation_str_results[1], None)
 
     return positions, multi_mutation
 

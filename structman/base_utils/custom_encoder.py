@@ -308,8 +308,7 @@ def custom_decoder(obj):
         for i, attribute_name in enumerate(rebuild_obj.__slots__):
             rebuild_obj.__setattr__(attribute_name, serialized_object[i])
         rebuild_obj.feature_names = list(rebuild_obj.feature_names)
-        rebuild_obj.train_feature_matrix = list(rebuild_obj.train_feature_matrix)
-        rebuild_obj.test_feature_matrix = list(rebuild_obj.test_feature_matrix)
+
         return rebuild_obj
 
     if '__Feature__' in obj:

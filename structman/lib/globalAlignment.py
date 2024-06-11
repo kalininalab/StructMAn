@@ -229,10 +229,15 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
     return (sub_infos, aaclist, backmap)
 
 
-def getCovSI(full_length, target_seq, template_seq):
-    target_length = len(target_seq.replace("-", ""))
-    template_length = float((target_length - template_seq.count("-")))
-    if template_length == 0.:
+def getCovSI(full_length, target_seq, template_seq, count_gaps = False):
+    if not count_gaps:
+        target_length = len(target_seq.replace("-", ""))
+        template_length = float((target_length - template_seq.count("-")))
+    else:
+        target_length = len(target_seq)
+        template_length = len(template_seq)
+    
+    if template_length <= 0.:
         return None, None
     aln_length = template_length / float(full_length)
     i = 0

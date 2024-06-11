@@ -8,13 +8,18 @@ from structman.lib.sdsc.sdsc_utils import doomsday_protocol
 class MultiMutation:
     __slots__ = ['wt_prot', 'mut_prot', 'snvs', 'indels', 'database_id', 'stored', 'tags']
 
-    def __init__(self, wt_prot, mut_prot, mutation_list, tags=set()):
+    def __init__(self, wt_prot, mut_prot, mutation_list, tags=None):
 
         self.wt_prot = wt_prot
         self.mut_prot = mut_prot
         self.snvs = {}
         self.indels = []
-        self.tags = tags.copy()
+        if isinstance(tags, str):
+            tags = set(tags.split(','))
+        if tags is not None:
+            self.tags = tags.copy()
+        else:
+            self.tags = None
         for mut in mutation_list:
             if not isinstance(mut, tuple):
                 self.indels.append(mut)
@@ -81,6 +86,8 @@ class MultiMutation:
 
     def mutate(self, proteins, config):
         if self.mut_prot is None:
+            return
+        if self.mut_prot not in proteins.protein_map:
             return
         if proteins[self.mut_prot].sequence is None:
             if proteins[self.wt_prot].sequence is None:

@@ -70,7 +70,9 @@ class Protein:
 
     def deconstruct(self):
         for pos in self.positions:
-            self.positions[pos].deconstruct()
+            self.positions[pos].deconstruct(completely = True)
+        for pos in list(self.positions.keys()):
+            del self.positions[pos]
         del self.positions
         del self.sequence
         for struct_id in self.structure_annotations:
@@ -102,26 +104,37 @@ class Protein:
 
     def add_positions(self, positions):
         warns = []
-        for position in positions:
+        del_list = []
+        for p, position in enumerate(positions):
             warn = False
             if position.pos not in self.positions:
                 self.positions[position.pos] = position
             elif position.pos is not None:
                 warn = self.positions[position.pos].fuse(position)
+                del_list.append(p)
                 if warn:
                     warns.append('Warning happened in add_positions fuse: %s %s' % (self.u_ac, self.pdb_id))
+
+        del_list = sorted(del_list, reverse=True)
+
+        for p in del_list:
+            del positions[p]
+
         if len(warns) == 0:
             return None
         else:
             return warns
 
-    def add_multi_mutation(self, multi_mutation, indel_map, mut_prot_id = None):
+    def add_multi_mutation(self, multi_mutation, indel_map, mm_tags = None, mut_prot_id = None):
         corrected_multi_mutation = []
         for indel_or_snv in multi_mutation:
             if isinstance(indel_or_snv, tuple):
                 pos_obj = indel_or_snv[0]
                 aa2 = indel_or_snv[1]
-                correct_pos_obj = self.positions[pos_obj.pos]
+                if isinstance(pos_obj, int):
+                    correct_pos_obj = self.positions[pos_obj]
+                else:
+                    correct_pos_obj = self.positions[pos_obj.pos]
                 corrected_snv = (correct_pos_obj, aa2)
                 corrected_multi_mutation.append(corrected_snv)
             else:
@@ -130,7 +143,7 @@ class Protein:
                 else:
                     indel = indel_or_snv
                 corrected_multi_mutation.append(indel)
-        self.multi_mutations.append((corrected_multi_mutation, mut_prot_id))
+        self.multi_mutations.append((corrected_multi_mutation, mut_prot_id, mm_tags))
         return
 
     def add_residues(self, positions):
@@ -576,7 +589,7 @@ class Protein:
         if config.verbosity >= 5:
             print('Starting multi mutation mutation of', self.primary_protein_id)
         for mm_nr, multi_mutation_tuple in enumerate(self.multi_mutations):
-            multi_mutation, mut_prot_id = multi_mutation_tuple
+            multi_mutation, mut_prot_id, mm_tags = multi_mutation_tuple
 
             if config.verbosity >= 4:
                 print(f'In create_multi_mutations, looping over new MM: {mut_prot_id}')
@@ -661,10 +674,12 @@ class Protein:
 
                 #print(f'After shifts: {mutant_positions}')
 
-                mut_protein = Protein(config.errorlog, primary_protein_id=protein_name, wildtype_protein=self.primary_protein_id, mutant_type = 'Multi', sav_positions = mutant_positions[0], insertion_positions = mutant_positions[1], deletion_flanks = mutant_positions[2])
-                proteins[protein_name] = mut_protein
-                if config.verbosity >= 4:
-                    print('Created new mutant:', protein_name)
+                if mutant_positions[1] != None or mutant_positions[2] != None:
+                    mut_protein = Protein(config.errorlog, primary_protein_id=protein_name, wildtype_protein=self.primary_protein_id, mutant_type = 'Multi', sav_positions = mutant_positions[0], insertion_positions = mutant_positions[1], deletion_flanks = mutant_positions[2])
+                    proteins[protein_name] = mut_protein
+                    if config.verbosity >= 4:
+                        print('Created new mutant:', protein_name)
+                    
             else:
                 try:
                     if mut_prot_id not in proteins:
@@ -674,7 +689,7 @@ class Protein:
                         continue
                 protein_name = mut_prot_id
 
-            multi_mutation_obj = MultiMutation(self.primary_protein_id, protein_name, multi_mutation)
+            multi_mutation_obj = MultiMutation(self.primary_protein_id, protein_name, multi_mutation, tags = mm_tags)
             multi_mutation_objects.append(multi_mutation_obj)
 
         return multi_mutation_objects
@@ -682,7 +697,7 @@ class Protein:
     def get_mutation_positions_by_mm(self):
         mutation_position_map = {}
         for multi_mutation_tuple in self.multi_mutations:
-            multi_mutation, mut_prot_id = multi_mutation_tuple
+            multi_mutation, mut_prot_id, mm_tags = multi_mutation_tuple
             mutation_position_map[mut_prot_id] = [[], [], []]
             for mut in multi_mutation:
                 if not isinstance(mut, tuple): #In case of indels

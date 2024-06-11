@@ -8,7 +8,7 @@ class Position:
                  'disorder_score', 'disorder_region', 'recommended_structure', 'session_less',
                  ]
 
-    def __init__(self, pos=None, wt_aa='X', mut_aas=set(), tags=set(), mut_tags_map={}, pdb_res_nr=None,
+    def __init__(self, pos=None, wt_aa='X', mut_aas=set(), tags = None, mut_tags_map={}, pdb_res_nr=None,
                  checked=False, database_id=None, recommended_structure=None, session_less = False):
 
         self.pos = pos  # the position in a protein sequence, int or None
@@ -22,7 +22,10 @@ class Position:
                 mut_tags = set()
             snv = snv_package.SNV(new_aa, tags=mut_tags)
             self.mut_aas[new_aa] = snv
-        self.pos_tags = tags.copy()
+        if tags is not None:
+            self.pos_tags = tags.copy()
+        else:
+            self.pos_tags = None
         self.database_id = database_id
         self.stored = (database_id is not None)
         self.checked = checked  # Flag for sanity checks
@@ -32,12 +35,18 @@ class Position:
         self.recommended_structure = recommended_structure
         self.session_less = session_less
 
-    def deconstruct(self):
-        for mut_aa in self.mut_aas:
-            self.mut_aas[mut_aa].deconstruct()
-        del self.mut_aas
-        self.mappings.deconstruct()
-        doomsday_protocol(self, immunity = {'pos'})
+    def deconstruct(self, completely = False):
+        try:
+            for mut_aa in self.mut_aas:
+                self.mut_aas[mut_aa].deconstruct()
+            del self.mut_aas
+            self.mappings.deconstruct()
+        except:
+            pass
+        if completely:
+            doomsday_protocol(self)
+        else:
+            doomsday_protocol(self, immunity = {'pos', 'pdb_res_nr', 'wt_aa'})
 
     def print_state(self):
         print(self.wt_aa, self.pos, self.mut_aas, self.pos_tags)
@@ -62,27 +71,36 @@ class Position:
         warn = False
         if self.pos != position.pos:
             raise NameError('Cannot fuse positions with differing pos numbers')
-            return
+
         if self.pdb_res_nr != position.pdb_res_nr:
             raise NameError('Cannot fuse positions with differing pdb_res_nr')
-            return
+
         if self.wt_aa != position.wt_aa:
             #print('Warning: fuse positions with different WT AAs:',self.pos,self.pdb_res_nr,self.wt_aa,position.wt_aa)
             warn = True
 
-        self.pos_tags = self.pos_tags | position.pos_tags
+        try:
+            if self.pos_tags is not None and position.pos_tags is not None:
+                self.pos_tags = self.pos_tags | position.pos_tags
+            elif position.pos_tags is not None:
+                self.pos_tags = position.pos_tags
 
-        for aa in position.mut_aas:
-            if aa not in self.mut_aas:
-                self.mut_aas[aa] = position.mut_aas[aa].copy()
-            else:
-                self.mut_aas[aa].fuse(position.mut_aas[aa])
+            for aa in position.mut_aas:
+                if aa not in self.mut_aas:
+                    self.mut_aas[aa] = position.mut_aas[aa].copy()
+                else:
+                    self.mut_aas[aa].fuse(position.mut_aas[aa])
+        except:
+            pass
         position.deconstruct()
-        del position
+        #del position
         return warn
 
     def add_tags(self, tags):
-        self.pos_tags = self.pos_tags | tags
+        if self.pos_tags is not None:
+            self.pos_tags = self.pos_tags | tags
+        else:
+            self.pos_tags = tags
 
     def get_pos_tags(self):
         return self.pos_tags

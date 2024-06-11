@@ -209,6 +209,8 @@ def calc_checksum(filename):
         return adler32(bytes(filename, 'utf-8'))
 
 def calculate_chunksizes(n_of_chunks, n_of_items):
+    if n_of_chunks == 0:
+        n_of_chunks = 1
     small_chunksize = n_of_items // n_of_chunks
     big_chunksize = small_chunksize + 1
     n_of_small_chunks = n_of_chunks * big_chunksize - n_of_items
@@ -272,5 +274,8 @@ def pack(some_object):
 
 def unpack(packed_object):
     #some_object = pickle.loads(decompress(packed_object))
-    some_object = msgpack.unpackb(decompress(packed_object), object_hook = custom_decoder, strict_map_key = False, use_list = False)
+    dec_obj = decompress(packed_object)
+    if dec_obj is None:
+        return None
+    some_object = msgpack.unpackb(dec_obj, object_hook = custom_decoder, strict_map_key = False, use_list = False)
     return some_object

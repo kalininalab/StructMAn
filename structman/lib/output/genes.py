@@ -25,6 +25,8 @@ import numpy
 import markdown
 import pdfkit
 
+import pymol
+
 from structman.lib.database import database
 from structman.lib.database.database_core_functions import select
 from structman.lib.lib_utils import fuse_multi_mutations
@@ -1094,7 +1096,10 @@ def create_gene_report(session_id, target, config, out_f, session_name):
         model_plot_dicts = {}
         for isoform in gene_class.isoforms:
            model_plot_dicts[isoform] = create_pymol_plot(config, out_f, isoform, uninterresting_isoform_pairs_dict[target][1])
-        md_lines += create_markdown(config, out_f, model_plot_dicts, gene_class.name, target, plot_dict[target])
+        if target in plot_dict:
+            md_lines += create_markdown(config, out_f, model_plot_dicts, gene_class.name, target, plot_dict[target])
+        else:
+            print(f'\n\nERROR: Creating Gene Report FAILED for {target} !!!\n\n')
     
     fuse_markdown(md_lines, session_name, out_f)
 
@@ -1223,7 +1228,7 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
         return g
 
 
-def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs):
+def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=200):
     try:
         import pymol.cmd as pymol_cmd
     except:
@@ -1249,7 +1254,7 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs):
         os.makedirs(pymol_out_f)
 
     #produce one png with all structures
-    pymol_cmd.set("grid_mode", 1)
+    #pymol_cmd.set("grid_mode", 1)
 
     for pos, prot_id in enumerate(prot_ids):
         if prot_id != target:
@@ -1258,13 +1263,66 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs):
         mut_prot_id = mut_prot_ids[pos]
         if (prot_id, mut_prot_id) in uninterresting_isoform_pairs:
             continue
+        pymol_cmd.delete('all')
         pymol_cmd.load(file)
-        pymol_cmd.spectrum("b", "rainbow", "n. ca")
+
+        # indel plot
+        pymol_cmd.spectrum("b", "rainbow", "n. ca", minimum=0.00, maximum=100.00)
         pymol_cmd.orient()
 
-        outfile = f"{pymol_out_f}/{target}_{mut_prot_id}_pymol_grid_mode.png"
-        pymol_cmd.png(outfile, width=1200, dpi=300, ray=1)
-        pymol_cmd.delete('all')
+        outfile = f"{pymol_out_f}/{target}_{mut_prot_id}_pymol_indel.png"
+        pymol_cmd.png(outfile, width=1200, dpi=dpi, ray=1)
+
+        #produce legend for indel plot
+        pymol.color_list = []
+        rgb_list = []
+        pymol_cmd.iterate('n. ca', 'pymol.color_list.append(color)')
+        for color_id in pymol.color_list:
+            rgb_list.append(pymol_cmd.get_color_tuple(color_id))
+
+        rgb_dict = {}
+        for color in rgb_list:
+            if color in rgb_dict:
+                continue
+            else:
+                if color == (1.0, 0.0, 0.0):
+                    rgb_dict['red'] = color
+                elif color[2] == 1.0:
+                    rgb_dict['blue'] = color
+                elif color[0] == 1.0 and color[1] > 0:
+                    rgb_dict['orange'] = color
+                elif color[0] > 0.0 and color[1] == 1.0:
+                    rgb_dict['green'] = color
+                else:
+                    rgb_dict['turquoise'] = color
+                
+
+        image = plt.imread(outfile)
+        fig = plt.figure()
+        ax = plt.subplot()
+        patches = []
+        if 'red' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['red'], label='no change'))
+        if 'green' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['green'], label='insertion'))
+        if 'blue' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['blue'], label='substitution'))
+        if 'orange' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['orange'], label='deletion'))
+        if 'turquoise' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['turquoise'], label='not target chain'))
+
+        ax.legend(handles=patches, prop={'size': 4}, loc='upper left')
+        ax.set_axis_off()
+        ax.imshow(image)
+        fig.savefig(outfile, dpi=dpi, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+        # plot colored by chain
+        # pymol_cmd.util.cbc(selection="n. ca")
+        # outfile = f"{pymol_out_f}/{target}_{mut_prot_id}_pymol_by_chain.png"
+        # pymol_cmd.png(outfile, width=1200, dpi=300, ray=1)
+        # pymol_cmd.delete('all')
 
         plot_dict[mut_prot_id] = outfile
 
@@ -1415,7 +1473,10 @@ def plot_alignment_chunk(alignment, classification_color_dict, order_classificat
         if key == 'gap':
             continue
         else:
-            patch = mpatches.Patch(color=classification_color_dict[key], label=key)
+            if key is None:
+                patch = mpatches.Patch(color=classification_color_dict[key], label="None")
+            else:    
+                patch = mpatches.Patch(color=classification_color_dict[key], label=key)
             handles.append(patch)
 
     trace_array = alignment.trace
@@ -1439,7 +1500,7 @@ def plot_alignment_chunk(alignment, classification_color_dict, order_classificat
         ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05))
 
     
-    plt.savefig(outfile, bbox_inches='tight', dpi = dpi)
+    plt.savefig(outfile, bbox_inches='tight', dpi = dpi, pad_inches=0)
     plt.clf()
     plt.cla()
     plt.close()

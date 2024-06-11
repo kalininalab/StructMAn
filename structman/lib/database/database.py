@@ -325,7 +325,10 @@ def insertMultiMutations(proteins, genes, session, config):
             if multi_mutation.stored:
                 continue
             if multi_mutation.mut_prot is not None:
-                mut_db_id = proteins[multi_mutation.mut_prot].database_id
+                if multi_mutation.mut_prot in proteins.protein_map:
+                    mut_db_id = proteins[multi_mutation.mut_prot].database_id
+                else:
+                    mut_db_id = None
             else:
                 mut_db_id = None
             snv_db_ids = ','.join([str(x) for x in multi_mutation.get_snv_db_ids()])
@@ -363,7 +366,11 @@ def insertMultiMutations(proteins, genes, session, config):
     for wt_prot in proteins.multi_mutations:
         wt_db_id = proteins.get_protein_database_id(wt_prot)
         for multi_mutation in proteins.multi_mutations[wt_prot]:
-            values.append((multi_mutation.database_id, session, ','.join(multi_mutation.tags)))
+            if multi_mutation.tags is not None:
+                mm_str = ','.join(multi_mutation.tags)
+            else:
+                mm_str = None
+            values.append((multi_mutation.database_id, session, mm_str))
 
             if proteins[wt_prot].gene is not None:
                 mut_db_id = proteins[multi_mutation.mut_prot].database_id
@@ -588,7 +595,11 @@ def positionCheck(proteins, database_session, config):
                 continue
             pos_id = proteins.get_position_database_id(prot_id, pos)
             pos_tags = proteins.get_pos_tags(prot_id, pos)
-            values.append((database_session, pos_id, ','.join(pos_tags)))
+            if pos_tags is None:
+                pos_tags_str = None
+            else:
+                pos_tags_str = ','.join(pos_tags)
+            values.append((database_session, pos_id, pos_tags_str))
 
     """
     if len(values) > 10000:
@@ -2244,6 +2255,8 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             if wt_prot_db_id not in prot_db_id_dict:
                 continue
 
+            mm_tags = mm_tags_map[mm_db_id]
+
             mut_prot_db_id = row[4]
 
             wt_prot = proteins.getByDbId(wt_prot_db_id).primary_protein_id
@@ -2277,7 +2290,7 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             if config.verbosity >= 4:
                 print(f'In proteinsFromDB: Call of add_multi_mutation for {wt_prot} {mut_prot}')
 
-            proteins[wt_prot].add_multi_mutation(mut_list, indel_map[wt_prot], mut_prot_id = mut_prot)
+            proteins[wt_prot].add_multi_mutation(mut_list, indel_map[wt_prot], mm_tags = mm_tags, mut_prot_id = mut_prot)
 
             if wt_prot not in mm_db_map:
                 mm_db_map[wt_prot] = {}

@@ -8,6 +8,7 @@ from structman.lib import rin
 from structman.lib.sdsc import sdsc_utils, mappings
 from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.database import database
+from structman.lib.database.database_core_functions import select, binningSelect
 from structman.lib.output.feature import init_feature_table
 from structman.lib.output.interfaces import init_aggregated_interface_table, init_protein_protein_table, init_position_position_table
 from structman.lib.output import out_generator
@@ -130,7 +131,7 @@ def writeStatFile(out_file, mutation_dict, class_dict, tag_map, stat_dict=None):
     f.close()
 
 
-def create_structguy_project_file(config, outfolder, session_id, structguy_project_file, feature_file, sequences_file, most_common_snv_value_tag):
+def create_structguy_project_file(config, outfolder, session_id, structguy_project_file, feature_file, sequences_file, most_common_snv_value_tag, snv_labels, multi_savs_file):
     project_file_template_path = f'{settings.SCRIPTS_DIR}/structguy_project_template.conf'
     f = open(project_file_template_path,'r')
     lines = f.readlines()
@@ -139,13 +140,17 @@ def create_structguy_project_file(config, outfolder, session_id, structguy_proje
     abs_path_feature_file = os.path.abspath(feature_file)
     infile = database.getSessionFile(session_id, config)
     if infile.count('/') > 0:
-       dataset_name = infile.rsplit("/",1)[1].rsplit('.',1)[0]
+        dataset_name = infile.rsplit("/",1)[1].rsplit('.',1)[0]
     else:
         dataset_name = infile.rsplit('.',1)[0]
 
     msa_db_path = f'{config.tmp_folder}/MSA/'
 
+    if lines[-1][-1] != '\n':
+        lines[-1] += '\n'
+
     lines.append(f'Path_to_dataset_file = {infile}\n')
+    lines.append(f'Path_to_multi_savs_table = {multi_savs_file}\n')
     lines.append(f'dataset_name = {dataset_name}\n')
     lines.append(f'Path_to_structman_features_file = {abs_path_feature_file}\n')
     lines.append(f'Path_to_sequences_file = {sequences_file}\n')
@@ -157,7 +162,10 @@ def create_structguy_project_file(config, outfolder, session_id, structguy_proje
 
 
     lines.append(f'msa_db = {msa_db_path}\n')
-    lines.append(f'target_values = #{most_common_snv_value_tag}\n')
+    if most_common_snv_value_tag is not None:
+        lines.append(f'target_values = #{most_common_snv_value_tag}\n')
+    if len(snv_labels) > 0:
+        lines.append(f'class_labels = {",".join(snv_labels)}')
 
     f = open(structguy_project_file, 'w')
     f.write(''.join(lines))
@@ -477,6 +485,62 @@ def unpack_rows(package, store_data, tag_map, snv_map, snv_tag_map, protein_dict
 
     return (stat_dict, errors)
 
+
+def generate_multi_sav_table(config, outfile, session_id, snv_position_dict, position_dict, protein_dict):
+    table = 'RS_Multi_Mutation_Session'
+    columns = ['Multi_Mutation', 'Tags']
+    eq_cols = {'Session': session_id}
+
+    results = select(config, columns, table, equals_rows=eq_cols)
+
+    mm_tag_dict = {}
+    for row in results:
+        mm_tag_dict[row[0]] = row[1]
+
+    table = 'Multi_Mutation'
+    columns = ['Multi_Mutation_Id', 'SNVs', 'Indels', 'Wildtype_Protein', 'Mutant_Protein']
+
+    results = binningSelect(mm_tag_dict.keys(), columns, table, config)
+
+    multi_sav_list = []
+    for row in results:
+        mm_db_id = row[0]
+        if mm_db_id not in mm_tag_dict:
+            continue
+
+        snv_db_ids_str = row[1]
+        if snv_db_ids_str is None:
+            continue
+        if snv_db_ids_str.count(',') == 0:
+            continue
+        snv_db_ids = snv_db_ids_str.split(',')
+
+        indel_db_ids_str = row[2]
+        if indel_db_ids_str != None:
+            if indel_db_ids_str.count(',') > 0:
+                continue #Filter all Multi Mutations that contain non-SAV mutations (Indels)
+
+        multi_sav_list.append((mm_db_id, snv_db_ids, row[3], row[4]))
+
+    if config.verbosity >= 3:
+        print(f'Size of Multi Sav List: {len(multi_sav_list)}')
+
+    lines = ['Protein ID\tSAVs\tTags\n']
+
+    for mm_db_id, snv_db_ids, wt_prot_db_id, mut_prot_db_id in multi_sav_list:
+        aacs = []
+        for snv_db_id in snv_db_ids:
+            pos_db_id, aa2 = snv_position_dict[int(snv_db_id)]
+            pos_nr, aa1, prot_db_id = position_dict[pos_db_id]
+            prot_id = protein_dict[prot_db_id][0]
+            aacs.append(f'{aa1}{pos_nr}{aa2}')
+        line = f'{prot_id}\t{":".join(aacs)}\t{mm_tag_dict[mm_db_id]}\n'
+        lines.append(line)
+        
+    f = open(outfile, 'w')
+    f.write(''.join(lines))
+    f.close()
+
 def classificationOutput(config, outfolder, session_name, session_id, ligand_filter=None):
     outfile = '%s/%s' % (outfolder, session_name)
     if config.verbosity >= 2:
@@ -498,7 +562,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
     rows = ['Position', 'Tag']
     eq_rows = {'Session': session_id}
 
-    results = database.select(config, rows, table, equals_rows=eq_rows)
+    results = select(config, rows, table, equals_rows=eq_rows)
 
     if config.verbosity >= 2:
         t2 = time.time()
@@ -515,13 +579,14 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
     table = 'RS_SNV_Session'
     columns = ['SNV', 'Tag']
 
-    results = database.select(config, columns, table, equals_rows=eq_rows)
+    results = select(config, columns, table, equals_rows=eq_rows)
 
     snv_tag_map = {}
     snv_ids = []
 
     most_common_snv_value_tag = None
     snv_value_tags_count = {}
+    snv_labels = set()
 
     for row in results:
         snv_ids.append(row[0])
@@ -543,6 +608,9 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     snv_value_tags_count[snv_value_tag] = 1
                 else:
                     snv_value_tags_count[snv_value_tag] += 1
+            elif snv_tag[:6] == 'label:':
+                snv_label = snv_tag[6:]
+                snv_labels.add(snv_label)
 
     max_count = 0
     for snv_value_tag in snv_value_tags_count:
@@ -555,13 +623,15 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
     table = 'SNV'
     columns = ['SNV_Id', 'Position', 'New_AA']
 
-    results = database.binningSelect(snv_ids, columns, table, config)
+    results = binningSelect(snv_ids, columns, table, config)
 
     snv_map = {}
+    snv_position_dict = {}
     for row in results:
         if not row[1] in snv_map:
             snv_map[row[1]] = {}
         snv_map[row[1]][row[0]] = row[2]
+        snv_position_dict[row[0]] = (row[1], row[2])
 
     if config.verbosity >= 7:
         print(f'SNV map in classificationOutput:\n{snv_map}')
@@ -580,7 +650,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'Interface'
         columns = ['Protein', 'Interface_Id', 'Structure_Recommendation']
 
-        results = database.binningSelect(prot_id_list, columns, table, config)
+        results = binningSelect(prot_id_list, columns, table, config)
 
         interface_dict = {}
         for row in results:
@@ -589,7 +659,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'Protein_Protein_Interaction'
         columns = ['Interface_A', 'Interface_B', 'Complex', 'Chain_A', 'Chain_B', 'Interaction_Score']
 
-        results = database.binningSelect(list(interface_dict.keys()), columns, table, config)
+        results = binningSelect(list(interface_dict.keys()), columns, table, config)
 
         prot_prot_file = out_utils.generate_ppi_filename(outfolder, session_name)
         if os.path.isfile(prot_prot_file):
@@ -608,7 +678,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'Complex'
         columns = ['Complex_Id', 'PDB']
 
-        results = database.binningSelect(list(complex_ids), columns, table, config)
+        results = binningSelect(list(complex_ids), columns, table, config)
 
         complex_id_map = {}
         for row in results:
@@ -617,7 +687,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'RS_Position_Interface'
         columns = ['Interface', 'Position', 'Recommended_Residue']
 
-        results = database.binningSelect(list(interface_dict.keys()), columns, table, config)
+        results = binningSelect(list(interface_dict.keys()), columns, table, config)
 
         position_interface_map = {}
         for row in results:
@@ -626,7 +696,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'Position_Position_Interaction'
         columns = ['Position_A', 'Position_B', 'Residue_A', 'Residue_B', 'Interaction_Score']
 
-        results = database.binningSelect(list(tag_map.keys()), columns, table, config)
+        results = binningSelect(list(tag_map.keys()), columns, table, config)
 
         pos_pos_map = {}
         residue_ids = set()
@@ -643,7 +713,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'Residue'
         columns = ['Residue_Id', 'Number']
 
-        results = database.binningSelect(list(residue_ids), columns, table, config)
+        results = binningSelect(list(residue_ids), columns, table, config)
 
         res_nr_map = {}
         for row in results:
@@ -652,7 +722,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         table = 'Position'
         columns = ['Position_Id', 'Position_Number', 'Wildtype_Residue']
 
-        results = database.binningSelect(list(session_less_position_ids), columns, table, config)
+        results = binningSelect(list(session_less_position_ids), columns, table, config)
 
         pos_info_map = {}
 
@@ -673,6 +743,10 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
     feature_file = "%s.features.tsv" % (outfile)
     if os.path.isfile(feature_file):
         os.remove(feature_file)
+
+    multi_sav_table_file = f'{outfile}.multi_savs.tsv'
+    if os.path.isfile(multi_sav_table_file):
+        os.remove(multi_sav_table_file)
 
     structguy_project_file = f'{outfile}.structguy_project.conf'
     if os.path.isfile(structguy_project_file):
@@ -716,7 +790,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
     columns = ['Position_Id', 'Position_Number', 'Wildtype_Residue', 'Protein', 'IUPRED', 'IUPRED_Glob', 'Recommended_Structure_Data', 'Position_Data']
 
     table = 'Position'
-    all_results = database.binningSelect(mutation_dict.keys(), columns, table, config)
+    all_results = binningSelect(mutation_dict.keys(), columns, table, config)
 
     if config.verbosity >= 2:
         t4 = time.time()
@@ -726,7 +800,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
 
     classification_output, f = init_classification_table(class_file)
     feature_output, feat_f = init_feature_table(feature_file)
-    create_structguy_project_file(config, outfolder, session_id, structguy_project_file, feature_file, sequences_file, most_common_snv_value_tag)
+    create_structguy_project_file(config, outfolder, session_id, structguy_project_file, feature_file, sequences_file, most_common_snv_value_tag, snv_labels, multi_sav_table_file)
 
     if config.compute_ppi:
         interface_output, interface_f = init_aggregated_interface_table(interface_file)
@@ -750,6 +824,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
 
     feature_header_written = False
     classification_header_written = False
+
+    position_dict = {}
 
     while((main_loop_counter)*max_rows_at_a_time <= len(all_results)):
         if config.verbosity >= 2:
@@ -788,6 +864,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     wt_aa = row[2]
                     prot_db_id = row[3]
 
+                    position_dict[m] = (position_number, wt_aa, prot_db_id)
+
                     sub_tag_map[m] = tag_map[m]
 
                     if m in snv_map:
@@ -818,6 +896,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     position_number = row[1]
                     wt_aa = row[2]
                     prot_db_id = row[3]
+
+                    position_dict[m] = (position_number, wt_aa, prot_db_id)
 
                     sub_tag_map[m] = tag_map[m]
 
@@ -863,6 +943,9 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 position_number = row[1]
                 wt_aa = row[2]
                 prot_db_id = row[3]
+
+                position_dict[m] = (position_number, wt_aa, prot_db_id)
+
                 iupred = row[4]
                 disorder_state = row[5]
 
@@ -1177,6 +1260,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
             pos_pos_f.write(pos_pos_output.pop_line())
 
         pos_pos_f.close()
+
+    generate_multi_sav_table(config, multi_sav_table_file, session_id, snv_position_dict, position_dict, protein_dict)
 
     if os.path.isfile('%s.lock' % feature_file):
         os.remove('%s.lock' % feature_file)

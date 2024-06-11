@@ -101,9 +101,9 @@ class Model:
         if res_nr in sav_highlights:
             return '  0.00'
         if res_nr in insertion_highlights:
-            return ' 33.33'
+            return ' 50.00'
         if res_nr in deletion_highlights:
-            return ' 66.66'
+            return ' 75.00'
         return '100.00'
 
     # modeller increases the residue ID continuously even when a new chain begun, this can lead to residue IDs > 9999
@@ -151,7 +151,7 @@ class Model:
                         if chain_id in converted_highlight_map:
                             b_factor = self.check_highlights(digit_res_str, converted_highlight_map[chain_id])
                         else:
-                            b_factor = '100.00'
+                            b_factor = '25.00'
                         newline = f'{newline[:60]}{b_factor}{newline[66:]}'
 
                     new_lines.append(newline)

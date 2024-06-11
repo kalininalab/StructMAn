@@ -470,11 +470,17 @@ def parseFasta(config, nfname):
     prot_gene_map = {}
     prot_tags_map = {}
 
+    t1_sum = 0.
+    t2_sum = 0.
+    t3_sum = 0.
+
     for line in lines:
+        t0 = time.time()
         line = line[:-1]
         if len(line) == 0:
             continue
         if line[0] == '>':
+            pos_set = None
             words = line[1:].split()
             entry_id = words[0]
             if entry_id.count('|') > 1:
@@ -491,20 +497,23 @@ def parseFasta(config, nfname):
                         aac = aac_tag_tuple
                         tags = set()
 
-                    pr_mut_str_result = process_mutations_str(config, aac, tags)
+                    pr_mut_str_result = process_mutations_str(config, aac, tags, pos_set = pos_set)
 
                     if pr_mut_str_result is None:
                         config.errorlog.add_warning(f'Couldnt process mutation_str: {aac}, {tags}')
                         continue
 
-                    positions, new_multi_mutations, gene_id, protein_specific_tags = pr_mut_str_result
+                    positions, new_multi_mutations, gene_id, protein_specific_tags, multi_mutation_tags, pos_set = pr_mut_str_result
                     mm += new_multi_mutations
                     if gene_id is not None:
                         prot_gene_map[entry_id] = gene_id
 
                     prot_tags_map[entry_id] = protein_specific_tags
 
-                multi_mutations.append(mm)
+                multi_mutations.append((mm, multi_mutation_tags))
+
+            t1 = time.time()
+            t1_sum += (t1-t0)
         elif line[0] == '<':
             words = line[1:].split()
 
@@ -513,20 +522,22 @@ def parseFasta(config, nfname):
             else:
                 aac = words[0]
                 tags = set()
-            pr_mut_str_result = process_mutations_str(config, aac, tags)
+            pr_mut_str_result = process_mutations_str(config, aac, tags, pos_set=pos_set)
 
             if pr_mut_str_result is None:
                 config.errorlog.add_warning(f'Couldnt process mutation_str: {aac}, {tags}')
                 continue
 
-            new_positions, new_multi_mutations, gene_id, protein_specific_tags = pr_mut_str_result
+            new_positions, new_multi_mutations, gene_id, protein_specific_tags, multi_mutation_tags, pos_set = pr_mut_str_result
 
             positions += new_positions
-            multi_mutations.append(new_multi_mutations)
+            multi_mutations.append((new_multi_mutations, multi_mutation_tags))
             if gene_id is not None:
                 prot_gene_map[entry_id] = gene_id
             prot_tags_map[entry_id] = protein_specific_tags
 
+            t2 = time.time()
+            t2_sum += (t2-t0)
         else:
             if len(positions) == 0:
                 position = position_package.Position()
@@ -541,6 +552,13 @@ def parseFasta(config, nfname):
                     del_map.add(entry_id)
                     break
             seq_map[entry_id] += cleaned_line
+
+            t3 = time.time()
+            t3_sum += (t3-t0)
+
+
+    if config.verbosity >= 3:
+        print(f'Parse loop times: {t1_sum} {t2_sum} {t3_sum}')
 
     for entry_id in del_map:
         del seq_map[entry_id]
@@ -563,9 +581,14 @@ def parseFasta(config, nfname):
             protein_specific_tags = None
         if config.verbosity >= 3:
             print(f'In parseFasta: Protein tags for {prot_id}: {protein_specific_tags}')
+            t_0 = time.time()
 
         uniprot.integrate_protein(config, proteins, genes, indel_map, prot_id, prot_id, prot_map, gene_id = gene_id, protein_specific_tags = protein_specific_tags)
         proteins[prot_id].sequence = seq
+
+        if config.verbosity >= 3:
+            t_1 = time.time()
+            print(f'Time for integrate_protein: {t_1-t_0}')
 
     gene_isoform_check(proteins, genes, indel_map, config)
 
@@ -577,18 +600,19 @@ def parseFasta(config, nfname):
 def add_to_prot_map(prot_map, sp_id, positions, multi_mutations, config):
     if sp_id not in prot_map:
         prot_map[sp_id] = [], [], []
-    for multi_mutation in multi_mutations:
+    for multi_mutation, _ in multi_mutations:
         for indel_or_snv in multi_mutation:
             if not isinstance(indel_or_snv, tuple):
                 prot_map[sp_id][1].append(indel_or_snv)
-            else:
-                prot_map[sp_id][0].append(indel_or_snv[0])
+            #else:
+            #    prot_map[sp_id][0].append(indel_or_snv[0])
 
     for position in positions:
         prot_map[sp_id][0].append(position)
-    for multi_mutation in multi_mutations:
+        
+    for multi_mutation, mm_tags in multi_mutations:
         if len(multi_mutation) > 1 and not config.only_snvs:
-            prot_map[sp_id][2].append(multi_mutation)
+            prot_map[sp_id][2].append((multi_mutation, mm_tags))
     return prot_map
 
 
@@ -731,6 +755,7 @@ def buildQueue(config, filename, already_split=False):
 
     prot_tags_map = {}
     prot_gene_map = {}
+    pos_sets = {}
 
     for line in lines:
         # skip blank lines and remove c++ style `//` comments
@@ -753,6 +778,10 @@ def buildQueue(config, filename, already_split=False):
             if config.verbosity >= 1:
                 print("Skipped input line:\n%s\nID too short.\n" % line)
             continue
+        elif (len(sp_id) == 6 and sp_id.count(':') == 1):
+            sp_id = f'{sp_id[:4].upper()}:{sp_id[-1]}'
+        elif (len(sp_id) == 4 and sp_id[0].isnumeric()):
+            sp_id = sp_id.upper()
 
         tags = set()
 
@@ -778,21 +807,25 @@ def buildQueue(config, filename, already_split=False):
                 mutation_str = words[1].replace("\n", "")
                 multi_mutations = []
                 positions = []
+                if sp_id in pos_sets:
+                    pos_set = pos_sets[sp_id]
                 if (not sp_id.count(':') == 1) or sp_id[0:5] == 'HGNC:':  # this means sp_id is not a pdb-id
-                    positions, multi_mutation, gene_id, protein_specific_tags = process_mutations_str(config, mutation_str, tags)
+                    positions, multi_mutation, gene_id, protein_specific_tags, multi_mutation_tags, pos_set = process_mutations_str(config, mutation_str, tags, pos_set=pos_set)
 
-                    multi_mutations.append(multi_mutation)
+                    multi_mutations.append((multi_mutation, multi_mutation_tags))
                     if gene_id is not None:
                         prot_gene_map[sp_id] = gene_id
                     prot_tags_map[sp_id] = protein_specific_tags
 
                 else:  # this means sp_id is a pdb-id
-                    positions, multi_mutations, gene_id, protein_specific_tags = process_mutations_str(config, mutation_str, tags, pdb_style=True)
-                    multi_mutations.append(multi_mutation)
+                    positions, multi_mutations, gene_id, protein_specific_tags, multi_mutation_tags, pos_set = process_mutations_str(config, mutation_str, tags, pos_set=pos_set, pdb_style=True)
+                    multi_mutations.append((multi_mutation, multi_mutation_tags))
                     if gene_id is not None:
                         pdb_chain_tuple = '%s:%s' % (sp_id[:4].upper(), sp_id[-1])  # enforce uppercase pdb-id
                         prot_gene_map[pdb_chain_tuple] = gene_id
                     prot_tags_map[sp_id] = protein_specific_tags
+                pos_sets[sp_id] = pos_set
+
 
         except:
             [e, f, g] = sys.exc_info()
@@ -870,6 +903,9 @@ def gene_isoform_check(proteins, genes, indel_map, config):
                     continue
                 extra_sequence_scan_proteins[iso1] = proteins[iso1]
                 extra_sequence_scan_proteins[iso2] = proteins[iso2]
+
+    if config.verbosity >= 3:
+        print(f'In gene_isoform_check: Number of extra_sequence_scan_proteins: {len(extra_sequence_scan_proteins)}, Number of Genes: {len(genes)}')
 
     extra_sequence_scan_proteins, indel_map, _, removed_proteins, genes = sequenceScan(config, extra_sequence_scan_proteins, indel_map, genes = genes)
 

@@ -173,6 +173,8 @@ def u_ac_isoform_search(gene_sequence_map, stems, ref_stem_map, config):
 
 def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, input_id, prot_map, u_ac=None, u_id=None, ref=None, pdb_id = None, other_ids={}, is_pdb_input = False, gene_id = None, protein_specific_tags = None):
 
+    if config.verbosity >= 3:
+        t0 = time.time()
     if protein_specific_tags is None:
         protein_specific_tags = set([])
     if gene_id is not None:
@@ -181,6 +183,11 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
             genes[gene_id] = gene_obj
         else:
             genes[gene_id].proteins.add(primary_protein_id)
+
+    if config.verbosity >= 3:
+        t1 = time.time()
+        print(f'Time for integrate_protein part 1: {t1-t0}, {len(other_ids)} {len(prot_map[input_id][0])}')
+
 
     if primary_protein_id not in proteins:
         protein = protein_package.Protein(config.errorlog, primary_protein_id=primary_protein_id, u_ac=u_ac, u_id=u_id, ref_id=ref, positions=prot_map[input_id][0], input_id=input_id, pdb_id = pdb_id, gene = gene_id, tags = protein_specific_tags)
@@ -197,16 +204,28 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
     for other_id_type in other_ids:
         proteins[primary_protein_id].add_other_ids(other_id_type, other_ids[other_id_type])
 
+    if config.verbosity >= 3:
+        t2 = time.time()
+        print(f'Time for integrate_protein part 2: {t2-t1} {len(prot_map[input_id][1])}')
+
     if len(prot_map[input_id][1]) > 0:
         indel_insert(config, proteins, indel_map, prot_map[input_id][1], primary_protein_id)
 
-    for multi_mutation in prot_map[input_id][2]:
+    if config.verbosity >= 3:
+        t3 = time.time()
+        print(f'Time for integrate_protein part 3: {t3-t2} {len(prot_map[input_id][2])}')
+
+    for multi_mutation, mm_tags in prot_map[input_id][2]:
         if len(multi_mutation) > 1:
             if primary_protein_id in indel_map:
                 indel_map_entry = indel_map[primary_protein_id]
             else:
                 indel_map_entry = {}
-            proteins[primary_protein_id].add_multi_mutation(multi_mutation, indel_map_entry)
+            proteins[primary_protein_id].add_multi_mutation(multi_mutation, indel_map_entry, mm_tags = mm_tags)
+
+    if config.verbosity >= 3:
+        t4 = time.time()
+        print(f'Time for integrate_protein part 4: {t4-t3}')
     return
 
 
@@ -349,7 +368,8 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
                         # if the current u_ac does not contain a '-' and the new found u_ac contains a '-': replace the corresponding ids
                         old_ac = ref_u_ac_map[ref]
                         ref_u_ac_map[ref] = u_ac
-                        del proteins[old_ac]
+                        if old_ac in proteins:
+                            del proteins[old_ac]
                         integrate_protein(config, proteins, genes, indel_map, ref, ref, np_map, u_ac=u_ac, gene_id = gene_id, protein_specific_tags = prot_tags_map[ref])
             # similar to uniprot-id mapping, we have to go to uniprot to get search for unstored refseq entries and if we find them, we have to update the local mapping database
             unstored_refs = []

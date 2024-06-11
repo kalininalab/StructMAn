@@ -63,14 +63,20 @@ fi
 conda_base_path=$(conda info --base)
 conda_bash_path="$conda_base_path"/etc/profile.d/conda.sh
 
-new_env_path=$(conda env list | awk -v name="$env_name" '/^[^#]/{ if ($1 == name) {print $2} }')
-
 #activate the environment
 {
     echo "Activating environment inside shell ..."
     source "$conda_bash_path"
+    current_env=$(conda info | grep 'active environment' | awk '{sub(/active environment.:./,""); print}')
+
+    if ! [ "$current_env" = "base" ]
+    then
+        conda deactivate
+    fi
+
+    new_env_path=$(conda env list | awk -v name="$env_name" '/^[^#]/{ if ($1 == name) {print $2} }')
     conda activate "$env_name"
-    echo "$new_env_path"" activated"
+    echo "$env_name" activated
 } >&$verbose_stdout
 
 mamba_version_test_output=$(mamba --version 2>/dev/null)

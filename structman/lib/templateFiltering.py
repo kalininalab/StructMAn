@@ -1355,8 +1355,10 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
             if config.low_mem_system:
                 cost = max([1, min([config.proc_n, (((ac**2) / cost_function_constant) * config.proc_n) // config.gigs_of_ram])])
 
-            if config.proc_n == 1:
+            if config.proc_n < 2:
                 cost = 0
+            if config.proc_n < 2:
+                package_cost = 0 #Never break for unparalellized analysis
 
             #if (cost + package_cost) <= config.proc_n:
             if (1 + package_cost) <= config.proc_n:
@@ -1384,6 +1386,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                 del_list.append(pdb_id)
                 assigned_costs[pdb_id] = cost
                 temporarily_freed[pdb_id] = 0
+
             else:
                 break
 
@@ -1392,11 +1395,15 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         if len(size_map[s]) == 0:
             del size_map[s]
 
+    if config.proc_n < 2 and len(current_chunk) > 0:
+        anno_result_ids.append(annotate(config, current_chunk))
+        current_chunk = []
+
     sorted_sizes = sorted(size_map.keys(), reverse=True)
 
     if config.verbosity >= 2:
         t11 = time.time()
-        print("Annotation Part 1.1: %s" % (str(t11 - t0)))
+        print(f"Annotation Part 1.1: {t11 - t0}, {len(size_map)}")
 
     getStoredResidues(proteins, config, exclude_interacting_chains = not config.compute_ppi)  # has to be called after insertStructures
 
