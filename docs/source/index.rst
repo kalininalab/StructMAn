@@ -15,4 +15,6 @@ Contents
 
 .. toctree::
 
+   installation
    usage
+   input_formats
