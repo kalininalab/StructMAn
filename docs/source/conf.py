@@ -2,12 +2,12 @@
 
 # -- Project information
 
-project = 'Lumache'
-copyright = '2021, Graziella'
-author = 'Graziella'
+project = 'StructMAn'
+copyright = '2024, Gress'
+author = 'Gress'
 
 release = '0.1'
-version = '0.1.0'
+version = '1.5.1'
 
 # -- General configuration
 
