@@ -2,7 +2,9 @@
 
 **Structural Mutation Annotation**
 
-StructMAn is a computational pipeline and tool kit to annotate protein sequences to the protein structure level combined with an automatical comprehensive structural analysis. The term "Mutation" is rather historical due the method was initially designed to focus on specifically given individual positions in protein sequences, but evolved over time to process full protein sequences.  
+StructMAn is a computational pipeline and tool kit to annotate protein sequences to the protein structure level combined with an automatical comprehensive structural analysis. The term "Mutation" is rather historical due the method was initially designed to focus on specifically given individual positions in protein sequences, but evolved over time to process full protein sequences.  \
+Apart from the short overview, you can find a more detailed explanation of the tool on 
+[ReadTheDocs](https://structman.readthedocs.io/en/main/). 
 
 ## Installation
 
