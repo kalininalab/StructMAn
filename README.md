@@ -33,7 +33,7 @@ StructMAn needs to be deployed in a a conda environment, therefore a installatio
   * `-m 'Modeller license key'` Modeller license key phrase. **Only required when StructMAn is used for automated Modelling.** If not given, modeller will not be installed and the modelling functionalities of StructMAn will not be usable. If a wrong key is given, modeller will be installed, but it will fail on usage. (Granted for academic use only by [salilab](https://salilab.org/modeller/))
   * `-s 'storage folder'` Path to a folder, where structman may write files and store some necessary data. On installation a mmseqs2 indices table with around 1.5Gb will be stored there. On runtime, temporary files will be written there. Default: /share/structman/ in the corresponding environment folder
   * `-f 'local database folder'` Path to a folder, where structman stores a sqlite3 database. Not necessary when a database connection via `-c`, `-d`, and `-p` were given. The size of the database depends on the size of processed inputs and can reach several hundred Gb. Default: the storage folder given with `-s`
-  * `-v` Adding verbose Output. **When having issues with StructMAn installation** please provide verbose Output. It is quite large, so best redirect it with `> structman_installer_error.txt`
+  * `-v` Adding verbose Output. **When having issues with StructMAn installation** please provide verbose Output. It is quite large, so best redirect it with `&> structman_installer_error.txt`
 
  The installation script will generate a structman config file that will be used automatically. This file can be copied/modified for further usage (for example using specific database instances).
 
