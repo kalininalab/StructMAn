@@ -83,7 +83,12 @@ mamba_version_test_output=$(mamba --version 2>/dev/null)
 
 if [ -z "$mamba_version_test_output" ]
 then
-    conda install -y -c conda-forge mamba >&$verbose_stdout 2>&$verbose_stderr
+    {
+        conda install -y -c conda-forge mamba 
+        echo "Mamba installed"
+    } >&$verbose_stdout 2>&$verbose_stderr
+else
+    echo "Mamba already installed: $mamba_version_test_output" >&$verbose_stdout
 fi
 
 #install dependencies
@@ -93,7 +98,7 @@ fi
     echo "Installing package harfbuzz ..."
     mamba install -y harfbuzz==8.2.1 -c conda-forge
     echo "Installing package cairo ..."
-    mamba install -y cairo==1.6.0 -c conda-forge
+    mamba install -y cairo==1.18.0 -c conda-forge
     export PKG_CONFIG_PATH="$new_env_path"/envs/"$env_name"/lib/pkgconfig:"$PKG_CONFIG_PATH"
     echo "Installing package pycairo ..."
     mamba install -y pycairo    
@@ -108,6 +113,10 @@ fi
     echo "Installing package pymol ..."
     mamba install -y -c conda-forge pymol-open-source
 } >&$verbose_stdout
+
+pushd "$SCRIPTPATH/structman/scripts/"
+wget https://raw.github.com/Pymol-Scripts/Pymol-script-repo/master/spectrumany.py
+popd
 
 #install the main package
 echo "Installing StructMAn source code using pip ..."
