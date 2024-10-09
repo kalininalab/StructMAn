@@ -101,7 +101,7 @@ fi
     mamba install -y cairo==1.18.0 -c conda-forge
     export PKG_CONFIG_PATH="$new_env_path"/envs/"$env_name"/lib/pkgconfig:"$PKG_CONFIG_PATH"
     echo "Installing package pycairo ..."
-    mamba install -y pycairo    
+    mamba install -y pycairo==1.23.0
     echo "Installing package importlib-metadata ..."
     mamba install -y importlib-metadata
     echo "Installing package keyring ..."
