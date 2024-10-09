@@ -161,7 +161,11 @@ class Model:
             else:
                 new_lines.append(line)
 
-        refined_path = '%s_refined.pdb' % self.path[:-4].replace('.', '_')
+        stem = self.path[:-4].replace('.', '_')
+        if stem[-12:] != '_refined.pdb':
+            refined_path = f'{stem}_refined.pdb'
+        else:
+            refined_path = f'{stem}.pdb'
 
         if target_path is not None:
             f = open(target_path, 'w')

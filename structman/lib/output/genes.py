@@ -25,13 +25,13 @@ import numpy
 import markdown
 import pdfkit
 
-import pymol
-
 from structman.lib.database import database
+from structman.lib.globalAlignment import init_bp_aligner_class
 from structman.lib.database.database_core_functions import select
-from structman.lib.lib_utils import fuse_multi_mutations
+from structman.lib.lib_utils import fuse_multi_mutations, generate_multi_mutation
 from structman.lib.output import out_generator, out_utils, massmodel
 from structman.base_utils.base_utils import resolve_path, calculate_chunksizes
+from structman.lib.sdsc.mutations import MultiMutation
 
 class Gene:
 
@@ -144,15 +144,22 @@ def calcWeightedGI(isoforms, proteins, protein_list, wt_condition_tag, disease_c
         expression_d_condition_prot_b = prot_b.retrieve_tag_value(disease_condition_tag)
 
         if expression_wt_condition_prot_a is None:
+            isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = 0.
             continue
         if expression_d_condition_prot_a is None:
+            isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = 0.
             continue
         if expression_wt_condition_prot_b is None:
+            isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = 0.
             continue
         if expression_d_condition_prot_b is None:
+            isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = 0.
             continue
 
-        unweighted_score = multi_mutation.get_score(proteins)
+        try:
+            unweighted_score = multi_mutation.get_score(proteins)
+        except:
+            unweighted_score = 0.
         isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = unweighted_score
         if expression_wt_condition_prot_a <= expression_d_condition_prot_a: #prot_a needs to decrease in expression
             continue        
@@ -233,7 +240,7 @@ def calculateGeneIsoformScore(isoforms, proteins, wt = None, wt_condition_tag = 
 
     return GI_score, wt.primary_protein_id, weighted_gi_score, max_contribution_isoform, normalized_max_contribution, isoform_pair_scores, isoform_expressions
 
-def init_gene_maps(session_id, config):
+def init_gene_maps(session_id, config, proteins):
     table = 'RS_Isoform'
     rows = ['Protein_A', 'Protein_B', 'Gene', 'Multi_Mutation']
     eq_rows = {'Session': session_id}
@@ -242,6 +249,7 @@ def init_gene_maps(session_id, config):
 
     gene_db_ids = set()
     gene_isoform_map = {}
+    completeness = {}
     for row in results:
         prot_a_db_id = row[0]
         prot_b_db_id = row[1]
@@ -251,18 +259,103 @@ def init_gene_maps(session_id, config):
         gene_db_ids.add(gene_db_id)
         if not gene_db_id in gene_isoform_map:
             gene_isoform_map[gene_db_id] = []
-        gene_isoform_map[gene_db_id].append((prot_a_db_id, prot_b_db_id, multi_mutation_db_id))
-    
+            completeness[gene_db_id] = {}
+        gene_isoform_map[gene_db_id].append((prot_a_db_id, prot_b_db_id, multi_mutation_db_id, None))
+        completeness[gene_db_id][prot_a_db_id] = [prot_b_db_id]
+
     gene_id_map = database.retrieve_gene_id_map(gene_isoform_map.keys(), config)
+    aligner_class = init_bp_aligner_class()
+    processed = set()
+    gene_id_map_updates = []
+    del_list = []
+    for gene_db_id_a in gene_id_map:
+        if gene_db_id_a not in gene_isoform_map:
+            continue
+        gene_id_a, gene_name_a = gene_id_map[gene_db_id_a]
+
+        isoforms = set()
+        for (prot_a_db_id, _, _, _) in gene_isoform_map[gene_db_id_a]:
+            isoforms.add(prot_a_db_id)
+
+        for iso_a in isoforms:
+            for iso_b in isoforms:
+                if iso_a == iso_b:
+                    continue
+                if iso_b not in completeness[gene_db_id_a][iso_a]:
+                    prot_a = proteins.getByDbId(iso_a)
+                    prot_b = proteins.getByDbId(iso_b)
+                    multi_mutation_obj = generate_new_multi_mutation(proteins, config, aligner_class, prot_a, prot_b)
+                    gene_isoform_map[gene_db_id_a].append((iso_a, iso_b, None, multi_mutation_obj))
+
+        if config.verbosity >= 3:
+            print(f'Size of gene_isoform_map of {gene_id_a}: {len(gene_isoform_map[gene_db_id_a])}')
+        for gene_db_id_b in gene_id_map:
+            if gene_db_id_b not in gene_isoform_map:
+                continue
+            if gene_db_id_b in processed:
+                continue
+            gene_id_b, gene_name_b = gene_id_map[gene_db_id_b]
+            if gene_id_a == gene_id_b:
+                continue
+            if gene_name_a == gene_name_b:
+                fused_isoform_pairs = fuse_genes(gene_isoform_map[gene_db_id_a], gene_isoform_map[gene_db_id_b], config, proteins, aligner_class)
+                gene_isoform_map[gene_db_id_a] = fused_isoform_pairs
+                del_list.append(gene_db_id_b)
+
+                fused_gene_id = f'{gene_id_a}|{gene_id_b}'
+                gene_id_map_updates.append((gene_db_id_a, fused_gene_id, gene_name_a))
+
+        processed.add(gene_db_id_a)
+
+    for gene_db_id, fused_gene_id, gene_name in gene_id_map_updates:
+        gene_id_map[gene_db_id] = fused_gene_id, gene_name
+
+    for gene_db_id in del_list:
+        del gene_isoform_map[gene_db_id]
 
     return gene_isoform_map, gene_id_map
 
+def fuse_genes(isoform_pairs_a, isoform_pairs_b, config, proteins, aligner_class):
+    isoforms_a = set()
+    for (prot_a_db_id, _, _, _) in isoform_pairs_a:
+        isoforms_a.add(prot_a_db_id)
+
+    isoforms_b = set()
+    for (prot_a_db_id, _, _, _) in isoform_pairs_b:
+        isoforms_b.add(prot_a_db_id)
+
+    fused_isoform_pairs = isoform_pairs_a + isoform_pairs_b
+
+    for prot_a_db_id in isoforms_a:
+        for prot_b_db_id in isoforms_b:
+            prot_a = proteins.getByDbId(prot_a_db_id)
+            prot_b = proteins.getByDbId(prot_b_db_id)
+
+            multi_mutation_obj = generate_new_multi_mutation(proteins, config, aligner_class, prot_a, prot_b)
+            fused_isoform_pairs.append((prot_a_db_id, prot_b_db_id, None, multi_mutation_obj))
+
+            multi_mutation_obj = generate_new_multi_mutation(proteins, config, aligner_class, prot_b, prot_a)
+            fused_isoform_pairs.append((prot_b_db_id, prot_a_db_id, None, multi_mutation_obj))
+
+    return fused_isoform_pairs
+
+def generate_new_multi_mutation(proteins, config, aligner_class, prot_a, prot_b):
+    seq_a = prot_a.sequence
+    seq_b = prot_b.sequence
+    _, multi_mutation_list = generate_multi_mutation(seq_a, seq_b, config, aligner_class = aligner_class)
+    multi_mutation_obj = MultiMutation(prot_a.primary_protein_id, f'{prot_a.primary_protein_id}_{prot_b.primary_protein_id}', multi_mutation_list)
+    
+    prot_a.multi_mutations.append((multi_mutation_list, prot_b.primary_protein_id, None))
+    if not prot_a.primary_protein_id in proteins.multi_mutations:
+        proteins.multi_mutations[prot_a.primary_protein_id] = []
+    proteins.multi_mutations[prot_a.primary_protein_id].append(multi_mutation_obj)
+    return multi_mutation_obj
 
 def calculate_gene_isoform_score_dict(session_id, config, proteins = None, create_gene_class = False, target_genes = None, return_prot_db_ids = False):
-    gene_isoform_map, gene_id_map = init_gene_maps(session_id, config)
-
     if proteins is None:
-        proteins = database.proteinsFromDb(session_id, config, with_multi_mutations = True, with_mappings = True)
+        proteins = database.proteinsFromDb(session_id, config, with_multi_mutations = True, with_mappings = True, with_alignments=True)
+
+    gene_isoform_map, gene_id_map = init_gene_maps(session_id, config, proteins)
 
     gene_isoform_score_dict = {}
 
@@ -281,10 +374,12 @@ def calculate_gene_isoform_score_dict(session_id, config, proteins = None, creat
 
         isoforms = []
         isoform_prot_objs = {}
-        for (prot_a_db_id, prot_b_db_id, multi_mutation_db_id) in gene_isoform_map[gene_db_id]:
+        for (prot_a_db_id, prot_b_db_id, multi_mutation_db_id, multi_mutation) in gene_isoform_map[gene_db_id]:
             prot_a = proteins.getByDbId(prot_a_db_id)
             prot_b = proteins.getByDbId(prot_b_db_id)
-            multi_mutation = proteins.multi_mutation_back_map[multi_mutation_db_id]
+            if multi_mutation_db_id is not None:
+                multi_mutation = proteins.multi_mutation_back_map[multi_mutation_db_id]
+            
             isoforms.append((prot_a, prot_b, multi_mutation))
             if prot_a.primary_protein_id not in isoform_prot_objs:
                 isoform_prot_objs[prot_a.primary_protein_id] = prot_a
@@ -293,12 +388,12 @@ def calculate_gene_isoform_score_dict(session_id, config, proteins = None, creat
             
 
         if config.verbosity >= 3:
-            print(f'Call of calculateGeneIsoformScore for {gene_id}\n')
+            print(f'Call of calculateGeneIsoformScore for {gene_id} {len(isoforms)}\n')
 
         gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score, isoform_pair_scores, isoform_expressions = calculateGeneIsoformScore(isoforms, proteins, wt_condition_tag = config.condition_1_tag, disease_condition_tag = config.condition_2_tag)
 
         if config.verbosity >= 3:
-            print(f'GI Score for {gene_id}: {gi_score}')
+            print(f'GI Score for {gene_id}: {gi_score} {len(isoform_pair_scores)}')
 
         if create_gene_class:
             gene_class = Gene(gene_id, gene_name, isoforms, isoform_pair_scores, isoform_expressions, isoform_prot_objs)
@@ -310,7 +405,7 @@ def calculate_gene_isoform_score_dict(session_id, config, proteins = None, creat
         target_genes = overwrite_targets
 
     if return_prot_db_ids:
-        return gene_isoform_score_dict, target_genes, prot_db_ids
+        return gene_isoform_score_dict, target_genes, prot_db_ids, proteins
 
     return gene_isoform_score_dict, target_genes
 
@@ -358,7 +453,10 @@ def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cm
 
     barplot_folder = f'{outfile_stem}_barplots'
     if not os.path.isdir(barplot_folder):
-        os.mkdir(barplot_folder)
+        try:
+            os.mkdir(barplot_folder)
+        except:
+            pass
 
     relation_plot_folder = f'{outfile_stem}_relationplots'
     if not os.path.isdir(relation_plot_folder):
@@ -390,6 +488,7 @@ def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cm
     longest_isoform = None
     usage_plots = {}
     for isoform in gene_class.isoforms:
+
         expression_wt_condition, expression_d_condition, prot_object = gene_class.isoforms[isoform]
         if (expression_d_condition == 0 and expression_wt_condition == 0) or expression_wt_condition is None or expression_d_condition is None:
             insignificant_isoforms.add(isoform)
@@ -402,6 +501,7 @@ def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cm
         for isoform_b in gene_class.isoforms:
             if isoform_b == isoform:
                 continue
+
             try:
                 _, multi_mutation = gene_class.isoform_pairs[(isoform, isoform_b)]
             except:
@@ -409,6 +509,7 @@ def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cm
                     _, multi_mutation = gene_class.isoform_pairs[(isoform_b, isoform)]
                 except:
                     continue
+
 
             l_deleted, l_inserted, l_substituted = multi_mutation.give_count()
 
@@ -1010,7 +1111,7 @@ def create_gene_report(session_id, target, config, out_f, session_name):
     #if not os.path.isfile(gml_file):
     #    generate_gene_interaction_network(session_id, config, out_f, session_name)
 
-    gene_isoform_score_dict, targets, prot_db_ids = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True, target_genes = targets, return_prot_db_ids = True)
+    gene_isoform_score_dict, targets, prot_db_ids, proteins = calculate_gene_isoform_score_dict(session_id, config, create_gene_class = True, target_genes = targets, return_prot_db_ids = True)
 
     outfile_stem = os.path.join(out_f, f'{session_name}')
     cmap=mpl.colormaps['RdYlGn']
@@ -1089,7 +1190,10 @@ def create_gene_report(session_id, target, config, out_f, session_name):
         (insignificant_isoforms, uninterresting_isoform_pairs) = uninterresting_isoform_pairs_dict[target]
         blacklist = blacklist | insignificant_isoforms
 
-    massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids, skip_individual_indel_mutants = True, blacklist = blacklist)
+    if config.verbosity >= 3:
+        print(f'Blacklist: {blacklist}')
+
+    massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids, skip_individual_indel_mutants = True, blacklist = blacklist, update_proteins = proteins.protein_map)
     md_lines = [f"# **--- Gene Report for {session_name} ---**\n\n\n"]
     for target in targets:
         gene_class = gene_isoform_score_dict[target][5]
@@ -1230,6 +1334,7 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
 
 def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=200):
     try:
+        import pymol
         import pymol.cmd as pymol_cmd
     except:
         [e, f, g] = sys.exc_info()

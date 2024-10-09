@@ -112,6 +112,8 @@ fi
     mamba install -y requests-toolbelt
     echo "Installing package pymol ..."
     mamba install -y -c conda-forge pymol-open-source
+    echo "Installing package gawk ..."    
+    mamba install -y gawk
 } >&$verbose_stdout
 
 pushd "$SCRIPTPATH/structman/scripts/"

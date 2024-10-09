@@ -751,6 +751,9 @@ def getSessionId(infile, config):
     table = 'Session'
     columns = ['Session_Id', 'Checksum']
 
+    if config.verbosity >= 3:
+        print(f'Looking for infile {infile} with checksum {checksum} in getSessionId')
+
     results = select(config, columns, table, equals_rows={'Input_File': infile})
 
     if len(results) == 0:
@@ -759,6 +762,8 @@ def getSessionId(infile, config):
     for row in results:
         if checksum == row[1]:
             return row[0]
+
+    print(f'Error in getSessionId:\nChecksum of infile {infile} not found in database:\n{results}')
 
     return None
 

@@ -1,5 +1,7 @@
 import os
 import shutil
+import sys
+import traceback
 
 import ray
 
@@ -40,11 +42,14 @@ def get_optimal_templates(prot_id, proteins, config):
 
 # called by structman_main
 def mass_model(session_id, config, outfolder, include_snvs=False, template_selection_scheme = "functional_annotation", with_multi_mutations = True,
-                prot_db_ids = None, model_wts = False, skip_individual_indel_mutants = False, blacklist = None):
+                prot_db_ids = None, model_wts = False, skip_individual_indel_mutants = False, blacklist = None, update_proteins = None):
     current_chunk = 1
     proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True, with_mappings = True,
                                        with_snvs=True, mutate_snvs=include_snvs, with_alignments=True, with_multi_mutations = with_multi_mutations,
                                        with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_ids)
+
+    if update_proteins is not None:
+        proteins.protein_map.update(update_proteins)
 
     if blacklist is None:
         blacklist = set([])
@@ -208,7 +213,9 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                             seq_id = proteins[prot_id].structure_annotations[(pdb_id, tchain)].sequence_identity
                             cov = proteins[prot_id].structure_annotations[(pdb_id, tchain)].coverage
                         except:
-                            print(f'Error: getting the alignments failed in the modelling process of {prot_id} with highlighting {mut_prot_id}')
+                            [e, f, g] = sys.exc_info()
+                            g = traceback.format_exc()
+                            print(f'Error: getting the alignments failed in the modelling process of {prot_id} with highlighting {mut_prot_id}\n{e}\n{f}\n{g}\n')
                             continue
                     else:
                         continue
@@ -256,6 +263,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
             proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True,
                                        with_snvs=True, mutate_snvs=include_snvs, with_alignments=True,
                                        with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_id_dict)
+            if update_proteins is not None:
+                proteins.protein_map.update(update_proteins)
             continue
 
         if os.path.exists(summary_file) and current_chunk == 1:
@@ -312,6 +321,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
         proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True,
                                        with_snvs=True, mutate_snvs=include_snvs, with_alignments=True,
                                        with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_id_dict)
-
+        if update_proteins is not None and proteins is not None:
+            proteins.protein_map.update(update_proteins)
     ray.shutdown()
 

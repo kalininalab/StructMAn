@@ -6,7 +6,7 @@ import time
 import sys
 import traceback
 
-def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_level = None, total_memory_quantile = 0.6):
+def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_level = None, total_memory_quantile = 0.6, debug = False):
     if ray.is_initialized():
         return
     #"""
@@ -25,7 +25,7 @@ def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_lev
     if overwrite_logging_level is not None:
         logging_level = overwrite_logging_level
 
-    if config.verbosity <= 3:
+    if config.verbosity <= 3 and not debug:
         log_to_driver = False
     else:
         log_to_driver = True

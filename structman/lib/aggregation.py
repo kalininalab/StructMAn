@@ -904,7 +904,7 @@ def classification(proteins, config, background_insert_residues_process, indel_a
 
             try:
                 ready = queue.get()
-            except Empty:
+            except:
                 continue
             if ready == 'End':
                 finished += 1
