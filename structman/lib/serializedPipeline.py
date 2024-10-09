@@ -490,6 +490,7 @@ def parseFasta(config, nfname):
                 aacs = words[1]
                 aac_tag_tuples = aacs.split(';')
                 mm = []
+                multi_mutation_tags = None
                 for aac_tag_tuple in aac_tag_tuples:
                     if aac_tag_tuple.count('<') == 1:
                         aac, tags = aac_tag_tuple.split('<')
