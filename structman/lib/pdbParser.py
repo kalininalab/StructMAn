@@ -1302,12 +1302,14 @@ def getSI(pdb_id, name, res, chain, pdb_path, config):
 
     FNULL = open(os.devnull, 'w')
     try:
+        i_err = None
+        s_err = None
         inchiproc = subprocess.Popen(["babel", "-i", "pdb", "-o", "inchi"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         inchi, i_err = inchiproc.communicate(page, timeout=600)
         smilesproc = subprocess.Popen(["babel", "-i", "pdb", "-o", "smi"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         smiles, s_err = smilesproc.communicate(page, timeout=600)
     except:
-        config.errorlog.add_warning("Babel Package seems not to be installed: %s %s %s %s\n%s\n%s" % (pdb_id, name, res, chain, i_err, s_err))
+        config.errorlog.add_warning(f"Babel Package seems not to be installed: {pdb_id} {name} {res} {chain}\n{i_err}\n{s_err}")
         return ("", "")
 
     smiles = smiles.split()
