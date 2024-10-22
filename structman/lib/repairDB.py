@@ -262,7 +262,7 @@ def load(config):
 
 
     if config.db_address != '-':
-        sql = 'CREATE DATABASE %s' % config.db_name
+        sql = 'CREATE DATABASE `%s`' % config.db_name
 
         try:
             cursor.execute(sql)
@@ -270,8 +270,11 @@ def load(config):
         except:
             [e, f, g] = sys.exc_info()
             g = traceback.format_exc()
-            print('\n'.join([str(e), str(f), str(g)]))
-            db.close()
+            print(f'SQL command: [{sql}] failed:\n{e}\n{f}\n{g}')
+            try:
+                db.close()
+            except:
+                pass
 
         if config.database_source_path[-3:] == '.gz':
             f = gzip.open(config.database_source_path, 'rb')
@@ -309,8 +312,11 @@ def load(config):
             except:
                 [e, f, g] = sys.exc_info()
                 g = traceback.format_exc()
-                print('\n'.join([str(e), str(f), str(g), sql_command]))
-                db.close()
+                print(f'SQL command: [{sql_command}] failed:\n{e}\n{f}\n{g}')
+                try:
+                    db.close()
+                except:
+                    pass
     else:
         if config.sqlite_database_source_path[-3:] == '.gz':
             f = gzip.open(config.sqlite_database_source_path, 'rb')

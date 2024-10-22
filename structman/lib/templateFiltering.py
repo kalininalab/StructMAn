@@ -664,6 +664,7 @@ def annotate(config, chunk):
 
     outputs = []
     nested_outputs = []
+    nested_processes_dump = []
     for pdb_id, target_dict, nested_cores_limiter, nested_call in chunk:
         t0 = time.time()
         model_path = None
@@ -677,20 +678,22 @@ def annotate(config, chunk):
         elif config.model_db_active:
             if is_alphafold_model(pdb_id):
                 model_path = alphafold_model_id_to_file_path(pdb_id, config)
-        (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, nested_processes, IAmap, interfaces, analysis_dump) = structuralAnalysis(pdb_id, config, target_dict=target_dict, nested_cores_limiter = nested_cores_limiter, nested_call = nested_call, model_path = model_path)
+        (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, nested_processes, IAmap, interfaces) = structuralAnalysis(pdb_id, config, target_dict=target_dict, nested_cores_limiter = nested_cores_limiter, nested_call = nested_call, model_path = model_path)
         t1 = time.time()
 
         if config.verbosity >= 5:
-            print('Time for structural analysis of', pdb_id, ':', t1 - t0)
+            print(f'Time for structural analysis of {pdb_id}: {t1 - t0}, nested call: {nested_call}')
 
         if nested_call:
-            nested_outputs.append((pdb_id, nested_processes, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, t1 - t0, analysis_dump))
+            nested_outputs.append((pdb_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, t1 - t0))
+            nested_processes_dump.append(nested_processes)
         else:
-            outputs.append((pdb_id, structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, t1 - t0, analysis_dump))
+            outputs.append((pdb_id, structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, t1 - t0))
 
     outputs = pack(outputs)
+    nested_outputs = pack(nested_outputs)
 
-    return (outputs, nested_outputs)
+    return (outputs, nested_outputs, nested_processes_dump)
 
 def analysis_chain(target_chain, analysis_dump):
     (pdb_id, config, target_residues, siss_coord_map, centroid_map,
@@ -1249,7 +1252,7 @@ def structuralAnalysis(pdb_id, config, target_dict=None, model_path=None, keep_r
         del dssp_dict
         del page_altered
 
-        return {}, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, core_results, IAmap, interfaces, analysis_dump
+        return {}, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, core_results, IAmap, interfaces
 
     else:
         analysis_dump = (pdb_id, config, target_residues, siss_coord_map, centroid_map,
@@ -1272,7 +1275,7 @@ def structuralAnalysis(pdb_id, config, target_dict=None, model_path=None, keep_r
         t7 = time.time()
         print('Time for structuralAnalysis Part 7:', t7 - t6)
 
-    return structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, [], IAmap, interfaces, None
+    return structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, [], IAmap, interfaces
 
 def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
@@ -1309,15 +1312,17 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         if s not in size_map:
             size_map[s] = {}
         size_map[s][pdb_id] = ac
+        if config.verbosity >= 5:
+            print(f'PDB entry {pdb_id} added to size_map, s: {s}, ac: {ac}')
         n_of_comps += 1
         n_of_chains_to_analyze += s
         if s < config.n_of_chain_thresh:
             n_of_small_comps += 1
 
-    chunksize = min([8,max([n_of_small_comps // (4 * config.proc_n), 1])])
+    chunksize = min([4,max([n_of_small_comps // (4 * config.proc_n), 1])])
 
     if config.verbosity >= 2:
-        print(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}')
+        print(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}, n_of_chain_thresh: {config.n_of_chain_thresh}')
         print(f'Total amount in structure_list: {len(structure_list)}. Amount of structures to analyze: {n_of_chains_to_analyze}, Threads: {config.proc_n}')
 
     sorted_sizes = sorted(size_map.keys(), reverse=True)
@@ -1360,8 +1365,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
             if config.proc_n < 2:
                 package_cost = 0 #Never break for unparalellized analysis
 
-            #if (cost + package_cost) <= config.proc_n:
-            if (1 + package_cost) <= config.proc_n:
+            if (cost + package_cost) <= config.proc_n:
+            #if (1 + package_cost) <= config.proc_n:
                 target_dict = None
 
                 if s < config.n_of_chain_thresh:
@@ -1381,7 +1386,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     package_cost += cost  # big structures with nested remotes cost the amount of nested calls
                     nested_packages.add(pdb_id)
                     if config.verbosity >= 4:
-                        print('started nested package:', pdb_id, cost)
+                        print('started nested package:', pdb_id, cost, s)
                 n_started += 1
                 del_list.append(pdb_id)
                 assigned_costs[pdb_id] = cost
@@ -1435,11 +1440,16 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         finished = 0
         del_list = []
         # this loop collects the results from the nested remotes
+        wait_counter = 0
         for ret_pdb_id in core_not_ready_dict:
+            wait_counter += 1
+            wait_counter_2 = 0
             while True:
+                wait_counter_2 += 1
                 core_ready, core_not_ready = ray.wait(core_not_ready_dict[ret_pdb_id], timeout=0.1)
                 if config.verbosity >= 5:
-                    print('Nested wait:', ret_pdb_id, len(core_ready), len(core_not_ready))
+                    print(f'{wait_counter} {wait_counter_2} Nested wait:', ret_pdb_id, len(core_ready), len(core_not_ready))
+                    print(f'RAM memory % used: {psutil.virtual_memory()[2]}')
                 if len(core_ready) > 0:
                     errorlist = []
                     structural_analysis_dict = {}
@@ -1527,15 +1537,16 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
             returned_pdbs = []
 
-            for chunk_struct_out, nested_struct_outs in chunk_struct_outs:
+            for chunk_struct_out, nested_struct_outs, nested_processes_list in chunk_struct_outs:
                 package_cost -= 1  # finished chunks free 1 cost
                 t_pickle_0 += time.time()
                 chunk_struct_out = unpack(chunk_struct_out)
+                nested_struct_outs = unpack(nested_struct_outs)
                 t_pickle_1 += time.time()
                 for struct_out in chunk_struct_out:
                     t_integrate_0 += time.time()
                     (ret_pdb_id, structural_analysis_dict, errorlist, ligand_profiles, metal_profiles,
-                        ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, comp_time, analysis_dump) = struct_out
+                        ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, comp_time) = struct_out
 
                     returned_pdbs.append(ret_pdb_id)
 
@@ -1572,8 +1583,6 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     proteins.set_IAmap(ret_pdb_id, IAmap)
                     proteins.set_interfaces(ret_pdb_id, interfaces)
 
-                    del analysis_dump
-
                     t_integrate_3 += time.time()
 
                     proteins.set_chain_type_map(ret_pdb_id, chain_type_map, chainlist)
@@ -1592,12 +1601,13 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                             gc.collect()
                     t_integrate_4 += time.time()
                 #print('Amount of nested outs:',len(nested_struct_outs))
-                for struct_out in nested_struct_outs:
+                for nested_process_number, struct_out in enumerate(nested_struct_outs):
                     package_cost += 1 #repay one cost, since this a nested out
                     t_integrate_0 += time.time()
-                    (ret_pdb_id, nested_processes, errorlist, ligand_profiles, metal_profiles,
-                        ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, comp_time, analysis_dump) = struct_out
-
+                    (ret_pdb_id, errorlist, ligand_profiles, metal_profiles,
+                        ion_profiles, chain_chain_profiles, chain_type_map, chainlist, IAmap, interfaces, comp_time) = struct_out
+                    
+                    nested_processes = nested_processes_list[nested_process_number]
                     returned_pdbs.append(ret_pdb_id)
 
                     core_ready, core_not_ready = ray.wait(nested_processes, timeout=0.01)
@@ -1653,8 +1663,6 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     proteins.set_IAmap(ret_pdb_id, IAmap)
                     proteins.set_interfaces(ret_pdb_id, interfaces)
 
-                    del analysis_dump
-
                     t_integrate_3 += time.time()
 
                     proteins.set_chain_type_map(ret_pdb_id, chain_type_map, chainlist)
@@ -1684,6 +1692,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
                 if (t_pickle_2 - t_pickle_1) > 60:
                     print('Long depickling:', returned_pdbs)
+                print(f'RAM memory % used: {psutil.virtual_memory()[2]}')
 
             if config.verbosity >= 5:
                 print('Time for loop part 2:', (t_2-t_1))
@@ -1703,8 +1712,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     ac = size_map[s][pdb_id]
                     if config.low_mem_system:
                         cost = max([1, min([config.proc_n, (((ac**2) / cost_function_constant) * config.proc_n) // config.gigs_of_ram])])
-                    #if (cost + package_cost) <= config.proc_n:
-                    if (1 + package_cost) <= config.proc_n:
+                    if (cost + package_cost) <= config.proc_n:
+                    #if (1 + package_cost) <= config.proc_n:
                         target_dict = None
 
                         if s < config.n_of_chain_thresh:
@@ -1765,6 +1774,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
             total_computed += finished
             if config.verbosity >= 5:
                 print('Newly finished structural analysis of', finished, '. Total:', total_computed, 'len of size map:', len(size_map), 'Current package:', len(anno_result_ids), 'with cost:', package_cost, 'and nested packages:', str(nested_packages), ', number of pending nested packaged chains:', len(core_not_ready_dict), 'Amount of new started processes:', len(new_anno_result_ids), 'Amount of pending processes:', len(not_ready))
+                print(f'RAM memory % used: {psutil.virtual_memory()[2]}')
         if len(anno_result_ids) == 0 and len(size_map) == 0 and len(core_not_ready_dict) == 0:
             break
 

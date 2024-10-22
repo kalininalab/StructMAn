@@ -729,7 +729,7 @@ def structman_cli():
         long_paras = [
             'help', 'skipref', 'rlimit=', 'verbosity=',
             'printerrors', 'printwarnings', 'chunksize=', 'norin',
-            'dbname=', 'restartlog', 'only_snvs', 'skip_indel_analysis', 'only_wt', 'mem_limit=',
+            'dbname=', 'fdbname=', 'restartlog', 'only_snvs', 'skip_indel_analysis', 'only_wt', 'mem_limit=',
             'model_indel_structures', 'ignore_local_pdb', 'ignore_local_rindb', 'ignore_local_mapping_db',
             'skip_main_output_generation', 'ray_local_mode', 'compute_ppi', 'structure_limiter=',
             'force_modelling', 'target=', 'custom_db', 'update_source=', 'condition_1=', 'condition_2=',
@@ -752,6 +752,7 @@ def structman_cli():
     print_all_warns = False
     chunksize = None
     dbname = None
+    force_db_name = False
     restartlog = False
     only_snvs = False
     skip_indel_analysis = False
@@ -821,6 +822,9 @@ def structman_cli():
         if opt == '--norin':
             norin = True
         if opt == '--dbname':
+            dbname = arg
+        if opt == '--fdbname':
+            force_db_name = True
             dbname = arg
         if opt == '--restartlog':
             restartlog = True
@@ -992,8 +996,9 @@ def structman_cli():
     config.skipref = skipref
 
     if dbname is not None:
-        if dbname[:len(config.db_user_name)] != config.db_user_name:
-            dbname = f'{config.db_user_name}_{dbname}'
+        if not force_db_name:
+            if dbname[:len(config.db_user_name)] != config.db_user_name:
+                dbname = f'{config.db_user_name}_{dbname}'
         config.db_name = dbname
 
     if len(single_line_inputs) == 0:

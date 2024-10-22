@@ -9,10 +9,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import ray
 
-import biotite.sequence as seq
-import biotite.sequence.align as align
+try:
+    import biotite.sequence as seq
+    import biotite.sequence.align as align
+    import biotite.sequence.graphics as graphics
+except:
+    print('Warning: biotite imports failed, gene report functionalities will be impaired.')
 
-import biotite.sequence.graphics as graphics
 import numpy as np
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches

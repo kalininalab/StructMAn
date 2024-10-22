@@ -810,6 +810,8 @@ def buildQueue(config, filename, already_split=False):
                 positions = []
                 if sp_id in pos_sets:
                     pos_set = pos_sets[sp_id]
+                else:
+                    pos_set = None
                 if (not sp_id.count(':') == 1) or sp_id[0:5] == 'HGNC:':  # this means sp_id is not a pdb-id
                     positions, multi_mutation, gene_id, protein_specific_tags, multi_mutation_tags, pos_set = process_mutations_str(config, mutation_str, tags, pos_set=pos_set)
 

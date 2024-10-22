@@ -86,7 +86,7 @@ def put_seqs_to_database(seq_map, config):
 
     update(config, 'UNIPROT', ['Uniprot_Ac','Sequence'], values, mapping_db = True)
 
-def insert_sequence_data(config, seq_file_paths, mapping_file_path, update_mapping_db_keep_raw_files):
+def insert_sequence_data(config, seq_file_paths, mapping_file_path):
     max_seqs_at_a_time = int(30000 * config.gigs_of_ram)
 
     for seq_file_number, seq_file in enumerate(seq_file_paths):
@@ -139,14 +139,6 @@ def insert_sequence_data(config, seq_file_paths, mapping_file_path, update_mappi
                         unusual_major_isoforms[stem] = major_iso_number
             print('\nDatabase update of sequences done.\n')
 
-    if not update_mapping_db_keep_raw_files:
-        #Step 4: Remove the raw files
-        os.remove(mapping_file_path)
-        for seq_file in seq_file_paths:
-            os.remove(seq_file)
-
-        print('\nRemoving raw data files done.\n')
-
     return unusual_major_isoforms
 
 def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
@@ -173,7 +165,7 @@ def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
 
     #Step 3: Update the database
 
-    unusual_major_isoforms = insert_sequence_data(config, seq_file_paths, mapping_file_path, update_mapping_db_keep_raw_files)
+    unusual_major_isoforms = insert_sequence_data(config, seq_file_paths, mapping_file_path)
 
     ac_id_values = []
     ac_ref_values = []
@@ -218,6 +210,14 @@ def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
                 if len(ac_ref_nt_values) == max_values_at_a_time:
                     update(config, 'UNIPROT', ['Uniprot_Ac', 'RefSeq_NT'], ac_ref_nt_values, mapping_db = True)
                     ac_ref_nt_values = []
+
+    if not update_mapping_db_keep_raw_files:
+        #Step 4: Remove the raw files
+        os.remove(mapping_file_path)
+        for seq_file in seq_file_paths:
+            os.remove(seq_file)
+
+        print('\nRemoving raw data files done.\n')
 
     print('\nParsing of mapping data file done.\n')
 
