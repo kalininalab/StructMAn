@@ -81,23 +81,24 @@ def geneCheck(genes, config):
             continue
         genes[gene_id].database_id = gene_db_id
 
-    values = []
-    for gene_id in genes:
-        if genes[gene_id].database_id is not None:
-            continue
-        gene_name = genes[gene_id].gene_name
-        values.append([gene_id, gene_name])
-
-    if len(values) > 0:
-        insert('Gene', ['Primary_Gene_Id' ,'Gene_Name'], values, config)
-
-        results = select(config, ['Gene_Id', 'Primary_Gene_Id'], 'Gene')
-        for row in results:
-            gene_db_id = row[0]
-            gene_id = row[1]
-            if not gene_id in genes:
+    if not config.read_only_mode:
+        values = []
+        for gene_id in genes:
+            if genes[gene_id].database_id is not None:
                 continue
-            genes[gene_id].database_id = gene_db_id
+            gene_name = genes[gene_id].gene_name
+            values.append([gene_id, gene_name])
+
+        if len(values) > 0:
+            insert('Gene', ['Primary_Gene_Id' ,'Gene_Name'], values, config)
+
+            results = select(config, ['Gene_Id', 'Primary_Gene_Id'], 'Gene')
+            for row in results:
+                gene_db_id = row[0]
+                gene_id = row[1]
+                if not gene_id in genes:
+                    continue
+                genes[gene_id].database_id = gene_db_id
     return
 
 # called from serializedPipeline
@@ -134,91 +135,97 @@ def protCheck(proteins, genes, session_id, config):
 
     proteins.set_stored_ids(prot_id_list, prot_ids_mutants_excluded)
 
+    prot_ids = proteins.get_protein_ids()
+
     # Insert the new proteins into the database
     new_prots = set()
-    prot_ids = proteins.get_protein_ids()
+    
     for prot_id in prot_ids:
         if not proteins.is_protein_stored(prot_id):
             new_prots.add(prot_id)
 
-    if len(new_prots) > 0:
-        values = []
+    if config.read_only_mode:
         for prot_id in new_prots:
-            u_ac = proteins.get_u_ac(prot_id)
-            ref_id = proteins.get_ref_id(prot_id)
-            u_id = proteins.get_u_id(prot_id)
-            mut_type = proteins[prot_id].mutant_type
-            gene_id = proteins[prot_id].gene
-            if gene_id is not None:
-                gene_db_id = genes[gene_id].database_id
-            else:
-                gene_db_id = None
-            if mut_type is None:
-                mutant_positions_str = None
-            else:
-                if proteins[prot_id].sav_positions is None:
-                    sav_string = ''
-                else:
-                    sav_string = ','.join([str(x) for x in proteins[prot_id].sav_positions])
-
-                if proteins[prot_id].insertion_positions is None:
-                    insertion_string = ''
-                else:
-                    insertion_parts = []
-                    for ins in proteins[prot_id].insertion_positions:
-                        insertion_parts.append(','.join([str(x) for x in ins]))
-                    insertion_string = '!'.join(insertion_parts)
-
-                if proteins[prot_id].deletion_flanks is None:
-                    deletion_string = ''
-                else:
-                    deletion_parts = []
-                    for deletion_fl in proteins[prot_id].deletion_flanks:
-                        lf, rf = deletion_fl
-                        if lf is None:
-                            lfs = '_'
-                        else:
-                            lfs = str(lf)
-                        if rf is None:
-                            rfs = '_'
-                        else:
-                            rfs = str(rf)
-                        deletion_parts.append(f'{lfs},{rfs}')
-                    deletion_string = '!'.join(deletion_parts)
-
-                mutant_positions_str = f'{sav_string};{insertion_string};{deletion_string}'
-            values.append((gene_db_id, prot_id, u_ac, ref_id, u_id, session_id, mut_type, mutant_positions_str))
-
-        insert('Protein', ['Gene', 'Primary_Protein_Id', 'Uniprot_Ac', 'RefSeq_Ids', 'Uniprot_Id', 'Original_Session', 'Mutant_Type', 'Mutant_Positions'], values, config)
-
-        # Retrieve the Protein-Ids from the new added proteins
-
-        db, cursor = config.getDB()
-
-        sql = "SELECT Protein_Id,Primary_Protein_Id FROM Protein WHERE Protein_Id > %s" % str(max_database_id)
-        try:
-            cursor.execute(sql)
-            results = cursor.fetchall()
-            db.commit()
-        except:
-            [e, f, g] = sys.exc_info()
-            raise NameError("Error in protCheck: %s,\n%s" % (sql, f))
-        db.close()
+            proteins.remove_protein(prot_id)
     else:
-        results = ()
+        if len(new_prots) > 0:
+            values = []
+            for prot_id in new_prots:
+                u_ac = proteins.get_u_ac(prot_id)
+                ref_id = proteins.get_ref_id(prot_id)
+                u_id = proteins.get_u_id(prot_id)
+                mut_type = proteins[prot_id].mutant_type
+                gene_id = proteins[prot_id].gene
+                if gene_id is not None:
+                    gene_db_id = genes[gene_id].database_id
+                else:
+                    gene_db_id = None
+                if mut_type is None:
+                    mutant_positions_str = None
+                else:
+                    if proteins[prot_id].sav_positions is None:
+                        sav_string = ''
+                    else:
+                        sav_string = ','.join([str(x) for x in proteins[prot_id].sav_positions])
 
-    new_ids = set()
-    for row in results:
-        database_id = row[0]
-        prot_id = row[1]
-        if not proteins.contains(prot_id):
-            continue
-        proteins.set_protein_db_id(prot_id, database_id)
+                    if proteins[prot_id].insertion_positions is None:
+                        insertion_string = ''
+                    else:
+                        insertion_parts = []
+                        for ins in proteins[prot_id].insertion_positions:
+                            insertion_parts.append(','.join([str(x) for x in ins]))
+                        insertion_string = '!'.join(insertion_parts)
 
-        if database_id not in prot_id_list:
-            new_ids.add(database_id)
+                    if proteins[prot_id].deletion_flanks is None:
+                        deletion_string = ''
+                    else:
+                        deletion_parts = []
+                        for deletion_fl in proteins[prot_id].deletion_flanks:
+                            lf, rf = deletion_fl
+                            if lf is None:
+                                lfs = '_'
+                            else:
+                                lfs = str(lf)
+                            if rf is None:
+                                rfs = '_'
+                            else:
+                                rfs = str(rf)
+                            deletion_parts.append(f'{lfs},{rfs}')
+                        deletion_string = '!'.join(deletion_parts)
 
-    proteins.set_not_stored_ids(new_ids)
+                    mutant_positions_str = f'{sav_string};{insertion_string};{deletion_string}'
+                values.append((gene_db_id, prot_id, u_ac, ref_id, u_id, session_id, mut_type, mutant_positions_str))
+
+            insert('Protein', ['Gene', 'Primary_Protein_Id', 'Uniprot_Ac', 'RefSeq_Ids', 'Uniprot_Id', 'Original_Session', 'Mutant_Type', 'Mutant_Positions'], values, config)
+
+            # Retrieve the Protein-Ids from the new added proteins
+
+            db, cursor = config.getDB()
+
+            sql = "SELECT Protein_Id,Primary_Protein_Id FROM Protein WHERE Protein_Id > %s" % str(max_database_id)
+            try:
+                cursor.execute(sql)
+                results = cursor.fetchall()
+                db.commit()
+            except:
+                [e, f, g] = sys.exc_info()
+                raise NameError("Error in protCheck: %s,\n%s" % (sql, f))
+            db.close()
+        else:
+            results = ()
+
+        new_ids = set()
+        for row in results:
+            database_id = row[0]
+            prot_id = row[1]
+            if not proteins.contains(prot_id):
+                continue
+            proteins.set_protein_db_id(prot_id, database_id)
+
+            if database_id not in prot_id_list:
+                new_ids.add(database_id)
+
+        proteins.set_not_stored_ids(new_ids)
 
     proteins.generate_id_map()
 
@@ -315,34 +322,38 @@ def insertMultiMutations(proteins, genes, session, config):
                 multi_mutation.database_id = row[1]
                 multi_mutation.stored = True
 
-    wt_prot_db_ids = []
-    values = []
     obj_map = {}
-    for wt_prot in proteins.multi_mutations:
-        wt_db_id = proteins.get_protein_database_id(wt_prot)
-        wt_prot_db_ids.append(wt_db_id)
-        for multi_mutation in proteins.multi_mutations[wt_prot]:
-            if multi_mutation.stored:
-                continue
-            if multi_mutation.mut_prot is not None:
-                if multi_mutation.mut_prot in proteins.protein_map:
-                    mut_db_id = proteins[multi_mutation.mut_prot].database_id
+    if config.read_only_mode:
+        wt_prot_db_ids = db_ids
+    else:
+        wt_prot_db_ids = []
+        values = []
+        
+        for wt_prot in proteins.multi_mutations:
+            wt_db_id = proteins.get_protein_database_id(wt_prot)
+            wt_prot_db_ids.append(wt_db_id)
+            for multi_mutation in proteins.multi_mutations[wt_prot]:
+                if multi_mutation.stored:
+                    continue
+                if multi_mutation.mut_prot is not None:
+                    if multi_mutation.mut_prot in proteins.protein_map:
+                        mut_db_id = proteins[multi_mutation.mut_prot].database_id
+                    else:
+                        mut_db_id = None
                 else:
                     mut_db_id = None
-            else:
-                mut_db_id = None
-            snv_db_ids = ','.join([str(x) for x in multi_mutation.get_snv_db_ids()])
-            indel_db_ids = ','.join([str(x) for x in multi_mutation.get_indel_db_ids()])
-            values.append((wt_db_id, mut_db_id, snv_db_ids, indel_db_ids))
+                snv_db_ids = ','.join([str(x) for x in multi_mutation.get_snv_db_ids()])
+                indel_db_ids = ','.join([str(x) for x in multi_mutation.get_indel_db_ids()])
+                values.append((wt_db_id, mut_db_id, snv_db_ids, indel_db_ids))
 
-            mm_obj_id = (wt_db_id, snv_db_ids, indel_db_ids)
+                mm_obj_id = (wt_db_id, snv_db_ids, indel_db_ids)
 
-            obj_map[mm_obj_id] = multi_mutation
+                obj_map[mm_obj_id] = multi_mutation
 
-    if len(values) > 0:
-        columns = ['Wildtype_Protein', 'Mutant_Protein', 'SNVs', 'Indels']
-        table = 'Multi_Mutation'
-        insert(table, columns, values, config)
+        if len(values) > 0:
+            columns = ['Wildtype_Protein', 'Mutant_Protein', 'SNVs', 'Indels']
+            table = 'Multi_Mutation'
+            insert(table, columns, values, config)
 
     columns = ['Wildtype_Protein', 'Multi_Mutation_Id', 'SNVs', 'Indels']
     table = 'Multi_Mutation'
@@ -406,23 +417,26 @@ def indelCheck(proteins, session, config):
             proteins.indels[u_ac][indel_notation].set_database_id(database_id)
             proteins.indels[u_ac][indel_notation].set_stored(True)
 
-    values = []
-    all_wt_ids = set()
-    for u_ac in proteins.indels:
-        for indel_notation in proteins.indels[u_ac]:
-            if proteins.indels[u_ac][indel_notation].stored:
-                continue
-            wt_prot_id = proteins.get_protein_database_id(proteins.indels[u_ac][indel_notation].wt_prot)
-            mut_prot_id = proteins.get_protein_database_id(proteins.indels[u_ac][indel_notation].mut_prot)
-            if wt_prot_id is None:
-                config.errorlog.add_error('Wildtype protein id is not allowed to be None')
-                continue
-            values.append((wt_prot_id, mut_prot_id, indel_notation))
-            all_wt_ids.add(wt_prot_id)
+    if config.read_only_mode:
+        all_wt_ids = stored_wt_ids
+    else:
+        values = []
+        all_wt_ids = set()
+        for u_ac in proteins.indels:
+            for indel_notation in proteins.indels[u_ac]:
+                if proteins.indels[u_ac][indel_notation].stored:
+                    continue
+                wt_prot_id = proteins.get_protein_database_id(proteins.indels[u_ac][indel_notation].wt_prot)
+                mut_prot_id = proteins.get_protein_database_id(proteins.indels[u_ac][indel_notation].mut_prot)
+                if wt_prot_id is None:
+                    config.errorlog.add_error('Wildtype protein id is not allowed to be None')
+                    continue
+                values.append((wt_prot_id, mut_prot_id, indel_notation))
+                all_wt_ids.add(wt_prot_id)
 
-    if len(values) > 0:
-        columns = ['Wildtype_Protein', 'Mutant_Protein', 'Indel_Notation']
-        insert('Indel', columns, values, config)
+        if len(values) > 0:
+            columns = ['Wildtype_Protein', 'Mutant_Protein', 'Indel_Notation']
+            insert('Indel', columns, values, config)
 
     session_values = []
 
@@ -489,88 +503,91 @@ def positionCheck(proteins, database_session, config):
             proteins[prot_id].positions[pos].mut_aas[row[1]].database_id = row[2]
             proteins[prot_id].positions[pos].mut_aas[row[1]].stored = True
 
-    # insert new positions
     prot_ids = proteins.get_protein_ids()
-    values = []
-    for prot_id in prot_ids:
-        prot_database_id = proteins.get_protein_database_id(prot_id)
-        positions = proteins.get_position_ids(prot_id)
-        all_stored = True
-        for pos in positions:
-            if proteins.is_position_stored(prot_id, pos):
-                continue
-            all_stored = False
-            aac_base = proteins.get_aac_base(prot_id, pos)
 
-            res_id = proteins.get_res_id(prot_id, pos)
-
-            values.append((prot_database_id, int(aac_base[1:]), res_id, aac_base[0]))
-
-        if all_stored:
-            proteins.set_completely_stored(prot_id)
-
-    if len(values) > 0:
-        columns = ['Protein', 'Position_Number', 'Residue_Id', 'Wildtype_Residue']
-        insert('Position', columns, values, config)
-
-    # retrieve the database ids of the new positions
-    columns = ['Protein', 'Position_Number', 'Position_Id']
-    table = 'Position'
-
-    fused_prot_ids = proteins.get_not_stored_ids() | proteins.get_stored_ids()
-
-    results = binningSelect(fused_prot_ids, columns, table, config)
-
-    position_database_ids = []
-    prot_back_map = {}
-    for row in results:
-        prot_database_id = row[0]
-
-        pos = row[1]
-
-        position_database_id = row[2]
-        if not proteins.position_in_protein_by_db_id(prot_database_id, pos):
-            continue
-        proteins.set_position_database_id(prot_database_id, pos, position_database_id)
-        position_database_ids.append(position_database_id)
-        prot_back_map[position_database_id] = (prot_database_id, pos)
-
-    # insert the new SNVs
-    if config.verbosity >= 5:
+    if not config.read_only_mode:
+        # insert new positions
+        
+        values = []
         for prot_id in prot_ids:
-            proteins[prot_id].print_all_snvs()
+            prot_database_id = proteins.get_protein_database_id(prot_id)
+            positions = proteins.get_position_ids(prot_id)
+            all_stored = True
+            for pos in positions:
+                if proteins.is_position_stored(prot_id, pos):
+                    continue
+                all_stored = False
+                aac_base = proteins.get_aac_base(prot_id, pos)
 
-    values = []
-    for prot_id in prot_ids:
-        for pos in proteins[prot_id].positions:
-            pos_database_id = proteins[prot_id].positions[pos].database_id
-            #proteins[prot_id].positions[pos].print_state()
-            for new_aa in proteins[prot_id].positions[pos].mut_aas:
-                values.append((pos_database_id, new_aa))
+                res_id = proteins.get_res_id(prot_id, pos)
 
-    if config.verbosity >= 5:
-        print(f'SNV values inserted into Database: {values}')
-    
-    if len(values) > 0:
+                values.append((prot_database_id, int(aac_base[1:]), res_id, aac_base[0]))
+
+            if all_stored:
+                proteins.set_completely_stored(prot_id)
+
+        if len(values) > 0:
+            columns = ['Protein', 'Position_Number', 'Residue_Id', 'Wildtype_Residue']
+            insert('Position', columns, values, config)
+
+        # retrieve the database ids of the new positions
+        columns = ['Protein', 'Position_Number', 'Position_Id']
+        table = 'Position'
+
+        fused_prot_ids = proteins.get_not_stored_ids() | proteins.get_stored_ids()
+
+        results = binningSelect(fused_prot_ids, columns, table, config)
+
+        position_database_ids = []
+        prot_back_map = {}
+        for row in results:
+            prot_database_id = row[0]
+
+            pos = row[1]
+
+            position_database_id = row[2]
+            if not proteins.position_in_protein_by_db_id(prot_database_id, pos):
+                continue
+            proteins.set_position_database_id(prot_database_id, pos, position_database_id)
+            position_database_ids.append(position_database_id)
+            prot_back_map[position_database_id] = (prot_database_id, pos)
+
+        # insert the new SNVs
+        if config.verbosity >= 6:
+            for prot_id in prot_ids:
+                proteins[prot_id].print_all_snvs()
+
+        values = []
+        for prot_id in prot_ids:
+            for pos in proteins[prot_id].positions:
+                pos_database_id = proteins[prot_id].positions[pos].database_id
+                #proteins[prot_id].positions[pos].print_state()
+                for new_aa in proteins[prot_id].positions[pos].mut_aas:
+                    values.append((pos_database_id, new_aa))
+
+        if config.verbosity >= 6:
+            print(f'SNV values inserted into Database: {values}')
+        
+        if len(values) > 0:
+            table = 'SNV'
+            columns = ['Position', 'New_AA']
+            insert(table, columns, values, config)
+
+        # retrieve the database ids of the new SNVs
+        columns = ['Position', 'New_AA', 'SNV_Id']
         table = 'SNV'
-        columns = ['Position', 'New_AA']
-        insert(table, columns, values, config)
+        results = binningSelect(position_database_ids, columns, table, config)
 
-    # retrieve the database ids of the new SNVs
-    columns = ['Position', 'New_AA', 'SNV_Id']
-    table = 'SNV'
-    results = binningSelect(position_database_ids, columns, table, config)
-
-    for row in results:
-        position_database_id = row[0]
-        if position_database_id not in prot_back_map:
-            continue
-        (prot_database_id, pos) = prot_back_map[position_database_id]
-        prot_id = proteins.getU_acByDbId(prot_database_id)
-        new_aa = row[1]
-        if new_aa not in proteins[prot_id].positions[pos].mut_aas:
-            continue
-        proteins[prot_id].positions[pos].mut_aas[new_aa].database_id = row[2]
+        for row in results:
+            position_database_id = row[0]
+            if position_database_id not in prot_back_map:
+                continue
+            (prot_database_id, pos) = prot_back_map[position_database_id]
+            prot_id = proteins.getU_acByDbId(prot_database_id)
+            new_aa = row[1]
+            if new_aa not in proteins[prot_id].positions[pos].mut_aas:
+                continue
+            proteins[prot_id].positions[pos].mut_aas[new_aa].database_id = row[2]
 
     # insert the the SNV session connections
     values = []
@@ -954,7 +971,6 @@ def getComplexMap(config, pdb_ids=None):
     return complex_map
 
 
-# called by serializedPipeline
 def structureCheck(proteins, config):
     table = 'Structure'
     rows = ['Structure_Id', 'PDB', 'Chain']
@@ -1079,7 +1095,7 @@ def insertAlignments(alignment_list, proteins, config):
         s_id = proteins.get_structure_db_id(pdb_id, chain)
         seq_id = proteins.get_sequence_id(u_ac, pdb_id, chain)
         coverage = proteins.get_coverage(u_ac, pdb_id, chain)
-        if config.verbosity >= 5:
+        if config.verbosity >= 6:
             print(f'Adding alignment to the database: {u_ac} {prot_id} {pdb_id} {chain} {s_id}')
         values.append((prot_id, s_id, seq_id, coverage, pack(alignment_pir)))
     if config.verbosity >= 2:

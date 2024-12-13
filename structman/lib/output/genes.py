@@ -36,6 +36,8 @@ from structman.lib.output import out_generator, out_utils, massmodel
 from structman.base_utils.base_utils import resolve_path, calculate_chunksizes
 from structman.lib.sdsc.mutations import MultiMutation
 
+import structman.scripts.spectrumany as pymol_spectrumany
+
 class Gene:
 
     def __init__(self, gene_id, name, isoform_pair_multimutations, isoform_pair_scores, isoform_expressions, isoform_prot_objs):
@@ -1375,7 +1377,13 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
         pymol_cmd.load(file)
 
         # indel plot
-        pymol_cmd.spectrum("b", "rainbow", "n. ca", minimum=0.00, maximum=100.00)
+        # colors given here are not the final colors for the plot but similar
+        # substitution, interacting chain, insertion, deletion, no chamge
+        # if selection is set to all, change also in 1393, colors all interacting molecules by assigned b factor
+        #pymol_cmd.spectrum("b", "blue_white_red", "n. ca", minimum=0.00, maximum=100.00)
+        #pymol_spectrumany.spectrumany("b", "blue white cyan brightorange red", "n. ca", minimum=0.00, maximum=100.00)
+        pymol_spectrumany.spectrumany("b", "black white cyan blue red", "n. ca", minimum=0.00, maximum=100.00)
+        
         pymol_cmd.orient()
 
         outfile = f"{pymol_out_f}/{target}_{mut_prot_id}_pymol_indel.png"
@@ -1388,37 +1396,64 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
         for color_id in pymol.color_list:
             rgb_list.append(pymol_cmd.get_color_tuple(color_id))
 
+        # needs adaption if more colors are added or changed
         rgb_dict = {}
         for color in rgb_list:
             if color in rgb_dict:
                 continue
             else:
-                if color == (1.0, 0.0, 0.0):
+                if color[0] > 0.9 and color[1] > 0.9 and color[2] > 0.9:
+                    rgb_dict['white'] = color
+                elif color[0] > 0.9 and color[1] < 0.2 and color[2] < 0.2:
                     rgb_dict['red'] = color
-                elif color[2] == 1.0:
+                elif color[0] < 0.1 and color[1] < 0.1 and color[2] > 0.9: 
                     rgb_dict['blue'] = color
-                elif color[0] == 1.0 and color[1] > 0:
-                    rgb_dict['orange'] = color
-                elif color[0] > 0.0 and color[1] == 1.0:
-                    rgb_dict['green'] = color
-                else:
-                    rgb_dict['turquoise'] = color
+                elif color[0] < 0.1 and color[1] < 0.1 and color[2] < 0.1:
+                    rgb_dict['black'] = color
+                elif color[0] < 0.1 and color[1] > 0.9 and color[2] > 0.9:
+                    rgb_dict['cyan'] = color
                 
+                """
+                if color[0] > 0.9 and color[1] > 0.9 and color[2] > 0.9:
+                    rgb_dict['white'] = color
+                elif color[0] > 0.9 and color[2] < 0.2:
+                    rgb_dict['red'] = color
+                elif color[2] == 1.0 and color[1] == 0: 
+                    rgb_dict['blue'] = color
+                elif color[0] > 0.9 and color[2] > 0:
+                    rgb_dict['orange'] = color
+                else:
+                    rgb_dict['cyan'] = color
+                """
 
         image = plt.imread(outfile)
         fig = plt.figure()
         ax = plt.subplot()
         patches = []
+
         if 'red' in rgb_dict.keys():
             patches.append(mpatches.Patch(color=rgb_dict['red'], label='no change'))
-        if 'green' in rgb_dict.keys():
-            patches.append(mpatches.Patch(color=rgb_dict['green'], label='insertion'))
+        if 'cyan' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['cyan'], label='insertion'))
+        if 'black' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['black'], label='substitution'))
+        if 'blue' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['blue'], label='deletion'))
+        if 'white' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['white'], label='interacting chain'))
+        
+        """
+        if 'red' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['red'], label='no change'))
+        if 'cyan' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['cyan'], label='insertion'))
         if 'blue' in rgb_dict.keys():
             patches.append(mpatches.Patch(color=rgb_dict['blue'], label='substitution'))
         if 'orange' in rgb_dict.keys():
             patches.append(mpatches.Patch(color=rgb_dict['orange'], label='deletion'))
-        if 'turquoise' in rgb_dict.keys():
-            patches.append(mpatches.Patch(color=rgb_dict['turquoise'], label='not target chain'))
+        if 'white' in rgb_dict.keys():
+            patches.append(mpatches.Patch(color=rgb_dict['white'], label='interacting chain'))
+        """
 
         ax.legend(handles=patches, prop={'size': 4}, loc='upper left')
         ax.set_axis_off()
@@ -1450,6 +1485,8 @@ def create_markdown(config, out_f, model_plot_dicts, gene_name, target, plots):
         md_lines.append(f"## Alignment plot: \n")
         for path_to_isoform_plot in paths_to_isoform_plot:
             add_figure_to_md(md_lines, 'isoforms', path_to_isoform_plot)
+    
+    md_lines.append('<div style="page-break-after: always;"></div>')
 
     md_lines.append(f'## Gene expression plot:\n')
     add_figure_to_md(md_lines, 'gene_expressions', path_to_gene_expression_plot)
@@ -1465,6 +1502,7 @@ def create_markdown(config, out_f, model_plot_dicts, gene_name, target, plots):
         for mutant_isoform in model_plot_dicts[isoform]:
             md_lines.append(f'### Difference to {mutant_isoform}:\n')
             add_figure_to_md(md_lines, f'structure_{isoform}_{mutant_isoform}', model_plot_dicts[isoform][mutant_isoform])
+    md_lines.append('<div style="page-break-after: always;"></div>')
     return md_lines
 
     
@@ -1574,7 +1612,7 @@ def align_by_mutation_list(major_sequence_raw, isoform_sequences, isoform_dict, 
 
     return aligned_isoforms
 
-def plot_alignment_chunk(alignment, classification_color_dict, order_classifications, labels, trace, outfile, dpi=100, font_size = 12):
+def plot_alignment_chunk(alignment, classification_color_dict, order_classifications, labels, trace, outfile, outlegend, dpi=100, font_size = 12):
     handles = []
 
     for key in classification_color_dict:
@@ -1590,6 +1628,9 @@ def plot_alignment_chunk(alignment, classification_color_dict, order_classificat
     trace_array = alignment.trace
     plt.rcParams.update({'font.size':font_size})
 
+    # 50 is an appropriate size of bases or positions per line in the plot
+    # legend is automatically plotted at the end of every chunk
+    # legend can additionally be accessed by the return value of plot_alignment_chunk if necessary
     if len(alignment) > 50:
         total_height = 0.8*math.ceil(len(alignment)/50)*(len(trace_array[0]))
         fig, ax = plt.subplots(figsize=(font_size*1.2, total_height))
@@ -1598,20 +1639,24 @@ def plot_alignment_chunk(alignment, classification_color_dict, order_classificat
 
         graphics.plot_alignment(
             ax, alignment, plotter, symbols_per_line=50, labels=labels)
-        ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05), ncol=math.ceil(len(handles)/len(trace_array[0])))
+        legend = ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05), ncol=math.ceil(len(handles)/len(trace_array[0])))
+        plot_legend(legend, outlegend)
+        #ax.legend().remove()
     else:   
         fig, ax = plt.subplots(figsize=(len(alignment), len(trace_array[0])*0.5))
         plotter = MyPlotter(ax)
         plotter.set_classifications(order_classifications, classification_color_dict, trace)
         graphics.plot_alignment(
             ax, alignment, plotter, symbols_per_line=len(alignment), labels=labels)
-        ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05))
+        legend = ax.legend(loc='upper left', handles=handles, bbox_to_anchor=(0, -0.05), ncol=math.ceil(len(handles)/len(trace_array[0])))
+        plot_legend(legend, outlegend)
+        #ax.legend().remove()
 
-    
     plt.savefig(outfile, bbox_inches='tight', dpi = dpi, pad_inches=0)
     plt.clf()
     plt.cla()
     plt.close()
+    return legend
     
 
 
@@ -1667,7 +1712,8 @@ def create_isoform_plot(obj, out_f, session_name, target):
     positions = list(range(1,len(aligned_sequences[major_isoform_id])+1))
 
     paths = []
-    alignment_chunksize = 500
+    #before 500
+    alignment_chunksize = 34*50//(len(labels)+2)
 
     aligned_sequences_chunks = []
     for isoform_id in ordered_isoforms:
@@ -1719,11 +1765,14 @@ def create_isoform_plot(obj, out_f, session_name, target):
         alignment = align.Alignment(protein_sequences, trace_array)
 
         outfile = f'{isoform_plot_folder}/{target}_isoform_plot_{i}.png'
-        plot_alignment_chunk(alignment, classification_color_dict, chunked_classifications, labels, trace_final, outfile, dpi=dpi)
+        outlegend = f'{isoform_plot_folder}/{target}_isoform_plot_legend.png'
+        plot_alignment_chunk(alignment, classification_color_dict, chunked_classifications, labels, trace_final, outfile, outlegend, dpi=dpi)
         paths.append(outfile)
 
         if len(positions) < (i+1)*alignment_chunksize:
             plotting_done = True
+            #paths.append(outlegend)
+            
         else:
             aligned_sequences_chunks = []
             for isoform_id in ordered_isoforms:
@@ -1749,6 +1798,12 @@ def create_isoform_plot(obj, out_f, session_name, target):
                     count += 1
             i += 1
     return paths
+
+def plot_legend(legend, outfile):
+    fig = legend.figure
+    fig.canvas.draw()
+    bbox = legend.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(outfile, bbox_inches=bbox)
 
 def divide_in_chunks(alignment, n):
     for i in range(0, len(alignment), n):

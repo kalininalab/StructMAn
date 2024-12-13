@@ -21,7 +21,7 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
         t1 = time.time()
         print("Time for getstoredresidues 1: %s" % str(t1 - t0))
 
-    max_number_of_structures = 30000
+    max_number_of_structures = 10000
 
     if len(stored_ids) > 0:
         if len(stored_ids) >= max_number_of_structures:

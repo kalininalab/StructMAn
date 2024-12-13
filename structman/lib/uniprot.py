@@ -184,7 +184,7 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
         else:
             genes[gene_id].proteins.add(primary_protein_id)
 
-    if config.verbosity >= 3:
+    if config.verbosity >= 6:
         t1 = time.time()
         print(f'Time for integrate_protein part 1: {t1-t0}, {len(other_ids)} {len(prot_map[input_id][0])}')
 
@@ -204,14 +204,14 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
     for other_id_type in other_ids:
         proteins[primary_protein_id].add_other_ids(other_id_type, other_ids[other_id_type])
 
-    if config.verbosity >= 3:
+    if config.verbosity >= 6:
         t2 = time.time()
         print(f'Time for integrate_protein part 2: {t2-t1} {len(prot_map[input_id][1])}')
 
     if len(prot_map[input_id][1]) > 0:
         indel_insert(config, proteins, indel_map, prot_map[input_id][1], primary_protein_id)
 
-    if config.verbosity >= 3:
+    if config.verbosity >= 6:
         t3 = time.time()
         print(f'Time for integrate_protein part 3: {t3-t2} {len(prot_map[input_id][2])}')
 
@@ -223,7 +223,7 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
                 indel_map_entry = {}
             proteins[primary_protein_id].add_multi_mutation(multi_mutation, indel_map_entry, mm_tags = mm_tags)
 
-    if config.verbosity >= 3:
+    if config.verbosity >= 6:
         t4 = time.time()
         print(f'Time for integrate_protein part 4: {t4-t3}')
     return
@@ -271,7 +271,10 @@ def indel_insert(config, proteins, indel_map, indels, ac, proteins_is_object = F
 def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map):
 
     if config.verbosity >= 4:
-        print(f'prot_gene_map at the start of IdMapping: {prot_gene_map}')
+        if len(prot_gene_map) < 100:
+            print(f'prot_gene_map at the start of IdMapping: {prot_gene_map}')
+        else:
+            print(f'Size of prot_gene_map at the start of IdMapping: {len(prot_gene_map)}')
 
     proteins = {}
     indel_map = {}

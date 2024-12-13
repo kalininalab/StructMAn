@@ -166,7 +166,7 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
     if verbosity >= 3:
         print(f'MMseqs2 returned: {temp_outfile}')
 
-    if verbosity >= 5:
+    if verbosity >= 6:
         f = open(temp_outfile, 'r')
         print(f.read())
         f.close()
@@ -196,7 +196,7 @@ def wipe_folder(config, folder_path):
 
 
 # called by serializePipeline
-def search(proteins, config, custom_db=False):
+def search(proteins, config):
 
     # accepts one more argument, custom db
 
@@ -207,7 +207,7 @@ def search(proteins, config, custom_db=False):
     mmseqs2_path = config.mmseqs2_path
 
     # custom db mmseqs search processed here
-    if custom_db:
+    if config.custom_db_path:
         createCustomDb.main(config)
 
         mmseqs_custom_db_path = config.custom_db_path + "/custom_db"

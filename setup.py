@@ -44,19 +44,20 @@ setup(
         "numpy>=1.22.3",
         "psutil>=5.8.0",
         "pymysql>=1.0.2",
-        "ray==2.37.0",
+        "ray==2.40.0",
         "msgpack>=1.0.3",
         "zstd>=1.5.2.5",
         "pandas>=2.2.2",
         "autopep8>=1.5.7",
-        "scipy==1.11.3",
+        "scipy>=1.14.1",
         "requests==2.28.1",
         "more-itertools>=9.1.0",
         "pycairo==1.23.0",
         "powerlaw>=1.5",
-        "biotite>=0.38.0",
+        "biotite>=1.0.1",
         "markdown>=2.6.9",
-        "pdfkit==1.0.0"
+        "pdfkit==1.0.0",
+        "pybind11>=2.13.6"
     ],
 
     package_data = {

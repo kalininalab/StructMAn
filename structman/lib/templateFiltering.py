@@ -1312,14 +1312,15 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         if s not in size_map:
             size_map[s] = {}
         size_map[s][pdb_id] = ac
-        if config.verbosity >= 5:
+        if config.verbosity >= 6:
             print(f'PDB entry {pdb_id} added to size_map, s: {s}, ac: {ac}')
         n_of_comps += 1
         n_of_chains_to_analyze += s
         if s < config.n_of_chain_thresh:
             n_of_small_comps += 1
 
-    chunksize = min([4,max([n_of_small_comps // (4 * config.proc_n), 1])])
+    chunksize = min([8,max([n_of_small_comps // (4 * config.proc_n), 1])])
+    #chunksize = 1
 
     if config.verbosity >= 2:
         print(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}, n_of_chain_thresh: {config.n_of_chain_thresh}')
@@ -1437,6 +1438,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
     while True:
         loop_counter += 1
         chunksize = min([8,max([(n_of_small_comps - n_started) // (4 * config.proc_n), 1])])  # dynamically adjust chunksize
+        #chunksize = 1
         finished = 0
         del_list = []
         # this loop collects the results from the nested remotes

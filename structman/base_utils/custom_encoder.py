@@ -10,7 +10,8 @@ except:
 #    print(errortext)
     pass
 
-def custom_encoder(obj):
+def custom_encoder_complete(obj):
+    complete = True
 
     if isinstance(obj, set):
         return {'__set__': True, 'as_list': list(obj)}
@@ -18,9 +19,9 @@ def custom_encoder(obj):
     if 'Residue' in str(type(obj)): #isinstance just won't work, don't know why
         serialized_residue = []
         for attribute_name in obj.__slots__:
-            if attribute_name == 'interaction_profile':
+            if attribute_name == 'interaction_profile' and not complete:
                 serialized_residue.append(None)
-            elif attribute_name == 'centralities':
+            elif attribute_name == 'centralities' and not complete:
                 serialized_residue.append(None)
             else:
                 serialized_residue.append(obj.__getattribute__(attribute_name))
@@ -29,7 +30,7 @@ def custom_encoder(obj):
     if 'StructureAnnotation' in str(type(obj)): #isinstance just won't work, don't know why
         serialized_annotation = []
         for attribute_name in obj.__slots__:
-            if attribute_name == 'alignment':
+            if attribute_name == 'alignment' and not complete:
                 serialized_annotation.append(None)
             else:
                 serialized_annotation.append(obj.__getattribute__(attribute_name))
@@ -38,7 +39,7 @@ def custom_encoder(obj):
     if 'Structure' in str(type(obj)): #isinstance just won't work, don't know why
         serialized_structure = []
         for attribute_name in obj.__slots__:
-            if attribute_name == 'sequence':
+            if attribute_name == 'sequence' and not complete:
                 serialized_structure.append(None)
             else:
                 serialized_structure.append(obj.__getattribute__(attribute_name))
@@ -48,7 +49,7 @@ def custom_encoder(obj):
         serialized_complex = []
         for attribute_name in obj.__slots__:
             #Complex objects get slimmed down, when packed !!!!!!!!!
-            if attribute_name == 'chains' or attribute_name == 'resolution' or attribute_name == 'interfaces':
+            if (attribute_name == 'chains' or attribute_name == 'resolution' or attribute_name == 'interfaces') and not complete:
                 serialized_complex.append(obj.__getattribute__(attribute_name))
             else:
                 serialized_complex.append(None)
@@ -57,7 +58,7 @@ def custom_encoder(obj):
     if 'Protein' in str(type(obj)): #isinstance just won't work, don't know why
         serialized_protein = []
         for attribute_name in obj.__slots__:
-            if attribute_name == 'sequence':
+            if attribute_name == 'sequence' and not complete:
                 serialized_protein.append(None)
             else:
                 serialized_protein.append(obj.__getattribute__(attribute_name))
@@ -72,7 +73,155 @@ def custom_encoder(obj):
     if 'Position' in str(type(obj)): #isinstance just won't work, don't know why
         serialized_position = []
         for attribute_name in obj.__slots__:
-            if attribute_name == 'mappings':
+            if attribute_name == 'mappings' and not complete:
+                serialized_position.append(None)
+            #elif attribute_name == 'mut_aas':
+            #    serialized_position.append(None)
+            else:
+                serialized_position.append(obj.__getattribute__(attribute_name))
+        return {'__position__': True, 'as_list': serialized_position}
+
+    if 'Aggregated_interface' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_agg_interface = []
+        for attribute_name in obj.__slots__:
+            serialized_agg_interface.append(obj.__getattribute__(attribute_name))
+        return {'__aggregated_interface__': True, 'as_list': serialized_agg_interface}
+
+    if 'Interface' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_interface = []
+        for attribute_name in obj.__slots__:
+            serialized_interface.append(obj.__getattribute__(attribute_name))
+        return {'__interface__': True, 'as_list': serialized_interface}
+
+
+    if 'Insertion' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_insertion = []
+        for attribute_name in obj.__slots__:
+            serialized_insertion.append(obj.__getattribute__(attribute_name))
+        return {'__insertion__': True, 'as_list': serialized_insertion}
+
+
+    if 'Deletion' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_deletion = []
+        for attribute_name in obj.__slots__:
+            serialized_deletion.append(obj.__getattribute__(attribute_name))
+        return {'__deletion__': True, 'as_list': serialized_deletion}
+
+
+    if 'Substitution' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_substitution = []
+        for attribute_name in obj.__slots__:
+            serialized_substitution.append(obj.__getattribute__(attribute_name))
+        return {'__substitution__': True, 'as_list': serialized_substitution}
+
+    if 'SNV' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_snv = []
+        for attribute_name in obj.__slots__:
+            serialized_snv.append(obj.__getattribute__(attribute_name))
+        return {'__snv__': True, 'as_list': serialized_snv}
+
+    if 'Microminer_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Microminer_features__': True, 'as_list': serialized_object}
+    
+    if 'Structural_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Structural_features__': True, 'as_list': serialized_object}
+    
+    if 'Integrated_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Integrated_features__': True, 'as_list': serialized_object}
+
+    if 'RIN_based_features' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = obj.get_raw_list()
+        return {'__RIN_based_features__': True, 'as_list': serialized_object}
+
+    if 'CrossValidationSlice' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            #serialized_object.append(copy.deepcopy(obj.__getattribute__(attribute_name)))
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__CrossValidationSlice__': True, 'as_list': serialized_object}
+
+    if 'Feature' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            #serialized_object.append(copy.deepcopy(obj.__getattribute__(attribute_name)))
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Feature__': True, 'as_list': serialized_object}
+
+    return obj
+
+def custom_encoder(obj):
+    complete = False
+
+    if isinstance(obj, set):
+        return {'__set__': True, 'as_list': list(obj)}
+
+    if 'Residue' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_residue = []
+        for attribute_name in obj.__slots__:
+            if attribute_name == 'interaction_profile' and not complete:
+                serialized_residue.append(None)
+            elif attribute_name == 'centralities' and not complete:
+                serialized_residue.append(None)
+            else:
+                serialized_residue.append(obj.__getattribute__(attribute_name))
+        return {'__residue__': True, 'as_list': serialized_residue}
+
+    if 'StructureAnnotation' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_annotation = []
+        for attribute_name in obj.__slots__:
+            if attribute_name == 'alignment' and not complete:
+                serialized_annotation.append(None)
+            else:
+                serialized_annotation.append(obj.__getattribute__(attribute_name))
+        return {'__structureannotation__': True, 'as_list': serialized_annotation}
+
+    if 'Structure' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_structure = []
+        for attribute_name in obj.__slots__:
+            if attribute_name == 'sequence' and not complete:
+                serialized_structure.append(None)
+            else:
+                serialized_structure.append(obj.__getattribute__(attribute_name))
+        return {'__structure__': True, 'as_list': serialized_structure}
+
+    if 'Complex' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_complex = []
+        for attribute_name in obj.__slots__:
+            #Complex objects get slimmed down, when packed !!!!!!!!!
+            if (attribute_name == 'chains' or attribute_name == 'resolution' or attribute_name == 'interfaces') and not complete:
+                serialized_complex.append(obj.__getattribute__(attribute_name))
+            else:
+                serialized_complex.append(None)
+        return {'__complex__': True, 'as_list': serialized_complex}
+
+    if 'Protein' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_protein = []
+        for attribute_name in obj.__slots__:
+            if attribute_name == 'sequence' and not complete:
+                serialized_protein.append(None)
+            else:
+                serialized_protein.append(obj.__getattribute__(attribute_name))
+        return {'__protein__': True, 'as_list': serialized_protein}
+
+    if 'Position_Position_Interaction' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_pos_pos_i = []
+        for attribute_name in obj.__slots__:
+            serialized_pos_pos_i.append(obj.__getattribute__(attribute_name))
+        return {'__pos_pos_i__': True, 'as_list': serialized_pos_pos_i}
+
+    if 'Position' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_position = []
+        for attribute_name in obj.__slots__:
+            if attribute_name == 'mappings' and not complete:
                 serialized_position.append(None)
             #elif attribute_name == 'mut_aas':
             #    serialized_position.append(None)

@@ -12,7 +12,7 @@ import traceback
 
 import pymysql as MySQLdb
 import sqlite3
-from psutil import virtual_memory
+import ray
 
 # if running as script, add local structman package to path
 if __name__ == "__main__":
@@ -65,8 +65,7 @@ class Config:
         self.db_user_name = cfg.get('db_user_name', fallback='')
         self.db_password = cfg.get('db_password', fallback='')
         self.db_name = cfg.get('db_name', fallback='')
-        if dbname is not None:
-            self.db_name = f'{self.db_user_name}_{dbname}'
+
         self.mapping_db = cfg.get('mapping_db', fallback=None)
 
         #gets custom_db_path
@@ -81,6 +80,7 @@ class Config:
 
         self.ignore_local_mapping_db = False
         self.ray_local_mode = False
+        self.python_env_expanded_for_ray = False
         self.user_mail = cfg.get('mail', fallback='')
 
         self.outfolder = resolve_path(output_path)
@@ -134,12 +134,17 @@ class Config:
         if not is_alphafold_db_valid(self):
             self.model_db_active = False
 
+        self.read_only_mode = cfg.getboolean('read_only_mode', fallback=False)
+        self.read_hybrid_mode = cfg.getboolean('read_hybrid_mode', fallback=False)
+        self.fast_pdb_annotation = cfg.getboolean('fast_pdb_annotation', fallback=False)
+
         self.annovar_path = cfg.get('annovar_path', fallback='')
         self.dssp_path = cfg.get('dssp_path', fallback = '')
         self.rin_db_path = cfg.get('rin_db_path', fallback='')
         self.iupred_path = cfg.get('iupred_path', fallback='')
 
         self.errorlog_path = cfg.get('errorlog_path', fallback=None)
+        self.warnlog_path = cfg.get('warnlog_path', fallback=None)
 
         self.go = cfg.getboolean('do_goterm', fallback=False)
         self.anno = cfg.getboolean('do_anno', fallback=False)
@@ -248,15 +253,15 @@ class Config:
                 print('More processes annotated (', self.proc_n, ') than cores registered in system (', multiprocessing.cpu_count(), ').')
             self.proc_n = multiprocessing.cpu_count()
 
-        mem = virtual_memory()
-        self.gigs_of_ram = mem.total / 1024 / 1024 / 1024
+        
+        self.gigs_of_ram = ray._private.utils.get_system_memory() / 1024 / 1024 / 1024
         self.low_mem_system = self.gigs_of_ram < 40 or self.test_low_mem_system  # Less than 20Gb is a low memory system
         if self.test_low_mem_system:
             self.gigs_of_ram = 8
         if self.low_mem_system:
-            self.chunksize = int(min([500, max([((self.gigs_of_ram * 120) // self.proc_n) - 120, 60 // self.proc_n, 1])]))
+            self.chunksize = int(min([500, max([((self.gigs_of_ram * 40) // self.proc_n) - 120, 60 // self.proc_n, 1])]))
         else:
-            self.chunksize = int(min([1500, max([((self.gigs_of_ram * 120) // self.proc_n) - 60, 120 // self.proc_n, 1])]))
+            self.chunksize = int(min([1500, max([((self.gigs_of_ram * 100) // self.proc_n) - 60, 120 // self.proc_n, 1])]))
 
         if not util_mode:
             if not external_call and not os.path.exists(self.outfolder):
@@ -265,13 +270,18 @@ class Config:
                 print(f'Using {self.proc_n} core(s), verbosity level: {self.verbosity}')
             if (not external_call) and (not print_all_warns):  # no need for errorlogs, when the config is generated not from the main script
                 self.errorlog_path = os.path.join(self.outfolder, 'errorlogs', 'errorlog.txt')
+                self.warnlog_path = os.path.join(self.outfolder, 'errorlogs', 'warnlog.txt')
                 errorlog_dir = os.path.dirname(self.errorlog_path)
                 if not os.path.exists(errorlog_dir):
                     os.makedirs(errorlog_dir)
                 if restartlog and os.path.isfile(self.errorlog_path):
-                    os.remove(self.errorlog_path)
+                    try:
+                        os.remove(self.errorlog_path)
+                        os.remove(self.warnlog_path)
+                    except:
+                        pass
 
-        self.errorlog = Errorlog(path=self.errorlog_path, print_all_errors=print_all_errors, print_all_warns=print_all_warns)
+        self.errorlog = Errorlog(path=self.errorlog_path, warn_path=self.warnlog_path, print_all_errors=print_all_errors, print_all_warns=print_all_warns)
 
         sqlite_max_package_size = 800000000
         if not configure_mode:
@@ -393,7 +403,7 @@ def limit_memory(soft_limit):
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     resource.setrlimit(resource.RLIMIT_AS, (soft_limit, hard))
 
-def main(infiles, out_folder, config, intertable=False, custom_db_mode=False):
+def main(infiles, out_folder, config, intertable=False):
     # resource.setrlimit(resource.RLIMIT_AS,(6442450944,8589934592))
     # resource.setrlimit(resource.RLIMIT_AS,(442450944,589934592))
     for infile in infiles:
@@ -422,12 +432,8 @@ def main(infiles, out_folder, config, intertable=False, custom_db_mode=False):
         # run the main pipeline
         
         if session_id is None:
-            # checks if custom db mode
-            if custom_db_mode:
+            session_id, config = serializedPipeline.main(infile, config)
 
-                session_id, config = serializedPipeline.main(infile, config, custom_db_mode)
-            else:
-                session_id, config = serializedPipeline.main(infile, config)
 
         # run the output scripts
         session_name = infilename.rsplit('.', 1)[0]
@@ -442,10 +448,12 @@ def main(infiles, out_folder, config, intertable=False, custom_db_mode=False):
         if not os.path.exists(outpath):
             os.makedirs(outpath)
         
-        if custom_db_mode:
-            output.main(session_id, outpath, config, custom_db_mode, intertable=intertable, )
-        else:
-            output.main(session_id, outpath, config, intertable=intertable,)
+        output.main(session_id, outpath, config, intertable=intertable)
+
+        if config.read_only_mode:
+            repairDB.remove_sessions(config)
+        elif config.read_hybrid_mode:
+            repairDB.clear(config)
 
 
 # needed for entry point in setup.py
@@ -733,7 +741,7 @@ def structman_cli():
             'model_indel_structures', 'ignore_local_pdb', 'ignore_local_rindb', 'ignore_local_mapping_db',
             'skip_main_output_generation', 'ray_local_mode', 'compute_ppi', 'structure_limiter=',
             'force_modelling', 'target=', 'custom_db', 'update_source=', 'condition_1=', 'condition_2=',
-            'local_db='
+            'local_db=', 'read_only', 'read_hybrid', 'fast_pdb_annotation'
         ]
         opts, args = getopt.getopt(argv, "c:i:n:o:h:ldp:", long_paras)
 
@@ -768,11 +776,12 @@ def structman_cli():
     condition_1_tag = None
     condition_2_tag = None
     target = None
-    custom_db_mode = False
     update_source = None
     local_db = None
-
+    read_only = None
+    read_hybrid = None
     structure_limiter = None
+    fast_pdb_annotation = None
 
     '''
     #mmcif mode flag is added
@@ -881,14 +890,20 @@ def structman_cli():
         if opt == '--target':
             target = arg
 
-        if opt == '--custom_db':
-            custom_db_mode = True
-
         if opt == '--update_source':
             update_source = arg
 
         if opt == '--local_db':
             local_db = arg
+
+        if opt == '--read_only':
+            read_only = True
+
+        if opt == '--read_hybrid':
+            read_hybrid = True
+
+        if opt == '--fast_pdb_annotation':
+            fast_pdb_annotation = True
 
     if not output_util and not util_mode:
         if infile == '' and len(single_line_inputs) == 0:
@@ -948,6 +963,7 @@ def structman_cli():
             print("No config file found, please use -c [Path to config]")
             sys.exit(2)
 
+
     config = Config(config_path, num_of_cores=num_of_cores, dbname = dbname,
                     output_path=outfolder, util_mode=util_mode, configure_mode=configure_mode, local_db = local_db, db_mode = db_mode,
                     basic_util_mode=basic_util_mode, output_util=output_util, external_call=False, verbosity=verbosity,
@@ -960,6 +976,15 @@ def structman_cli():
     config.structure_limiter = structure_limiter
     config.condition_1_tag = condition_1_tag
     config.condition_2_tag = condition_2_tag
+    
+    if read_only is not None:
+        config.read_only_mode = read_only
+
+    if read_hybrid is not None:
+        config.read_hybrid_mode = read_hybrid
+
+    if fast_pdb_annotation is not None:
+        config.fast_pdb_annotation = fast_pdb_annotation
 
     if overwrite_force_modelling is not None:
         config.force_modelling = True
@@ -980,8 +1005,7 @@ def structman_cli():
     config.skip_main_output_generation = skip_main_output_generation
 
     if mem_limit is not None:
-        mem = virtual_memory()
-        lim = mem.total * mem_limit
+        lim = ray._private.utils.get_system_memory() * mem_limit
         limit_memory(lim)
         print(f'Limit the memory consumption to {str(100 * mem_limit)}% ({str(lim / 1024. / 1024. / 1024.)} GB of RAM)')
 
@@ -1172,10 +1196,8 @@ def structman_cli():
         f.close()
 
     else:        
-        if custom_db_mode:
-            main(infiles, outfolder, config, custom_db_mode=True)
-        else:
-            main(infiles, outfolder, config)
+        main(infiles, outfolder, config)
+
 
 
 if __name__ == "__main__":

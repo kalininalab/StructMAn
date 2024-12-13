@@ -960,7 +960,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 row = list(row)
                 if row[7] is None:
                     row[7] = [None]*6
-                    if config.verbosity >= 5:
+                    if config.verbosity >= 6:
                         print(f'Position Data is None for Mutation db id {m} (Protein db id {prot_db_id})')
                 else:
                     try:
@@ -1066,7 +1066,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                     snv_map[m] = {0: wt_aa}
                     snv_tag_map[0] = tag_map[m]
                 else:
-                    if config.verbosity >= 5:
+                    if config.verbosity >= 6:
                         print(f'Processing SNVs in unpacked rows part: {m} {wt_aa} {position_number} {prot_id}')
 
                 for snv_database_id in snv_map[m]:

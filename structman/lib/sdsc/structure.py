@@ -245,7 +245,10 @@ class StructureAnnotation:
         return self.sub_infos
 
     def get_sub_info(self, pos):
-        return self.sub_infos[pos]
+        try:
+            return self.sub_infos[pos]
+        except:
+            return None
 
     def set_backmap(self, backmap):
         self.backmap = backmap

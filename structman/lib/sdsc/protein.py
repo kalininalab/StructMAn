@@ -586,12 +586,12 @@ class Protein:
     def create_multi_mutations(self, proteins, config):
         indel_position_order = {}
         multi_mutation_objects = []
-        if config.verbosity >= 5:
+        if config.verbosity >= 6:
             print('Starting multi mutation mutation of', self.primary_protein_id)
         for mm_nr, multi_mutation_tuple in enumerate(self.multi_mutations):
             multi_mutation, mut_prot_id, mm_tags = multi_mutation_tuple
 
-            if config.verbosity >= 4:
+            if config.verbosity >= 6:
                 print(f'In create_multi_mutations, looping over new MM: {mut_prot_id}')
             name_parts = []
 
@@ -785,6 +785,14 @@ class Proteins:
     def remove_protein(self, prot_id):
         self.protein_map[prot_id].deconstruct()
         del self.protein_map[prot_id]
+        try:
+            del self.multi_mutations[prot_id]
+        except:
+            pass
+        try:
+            del self.indels[prot_id]
+        except:
+            pass
 
     def remove_protein_annotations(self, u_ac):
         self.protein_map[u_ac].remove_annotations()

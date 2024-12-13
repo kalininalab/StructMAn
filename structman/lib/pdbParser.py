@@ -409,41 +409,44 @@ def parsePDBSequence(buf, chain):
     used_res = set()
     i = 1
     firstAltLoc = None
-    for line in buf:
-        line = line.decode('ascii')
+    try:
+        for line in buf:
+            line = line.decode('ascii')
 
-        if len(line) > 26:
-            record_name = line[0:6].strip()
-            if not record_name == 'ATOM' \
-                    and not record_name == 'HETATM':
-                continue
-
-            altLoc = line[16]
-            if firstAltLoc is None and altLoc != ' ':
-                firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
-            if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
-                continue
-
-            res_name = line[17:20].strip()
-            if record_name == 'HETATM':
-                if res_name not in residue_consts.THREE_TO_ONE:
+            if len(line) > 26:
+                record_name = line[0:6].strip()
+                if not record_name == 'ATOM' \
+                        and not record_name == 'HETATM':
                     continue
 
-            chain_id = line[21]
-            if chain_id != chain:
-                continue
-
-            atom_nr = line[6:11].strip()
-            res_nr = line[22:27].strip()  # this includes the insertion code
-
-            if res_nr not in used_res:
-                if res_name not in residue_consts.THREE_TO_ONE:
+                altLoc = line[16]
+                if firstAltLoc is None and altLoc != ' ':
+                    firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
+                if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
                     continue
-                aa = residue_consts.THREE_TO_ONE[res_name][0]
-                seq = seq + aa
-                used_res.add(res_nr)
-                res_pos_map[res_nr] = i
-                i += 1
+
+                res_name = line[17:20].strip()
+                if record_name == 'HETATM':
+                    if res_name not in residue_consts.THREE_TO_ONE:
+                        continue
+
+                chain_id = line[21]
+                if chain_id != chain:
+                    continue
+
+                atom_nr = line[6:11].strip()
+                res_nr = line[22:27].strip()  # this includes the insertion code
+
+                if res_nr not in used_res:
+                    if res_name not in residue_consts.THREE_TO_ONE:
+                        continue
+                    aa = residue_consts.THREE_TO_ONE[res_name][0]
+                    seq = seq + aa
+                    used_res.add(res_nr)
+                    res_pos_map[res_nr] = i
+                    i += 1
+    except OSError:
+        pass
     return seq, res_pos_map
 
 

@@ -214,7 +214,7 @@ def destroy(config):
             os.remove(config.local_db_path)
         else:
             db, cursor = config.getDB()
-            sql = 'DROP DATABASE %s' % config.db_name
+            sql = 'DROP DATABASE `%s`' % config.db_name
             cursor.execute(sql)
             db.close()
     except:

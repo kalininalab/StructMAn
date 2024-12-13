@@ -22,9 +22,9 @@ def insert_interfaces(proteins, config):
         for aggregated_interface in proteins.protein_map[protein_id].aggregated_interface_map:
             prot_db_ids.add(prot_a_db_id)
             structure_recommendation = f'{aggregated_interface.recommended_complex},{aggregated_interface.chain},{aggregated_interface.interacting_chain}'
-            if config.verbosity >= 5:
+            if config.verbosity >= 6:
                 print('In insert_interfaces:', protein_id, structure_recommendation)
-                aggregated_interface.print_interface()
+                aggregated_interface.print_interface(verbosity = config.verbosity)
 
             #structure_ids_for_residue_retrieval[proteins.structures[(aggregated_interface.recommended_complex, aggregated_interface.chain)].database_id] = (aggregated_interface.recommended_complex, aggregated_interface.chain)
 
@@ -118,8 +118,11 @@ def insert_interfaces(proteins, config):
 
         blank_interfaces[prot_db_id][interface_hash_tuple] = interface_db_id
 
-    if config.verbosity >= 5:
-        print(f'In insert_interfaces: contents of prot_prot_map before transformation to prot_prot_values:\n{prot_prot_map}')
+    if config.verbosity >= 6:
+        if len(prot_prot_map) < 1000:
+            print(f'In insert_interfaces: contents of prot_prot_map before transformation to prot_prot_values:\n{prot_prot_map}')
+        else:
+            print(f'In insert_interfaces: size of prot_prot_map before transformation to prot_prot_values:{len(prot_prot_map)}')
 
     for prot_a_db_id in prot_prot_map:
         for prot_b_db_id in prot_prot_map[prot_a_db_id]:
@@ -139,6 +142,8 @@ def insert_interfaces(proteins, config):
             interface_a_db_id = blank_interfaces[prot_a_db_id][interface_hash_a]
             if interface_hash_b is not None:
                 interface_b_db_id = blank_interfaces[prot_b_db_id][interface_hash_b]
+            elif prot_b_db_id not in blank_interfaces:
+                continue
             elif len(blank_interfaces[prot_b_db_id]) == 1:
                 interface_b_db_id = list(blank_interfaces[prot_b_db_id].values())[0]
             else:
@@ -309,10 +314,10 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
     for (pdb_id, chain) in structural_analysis:
         if (pdb_id, chain) in interacting_structure_ids:
             proteins.structures[(pdb_id, chain)].residues = structural_analysis[(pdb_id, chain)]
-            if config.verbosity >= 4:
+            if config.verbosity >= 6:
                 print(f'structural_analysis ({len(structural_analysis[(pdb_id, chain)])}) added to {pdb_id} {chain} in insertResidues due to part of interacting_structure_ids')
         if not proteins.contains_structure(pdb_id, chain):
-            if config.verbosity >= 5:
+            if config.verbosity >= 6:
                 if not (pdb_id, chain) in interacting_structure_ids:
                     print(f'{pdb_id} {chain} from structural_analysis not going into the database. It is not in interacting_structure_ids.')
                 else:
@@ -320,7 +325,7 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
                     print(f'{pdb_id} {chain} from structural_analysis not going into the database. contains_structure was False.')
             continue
         if proteins.contains_structure(pdb_id, chain) and proteins.is_structure_stored(pdb_id, chain) and not proteins.structures[(pdb_id, chain)].new_interacting_chain:  # all residues belonging to stored structures must not inserted twice
-            if config.verbosity >= 5:
+            if config.verbosity >= 6:
                 print(f'{pdb_id} {chain} from structural_analysis not going into the database. Is already stored.')
             continue
 
@@ -330,13 +335,13 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
         else:
             s_id = proteins.get_structure_db_id(pdb_id, chain)
             if s_id is None:
-                if config.verbosity >= 5:
+                if config.verbosity >= 6:
                     print(f'{pdb_id} {chain} from structural_analysis not going into the database. s_id was None.')
                 continue
 
             structure_ids[s_id] = (pdb_id, chain)
 
-        if config.verbosity >= 5:
+        if config.verbosity >= 6:
             print(f'{pdb_id} {chain} from structural_analysis going into the database: {len(analysis_map)}')
 
         max_prints_per_prot = 10
@@ -420,7 +425,7 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
             t_12 += time.time()
 
             if not (pdb_id, chain) in interacting_structure_ids:
-                if config.verbosity >= 5:
+                if config.verbosity >= 6:
                     if n_prints < max_prints_per_prot:
                         print(f'Calling proteins.add_residue in insertResidues: {pdb_id} {chain} {res_id}')
                         n_prints += 1
@@ -434,10 +439,13 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
         print('Individual parts: 1 -', (t_1 - t_0), '2 -', (t_2 - t_1), '3 -', (t_3 - t_2), '4 -', (t_4 - t_3), '5 -', (t_5 - t_4), '6 -', (t_6 - t_5),
                 '7 -', (t_7 - t_6), '8 -', (t_8 - t_7), '9 -', (t_9 - t_8), '10 -', (t_10 - t_9), '11 -', (t_11 - t_10), '12 -', (t_12 - t_11), '13 -', (t_13 - t_12))
 
-    process = multiprocessing.Process(target=background_insert_residues, args=(values, config))
-    process.start()
-    #process = None
-    #background_insert_residues(values, config)
+    if config.low_mem_system:
+        process = None
+        background_insert_residues(values, config)
+    else:
+        process = multiprocessing.Process(target=background_insert_residues, args=(values, config))
+        process.start()
+
     return process
 
 def insertClassifications(proteins, config):

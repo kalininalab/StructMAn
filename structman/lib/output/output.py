@@ -338,7 +338,7 @@ def genediffAna(fileA, fileB):
 
 
 # called by structman
-def main(sess_id, output_path, config, custom_db_mode=False, intertable=False):
+def main(sess_id, output_path, config, intertable=False):
     db_name = config.db_name
     db_address = config.db_address
     db_password = config.db_password
@@ -356,7 +356,6 @@ def main(sess_id, output_path, config, custom_db_mode=False, intertable=False):
     infile = ''
     tanimoto_cutoff = config.tanimoto_cutoff
     distance_threshold = config.milieu_threshold
-    custom_db_path = config.custom_db_path
 
     intertable_conf = config.intertable_conf
     intertable = intertable or intertable_conf

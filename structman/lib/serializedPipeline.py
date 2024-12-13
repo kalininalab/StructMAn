@@ -62,6 +62,40 @@ def list_fds():
     return ret
 
 
+def kill_overhead_sockets(save_ids = None):
+    if not sys.platform.startswith('linux'):
+        raise NotImplementedError('Unsupported platform: %s' % sys.platform)
+
+    if save_ids is None:
+        ret_save_ids = set()
+
+    base = '/proc/self/fd'
+    for num in os.listdir(base):
+        path = None
+        try:
+            path = os.readlink(os.path.join(base, num))
+        except OSError as err:
+            # Last FD is always the "listdir" one (which may be closed)
+            if err.errno != errno.ENOENT:
+                raise
+        if save_ids is None:
+            ret_save_ids.add(num)
+        else:
+            if num in save_ids:
+                continue
+            if path is None:
+                continue
+            if path[:6] == 'socket':
+                try:
+                    os.close(int(num))
+                except OSError:
+                    pass
+
+    if save_ids is None:
+        return ret_save_ids
+    return save_ids
+
+
 def SQLDateTime():
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
 
@@ -786,7 +820,7 @@ def buildQueue(config, filename, already_split=False):
 
         tags = set()
 
-        if config.verbosity >= 5:
+        if config.verbosity >= 6:
             print(f'Processing input line: {line}')
 
         if len(words) > 2:
@@ -952,7 +986,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
                 if iso1 == iso2:
                     continue
 
-                if config.verbosity >= 4:
+                if config.verbosity >= 6:
                     print(f'Generating Isoform-Multimutation for {iso1} and {iso2}')
 
                 if iso1 not in sequence_map:
@@ -989,7 +1023,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
 
             for indel_or_snv in multi_mutation:
                 if isinstance(indel_or_snv, tuple):
-                    if config.verbosity >= 4:
+                    if config.verbosity >= 6:
                         print(f'Add Position:')
                         indel_or_snv[0].print_state()
                         print(f'... to {iso1}')
@@ -1003,6 +1037,10 @@ def gene_isoform_check(proteins, genes, indel_map, config):
                 indel_map[iso1] = {}
             indel_map_entry = indel_map[iso1]
             proteins[iso1].add_multi_mutation(multi_mutation, indel_map_entry, mut_prot_id = iso2)
+
+    #Remove the sequences for saving memory (sequences will be refetched in the individual chunk loops)
+    for prot_id in extra_sequence_scan_proteins:
+        proteins[prot_id].sequence = None
 
     return genes
 
@@ -1049,7 +1087,8 @@ def getSequences(proteins, config):
     if config.verbosity >= 2:
         print("Time for getSequences Part 1: %s" % str(t1 - t0))
 
-    database.addProtInfos(proteins, config)
+    if not config.read_only_mode:
+        database.addProtInfos(proteins, config)
 
     t2 = time.time()
     if config.verbosity >= 2:
@@ -1092,7 +1131,7 @@ def getSequences(proteins, config):
             disorder_scores = proteins.get_disorder_scores(u_ac)
             if disorder_scores is None:
                 if not mobi_lite:
-                    if config.verbosity >= 5:
+                    if config.verbosity >= 6:
                         print('Start disordered region calculation for:', u_ac)
                     if config.proc_n > 1:
                         iupred_results.append(para_iupred.remote(u_ac, seq, store))
@@ -1154,7 +1193,10 @@ def getSequences(proteins, config):
         if config.verbosity >= 2:
             print(f"Time for addIupred Part 1: {t1 - t0}")
 
-        background_iu_process = database.addIupred(proteins, config)
+        if not config.read_only_mode:
+            background_iu_process = database.addIupred(proteins, config)
+        else:
+            background_iu_process = None
 
         t2 = time.time()
         if config.verbosity >= 2:
@@ -1207,15 +1249,10 @@ def autoTemplateSelection(config, proteins):
 
     filtering_dump = None
 
-    # Checks if custom_db path is given in config file, and sets custom_db boolean value
-    if config.custom_db_path:
-        custom_db = True
-    else:
-        custom_db = False
     t0 = time.time()
 
     # MMseqs search function takes one more argument now: custom_db
-    search_results = MMseqs2.search(proteins, config, custom_db)
+    search_results = MMseqs2.search(proteins, config)
 
     t1 = time.time()
 
@@ -1229,7 +1266,7 @@ def autoTemplateSelection(config, proteins):
             filtering_results = []
 
             # if it is custom db, it creates fake oligo map
-            if custom_db:
+            if config.custom_db_path:
                 for custom_id in pdb_ids:
                     fake_oligo_map = {'A' : ['A']}
                     info_map[custom_id] = (2.0, fake_oligo_map)
@@ -1238,7 +1275,7 @@ def autoTemplateSelection(config, proteins):
                 
                 # calls filtering dump with custom db path rather than pdb path
                 if config.proc_n > 1:
-                    if custom_db:
+                    if config.custom_db_path:
                         filtering_dump = ray.put(config.custom_db_path)
                     else:
                         filtering_dump = ray.put(config.pdb_path)
@@ -1301,6 +1338,11 @@ def autoTemplateSelection(config, proteins):
             for u_ac in raw_structure_map:
                 for pdb_id, chain in raw_structure_map[u_ac]:
 
+                    if config.fast_pdb_annotation:
+                        #This filters every hit that is not identical to the input (pdb maps to pdb)
+                        if u_ac[:4] != pdb_id[0:4]:
+                            continue
+
                     if pdb_id not in info_map:
                         continue
                     resolution, homomer_dict = info_map[pdb_id]
@@ -1317,7 +1359,7 @@ def autoTemplateSelection(config, proteins):
                     struct_anno = structure_package.StructureAnnotation(u_ac, pdb_id, chain)
                     proteins.add_annotation(u_ac, pdb_id, chain, struct_anno)
 
-                    if config.verbosity >= 5:
+                    if config.verbosity >= 6:
                         print(f'Adding structural annotation: {u_ac} -> {pdb_id}:{chain}')
 
                     if not (pdb_id, chain) in proteins.structures:
@@ -1942,7 +1984,7 @@ def paraMap(config, tasks, static_model_path = None):
 
             seq_res_map, last_residue, first_residue = globalAlignment.createTemplateFasta(template_page, pdb_id, chain, config, onlySeqResMap=True)
 
-            sub_out = globalAlignment.getSubPos(config, u_ac, target_seq, template_seq, aaclist, seq_res_map)
+            sub_out = globalAlignment.getSubPos(config, u_ac, target_seq, template_seq, aaclist, seq_res_map, ignore_gaps = True)
 
             if isinstance(sub_out, str):
                 config.errorlog.add_error("%s %s %s\n%s\n%s" % (sub_out, pdb_id, chain, template_seq.replace('-', ''), seq_res_map))
@@ -2102,7 +2144,7 @@ def core(protein_list, genes, indels, multi_mutation_objects, config, session, o
 
         if not config.only_wt:
             for wt_prot_id in proteins.multi_mutations:
-                if config.verbosity >= 3:
+                if config.verbosity >= 6:
                     print('Mutating', len(proteins.multi_mutations[wt_prot_id]), 'multi mutations for:', wt_prot_id)
                 for multi_mutation in proteins.multi_mutations[wt_prot_id]:
                     #if proteins.contains(multi_mutation.mut_prot):
@@ -2164,8 +2206,11 @@ def core(protein_list, genes, indels, multi_mutation_objects, config, session, o
             print("Time for Alignment: %s" % (str(t6 - t5)))
 
         if background_iu_process is not None:
-            background_iu_process.join()  # Disorder values have to finished before the classification happens
-            background_iu_process.close()
+            try:
+                background_iu_process.join()  # Disorder values have to finished before the classification happens
+                background_iu_process.close()
+            except:
+                pass
             background_iu_process = None
 
         if config.verbosity >= 1:
@@ -2216,7 +2261,7 @@ def core(protein_list, genes, indels, multi_mutation_objects, config, session, o
 
         amount_of_structures = 0
 
-    if config.ray_init_counter >= 1000:
+    if config.ray_init_counter >= 10000:
         ray.shutdown()
         #time.sleep(10)
         config.ray_init_counter = 0
@@ -2225,7 +2270,7 @@ def core(protein_list, genes, indels, multi_mutation_objects, config, session, o
 
 
 # @profile
-def main(filename, config, custom_db_mode=False):
+def main(filename, config):
     # main function takes another argument custom db, default is False
     mrna_fasta = config.mrna_fasta
 
@@ -2333,6 +2378,8 @@ def main(filename, config, custom_db_mode=False):
 
     total_amount_of_analyzed_structures = 0
     config.ray_init_counter = 0
+    save_ids = None
+
     for nr_temp_file, temp_infile in enumerate(temp_infiles):
         if temp_infile is not None:
             if config.verbosity >= 1:
@@ -2361,6 +2408,12 @@ def main(filename, config, custom_db_mode=False):
             if config.verbosity >= 3:
                 for name, size in sorted(((name, sys.getsizeof(value)) for name, value in globals().items()), key=lambda x: -x[1])[:10]:
                     print("{:>30}: {:>8}".format(name, sizeof_fmt(size)))
+                print(list_fds())
+
+            save_ids = kill_overhead_sockets(save_ids = save_ids)
+
+            if config.verbosity >= 3:
+                print(f'save_ids: {save_ids}')
                 print(list_fds())
 
     os.chdir(config.outfolder)

@@ -9,17 +9,25 @@ import zstd
 import msgpack
 import subprocess
 
-from structman.base_utils.custom_encoder import custom_encoder, custom_decoder
+from structman.base_utils.custom_encoder import custom_encoder, custom_decoder, custom_encoder_complete
 
 class Errorlog:
-    def __init__(self, path=None, print_all_errors=False, print_all_warns=False):
+    def __init__(self, path=None, warn_path=None, print_all_errors=False, print_all_warns=False):
         self.path = path
+        self.warn_path = warn_path
         self.error_counter = 0
         self.warning_counter = 0
         self.print_all_errors = print_all_errors
         self.print_all_warns = print_all_warns
 
     def start(self, nfname, session):
+        if self.warn_path is not None:
+            date = time.strftime("%a, %d %b %Y %H:%M:%S", time.gmtime())
+            errortext = "###############################################################################\n%s:\n%s - Session: %s\n" % (date, nfname, str(session))
+            f = open(self.warn_path, 'a')
+            f.write(errortext)
+            f.close()
+
         if self.path is None:
             return
         date = time.strftime("%a, %d %b %Y %H:%M:%S", time.gmtime())
@@ -40,6 +48,18 @@ class Errorlog:
         f.close()
 
     def stop(self):
+        if self.warn_path is not None:
+            if self.warning_counter == 0:
+                errortext = "Finished without any warnings\n###############################################################################\n"
+                f = open(self.warn_path, 'a')
+                f.write(errortext)
+                f.close()
+            else:
+                errortext = "###############################################################################\n"
+                f = open(self.warn_path, 'a')
+                f.write(errortext)
+                f.close()
+                print(f"\n\nAt least one warning occured, please check the warninglog:\n{self.warn_path}\n\n")
         if self.path is None:
             return
         if self.error_counter == 0:
@@ -52,22 +72,22 @@ class Errorlog:
             f = open(self.path, 'a')
             f.write(errortext)
             f.close()
-            print("\n\nAt least one error occured, please check the errorlog.\n\n")
+            print(f"\n\nAt least one error occured, please check the errorlog:\n{self.path}\n\n")
 
     def add_warning(self, warn_text, lock=None):
         self.warning_counter += 1
         g = ''.join(traceback.format_list(traceback.extract_stack()))
         warn_text = 'Warning %s:\n%s\n%s\n' % (str(self.warning_counter), warn_text, g)
-        if self.path is None or self.print_all_warns:
+        if self.warn_path is None or self.print_all_warns:
             print(warn_text)
             return
         if lock is not None:
             with lock:
-                f = open(self.path, 'a')
+                f = open(self.warn_path, 'a')
                 f.write(warn_text)
                 f.close()
             return
-        f = open(self.path, 'a')
+        f = open(self.warn_path, 'a')
         f.write(warn_text)
         f.close()
 
@@ -267,9 +287,12 @@ def decompress(compressed_value):
         return None
     return zstd.decompress(compressed_value)
 
-def pack(some_object):
+def pack(some_object, complete = False):
     #packed_object = compress(pickletools.optimize(pickle.dumps(some_object, protocol = pickle.HIGHEST_PROTOCOL)))
-    packed_object = compress(msgpack.packb(some_object, default = custom_encoder))
+    if complete:
+        packed_object = compress(msgpack.packb(some_object, default = custom_encoder_complete))
+    else:
+        packed_object = compress(msgpack.packb(some_object, default = custom_encoder))
     return packed_object
 
 def unpack(packed_object):
