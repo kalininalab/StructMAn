@@ -126,7 +126,7 @@ pip install "$SCRIPTPATH" >&$verbose_stdout
 
 #install mmseqs2
 echo "Installing MMseqs2 ..."
-mamba install -y -c bioconda mmseqs2 >&$verbose_stdout
+mamba install -y -c bioconda -c conda-forge mmseqs2 >&$verbose_stdout
 
 #install wkhtmltopdf
 mamba install -y -c conda-forge wkhtmltopdf >&$verbose_stdout
@@ -178,7 +178,7 @@ fi
 cp "$path_to_dssp_binary" "$new_env_path"/bin/smssp
 
 #Installing specific boost
-mamba install -y libboost==1.82 >&$verbose_stdout
+mamba install -y libboost==1.82 -c conda-forge >&$verbose_stdout
 
 #Installing grpc
 pip install grpcio >$verbose_stdout

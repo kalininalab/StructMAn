@@ -50,7 +50,7 @@ setup(
         "pandas>=2.2.2",
         "autopep8>=1.5.7",
         "scipy>=1.14.1",
-        "requests==2.28.1",
+        "requests>=2.32.3",
         "more-itertools>=9.1.0",
         "pycairo==1.23.0",
         "powerlaw>=1.5",
