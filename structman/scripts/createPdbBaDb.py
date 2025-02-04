@@ -42,8 +42,18 @@ def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = No
         path = f'{divide_folder}/{sub_folder}/{filename}'
 
         f = gzip.open(path,'rb')
-    page = f.read()
-    f.close()
+    try:
+        page = f.read()
+        f.close()
+    except:
+        [e, f, g] = sys.exc_info()
+        try:
+            g = traceback.format_exc(g)
+        except:
+            pass
+        error = f"Couldn't read file: {path}\n{e}\n{f}\n{g}"
+        error_files.append(error)
+        return {}, pdb_id, bio_entries, error_files
 
     try:
         page = page.decode('ascii')

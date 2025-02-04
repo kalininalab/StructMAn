@@ -273,8 +273,17 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
     if config.verbosity >= 4:
         if len(prot_gene_map) < 100:
             print(f'prot_gene_map at the start of IdMapping: {prot_gene_map}')
+            print(f'Size of ac_map: {len(ac_map)}')
         else:
             print(f'Size of prot_gene_map at the start of IdMapping: {len(prot_gene_map)}')
+            print(f'Size of ac_map: {len(ac_map)}')
+            print(f'Size of id_map: {len(id_map)}')
+            print(f'Size of np_map: {len(np_map)}')
+            print(f'Size of pdb_map: {len(pdb_map)}')            
+            print(f'Size of hgnc_map: {len(hgnc_map)}')
+            print(f'Size of nm_map: {len(nm_map)}')
+            print(f'Size of ensembl_map: {len(ensembl_map)}')
+            print(f'Size of prot_tags_map: {len(prot_tags_map)}')
 
     proteins = {}
     indel_map = {}
@@ -427,19 +436,40 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
             integrate_protein(config, proteins, genes, indel_map, u_ac, hgnc, hgnc_map, u_ac=u_ac, other_ids={'HGNC_ID': hgnc}, gene_id = gene_id, protein_specific_tags = prot_tags_map[hgnc])
 
     if len(ensembl_map) > 0:
+
+        if config.mapping_db_is_set:
+            ensembl_ac_map = {}
+            ensembl_gene_map  = {}
+            results = select(config, ['EMBL_ID', 'Uniprot_Ac', 'Gene_ID'], 'EMBL', in_rows={'EMBL_ID': ensembl_map.keys()}, from_mapping_db=True)
+
+            taken_u_acs = set()
+
+            for row in results:
+                ensembl_id = row[0]
+                u_ac = row[1]
+                gene_id = row[2]
+                if gene_id is not None:
+                    ensembl_gene_map[ensembl_id] = gene_id
+
+                if u_ac is not None and u_ac not in taken_u_acs:
+                    ensembl_ac_map[ensembl_id] = u_ac
+                    taken_u_acs.add(u_ac)
+
+                    
+
         #Uniprot is doesnt seem to work currently for embl id mapping, thus skip for now
         #ensembl_ac_map = getUniprotIds(config, list(ensembl_map.keys()), 'EMBL', target_sub_type = 'primaryAccession')
-        ensembl_ac_map = {}
+
         for ensembl_id in ensembl_map:
 
-            #if ensembl_id in prot_gene_map:
-            #    gene_id = prot_gene_map[ensembl_id]
-            #else:
-            gene_id = "to_fetch"
+            if ensembl_id in ensembl_gene_map:
+                gene_id = ensembl_gene_map[ensembl_id]
+            else:
+                gene_id = "to_fetch"
 
             if ensembl_id in ensembl_ac_map:
                 u_ac = ensembl_ac_map[ensembl_id]
-                integrate_protein(config, proteins, genes, indel_map, ensembl_id, ensembl_id, ensembl_map, other_ids={'ENSEMBL_ID': ensembl_id}, gene_id = gene_id, u_ac=u_ac, protein_specific_tags = prot_tags_map[ensembl_id])
+                integrate_protein(config, proteins, genes, indel_map, u_ac, ensembl_id, ensembl_map, other_ids={'ENSEMBL_ID': ensembl_id}, gene_id = gene_id, u_ac=u_ac, protein_specific_tags = prot_tags_map[ensembl_id])
             else:
                 integrate_protein(config, proteins, genes, indel_map, ensembl_id, ensembl_id, ensembl_map, other_ids={'ENSEMBL_ID': ensembl_id}, gene_id = gene_id, protein_specific_tags = prot_tags_map[ensembl_id])
 
@@ -678,7 +708,7 @@ def getUniprotIds(config, query_ids, querytype, target_type = "UniProtKB", targe
     return uniprot_ids
 
 
-def retrieve_transcript_metadata(server, transcript_ids):
+def retrieve_transcript_metadata(server, transcript_ids, verbose = False):
     rest_url = f'{server}/lookup/id'
     transcript_ids = list(transcript_ids)
     headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
@@ -710,6 +740,9 @@ def retrieve_transcript_metadata(server, transcript_ids):
 
         decoded = r.json()
         try_number = 0
+        
+        if verbose:
+            print(decoded)
 
         for transcript_id in decoded:
             try:
@@ -847,7 +880,7 @@ def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
 
 def embl_database_lookup(config, transcript_ids):
     missing_ids = set(transcript_ids)
-    results = select(config, ['Transcript_ID', 'Gene_ID', 'Name', 'Sequence'], 'EMBL_Transcripts', in_rows={'Transcript_ID': missing_ids}, from_mapping_db=True)
+    results = select(config, ['EMBL_ID', 'Gene_ID', 'Name', 'Sequence'], 'EMBL', in_rows={'EMBL_ID': missing_ids}, from_mapping_db=True)
     sequence_map = {}
     gene_id_map = {}
     broken_ids = set()
@@ -901,7 +934,7 @@ def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken
 
         values.append((transcript_id, gene_id, gene_name, base_utils.pack(sequence_map[transcript_id])))
 
-    insert('EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Name', 'Sequence'], values, config, mapping_db = True)
+    update(config, 'EMBL', ['EMBL_ID', 'Gene_ID', 'Name', 'Sequence'], values, mapping_db = True)
 
     values = []
     for transcript_id in broken_ids:
@@ -912,7 +945,7 @@ def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken
             gene_name = None
         values.append((transcript_id, gene_id, gene_name, base_utils.pack(sequence_map[transcript_id])))
 
-    update(config, 'EMBL_Transcripts', ['Transcript_ID', 'Gene_ID', 'Name', 'Sequence'], values, mapping_db = True)
+    update(config, 'EMBL', ['EMBL_ID', 'Gene_ID', 'Name', 'Sequence'], values, mapping_db = True)
 
 def get_ensembl_seqs(config, full_transcript_ids):
     aa_seqs = {}

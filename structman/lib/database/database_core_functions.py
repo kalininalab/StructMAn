@@ -24,7 +24,7 @@ def binningSelect(keys, rows, table, config, binning_function='median_focus', de
 
     t1 = time.time()
     if config.verbosity >= 3:
-        print('Time for binning in binningSelect:', t1 - t0)
+        print(f'Time for binning in binningSelect {table}: {t1 - t0}')
 
     if len(singletons) > 0:
         if len(singletons) == 1:

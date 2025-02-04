@@ -744,7 +744,9 @@ def getIAmap(interaction_score_file):
             IAmap[chain_a][res_nr_a][interaction_base_type] = {}
         if interaction_type_a not in IAmap[chain_a][res_nr_a][interaction_base_type]:
             IAmap[chain_a][res_nr_a][interaction_base_type][interaction_type_a] = {}
-        IAmap[chain_a][res_nr_a][interaction_base_type][interaction_type_a][(chain_b, res_nr_b)] = score
+        if not chain_b in IAmap[chain_a][res_nr_a][interaction_base_type][interaction_type_a]:
+            IAmap[chain_a][res_nr_a][interaction_base_type][interaction_type_a][chain_b] = {}
+        IAmap[chain_a][res_nr_a][interaction_base_type][interaction_type_a][chain_b][res_nr_b] = score
 
         if chain_b not in IAmap:
             IAmap[chain_b] = {}
@@ -754,7 +756,9 @@ def getIAmap(interaction_score_file):
             IAmap[chain_b][res_nr_b][interaction_base_type] = {}
         if interaction_type_b not in IAmap[chain_b][res_nr_b][interaction_base_type]:
             IAmap[chain_b][res_nr_b][interaction_base_type][interaction_type_b] = {}
-        IAmap[chain_b][res_nr_b][interaction_base_type][interaction_type_b][(chain_a, res_nr_a)] = score
+        if not chain_a in IAmap[chain_b][res_nr_b][interaction_base_type][interaction_type_b]:
+            IAmap[chain_b][res_nr_b][interaction_base_type][interaction_type_b][chain_a] = {}
+        IAmap[chain_b][res_nr_b][interaction_base_type][interaction_type_b][chain_a][res_nr_a] = score
 
     return IAmap
 
@@ -899,33 +903,34 @@ def getProfile(interaction_map, residue, ligands, metals, ions, res_contig_map, 
         if bondtype == 'combi':
             continue
         for chaintype in interaction_map[chain][res][bondtype]:
-            for (chain_b, res_b) in interaction_map[chain][res][bondtype][chaintype]:
-                score = interaction_map[chain][res][bondtype][chaintype][(chain_b, res_b)]
+            for chain_b in interaction_map[chain][res][bondtype][chaintype]:
+                for res_b in interaction_map[chain][res][bondtype][chaintype][chain_b]:
+                    score = interaction_map[chain][res][bondtype][chaintype][chain_b][res_b]
 
-                if (chain_b, res_b) in ligands:
-                    interaction_type = 'ligand'
-                elif (chain_b, res_b) in metals:
-                    interaction_type = 'metal'
-                elif (chain_b, res_b) in ions:
-                    interaction_type = 'ion'
-                elif chain != chain_b:
-                    if chain_b not in chain_type_map:
-                        continue
-                    interaction_type = chain_type_map[chain_b]
-                else:
-                    if res_b not in res_contig_map[chain]:
-                        continue
-                    res_dist = abs(res_contig_map[chain][res][0] - res_contig_map[chain][res_b][0])
-                    if res_dist < 2:
-                        interaction_type = 'neighbor'
-                    elif res_dist < 6:
-                        interaction_type = 'short'
+                    if (chain_b, res_b) in ligands:
+                        interaction_type = 'ligand'
+                    elif (chain_b, res_b) in metals:
+                        interaction_type = 'metal'
+                    elif (chain_b, res_b) in ions:
+                        interaction_type = 'ion'
+                    elif chain != chain_b:
+                        if chain_b not in chain_type_map:
+                            continue
+                        interaction_type = chain_type_map[chain_b]
                     else:
-                        interaction_type = 'long'
-                error = profile.addEdge(chaintype, bondtype, interaction_type, score, chain_b, res_b)
-                if error is not None:
-                    print(error, chain, res, pdb_id)
-                    return None
+                        if res_b not in res_contig_map[chain]:
+                            continue
+                        res_dist = abs(res_contig_map[chain][res][0] - res_contig_map[chain][res_b][0])
+                        if res_dist < 2:
+                            interaction_type = 'neighbor'
+                        elif res_dist < 6:
+                            interaction_type = 'short'
+                        else:
+                            interaction_type = 'long'
+                    error = profile.addEdge(chaintype, bondtype, interaction_type, score, chain_b, res_b)
+                    if error is not None:
+                        print(error, chain, res, pdb_id)
+                        return None
     return profile
 
 
@@ -942,9 +947,10 @@ def calculateIAPProfiles(interaction_map, chains, ligands, metals, ions):
             # and this non-boring ligand only has bonds with boring ligands
             continue
         if res in interaction_map[chain]:
-            for (chain_b, res_b) in interaction_map[chain][res]['combi']['all']:
-                score += interaction_map[chain][res]['combi']['all'][(chain_b, res_b)]
-                deg += 1
+            for chain_b in interaction_map[chain][res]['combi']['all']:
+                for res_b in interaction_map[chain][res]['combi']['all'][chain_b]:
+                    score += interaction_map[chain][res]['combi']['all'][chain_b][res_b]
+                    deg += 1
         ligand_profiles[(chain, res)] = [deg, score]
 
     for chain, res in metals:
@@ -952,9 +958,10 @@ def calculateIAPProfiles(interaction_map, chains, ligands, metals, ions):
         score = 0.0
         if chain in interaction_map:
             if res in interaction_map[chain]:
-                for (chain_b, res_b) in interaction_map[chain][res]['combi']['all']:
-                    score += interaction_map[chain][res]['combi']['all'][(chain_b, res_b)]
-                    deg += 1
+                for chain_b in interaction_map[chain][res]['combi']['all']:
+                    for res_b in interaction_map[chain][res]['combi']['all'][chain_b]:
+                        score += interaction_map[chain][res]['combi']['all'][chain_b][res_b]
+                        deg += 1
         metal_profiles[(chain, res)] = [deg, score]
 
     for chain, res in ions:
@@ -962,9 +969,10 @@ def calculateIAPProfiles(interaction_map, chains, ligands, metals, ions):
         score = 0.0
         if chain in interaction_map:
             if res in interaction_map[chain]:
-                for (chain_b, res_b) in interaction_map[chain][res]['combi']['all']:
-                    score += interaction_map[chain][res]['combi']['all'][(chain_b, res_b)]
-                    deg += 1
+                for chain_b in interaction_map[chain][res]['combi']['all']:
+                    for res_b in interaction_map[chain][res]['combi']['all'][chain_b]:
+                        score += interaction_map[chain][res]['combi']['all'][chain_b][res_b]
+                        deg += 1
         ion_profiles[(chain, res)] = [deg, score]
 
     for chain in chains:
@@ -976,22 +984,23 @@ def calculateIAPProfiles(interaction_map, chains, ligands, metals, ions):
                     continue
                 if (chain, res) in ions:
                     continue
-                for (chain_b, res_b) in interaction_map[chain][res]['combi']['all']:
+                for chain_b in interaction_map[chain][res]['combi']['all']:
                     if chain == chain_b:
                         continue
-                    if (chain_b, res_b) in ligands:
-                        continue
-                    if (chain_b, res_b) in metals:
-                        continue
-                    if (chain_b, res_b) in ions:
-                        continue
-                    if not (chain, chain_b) in chain_chain_profiles:
-                        chain_chain_profiles[(chain, chain_b)] = [0, 0.0]
+                    for res_b in interaction_map[chain][res]['combi']['all'][chain_b]:
+                        if (chain_b, res_b) in ligands:
+                            continue
+                        if (chain_b, res_b) in metals:
+                            continue
+                        if (chain_b, res_b) in ions:
+                            continue
+                        if not (chain, chain_b) in chain_chain_profiles:
+                            chain_chain_profiles[(chain, chain_b)] = [0, 0.0]
 
-                    score = interaction_map[chain][res]['combi']['all'][(chain_b, res_b)]
+                        score = interaction_map[chain][res]['combi']['all'][chain_b][res_b]
 
-                    chain_chain_profiles[(chain, chain_b)][0] += 1
-                    chain_chain_profiles[(chain, chain_b)][1] += score
+                        chain_chain_profiles[(chain, chain_b)][0] += 1
+                        chain_chain_profiles[(chain, chain_b)][1] += score
 
     return ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles
 

@@ -27,7 +27,8 @@ def check_instance(config, fromScratch = False):
             [e, f, g] = sys.exc_info()
             g = traceback.format_exc()
             print('\n'.join([str(e), str(f), str(g)]))
-            db.close()
+            if db is not None:
+                db.close()
             sys.exit()
 
         if config.mapping_db_source_path[-3:] == '.gz':
@@ -81,12 +82,12 @@ def retrieve_data_from_uniprot(config, raw_files_folder_path, uniprot_sub_folder
 
 def put_seqs_to_database(seq_map, config):
     values = []
-    for u_ac in seq_map:
-        values.append((u_ac, pack(seq_map[u_ac])))
+    for u_ac, seq in seq_map:
+        values.append((u_ac, pack(seq)))
 
     update(config, 'UNIPROT', ['Uniprot_Ac','Sequence'], values, mapping_db = True)
 
-def insert_sequence_data(config, seq_file_paths, mapping_file_path):
+def insert_sequence_data(config, seq_file_paths, skip_inserts = False):
     max_seqs_at_a_time = int(30000 * config.gigs_of_ram)
 
     for seq_file_number, seq_file in enumerate(seq_file_paths):
@@ -96,30 +97,36 @@ def insert_sequence_data(config, seq_file_paths, mapping_file_path):
         else:
             isoform_file = False
         with gzip.open(seq_file, 'rb') as f:
-            seq_map = {}
+            seq_map = []
+            current_seq = None
             for line in f:
                 line = line.decode('ascii')
                 if len(line) == 0:
                     continue
                 line = line[:-1]
                 if line[0] == '>':
-
+                    if current_seq is not None:
+                        seq_map.append((u_ac, current_seq))
                     if len(seq_map) == max_seqs_at_a_time:
-                        put_seqs_to_database(seq_map, config)
-                        seq_map = {}
+                        if not skip_inserts:
+                            put_seqs_to_database(seq_map, config)
+                        seq_map = []
 
                     u_ac = line.split('|')[1]
-                    seq_map[u_ac] = ''
+
+                    current_seq = ''
                     if isoform_file: #save all isoform numbers
                         stem, iso_number = u_ac.split('-')
                         if not stem in iso_map:
                             iso_map[stem] = set()
                         iso_map[stem].add(iso_number)
                 else:
-                    seq_map[u_ac] += (line)
+                    current_seq += (line)
+            seq_map.append((u_ac, current_seq))
             if len(seq_map) > 0:
-                put_seqs_to_database(seq_map, config)
-                seq_map = {}
+                if not skip_inserts:
+                    put_seqs_to_database(seq_map, config)
+                seq_map = []
             if isoform_file:
                 #Find all occasions of unusual major isoforms (major isoform number is not 1)
                 unusual_major_isoforms = {}
@@ -137,7 +144,7 @@ def insert_sequence_data(config, seq_file_paths, mapping_file_path):
                         unusual_major_isoforms[stem] = i+1
                     else:
                         unusual_major_isoforms[stem] = major_iso_number
-            print('\nDatabase update of sequences done.\n')
+            print(f'\nDatabase update of sequences done: {seq_file}\n')
 
     return unusual_major_isoforms
 
@@ -151,7 +158,7 @@ def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
         if config.container_version:
             raw_files_folder_path = '/structman/resources/'
         else:
-            raw_files_folder_path = config.base_path
+            raw_files_folder_path = config.tmp_folder
     else:
         raw_files_folder_path = config.tmp_folder
 
@@ -164,16 +171,21 @@ def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
         print(f'\nDownloading all raw data files done. The files are temporarily stored in: {raw_files_folder_path}\n')
 
     #Step 3: Update the database
+    #unusual_major_isoforms = insert_sequence_data(config, seq_file_paths, skip_inserts=True)
 
-    unusual_major_isoforms = insert_sequence_data(config, seq_file_paths, mapping_file_path)
+    unusual_major_isoforms = insert_sequence_data(config, seq_file_paths)
 
     ac_id_values = []
     ac_ref_values = []
     ac_ref_nt_values = []
+    ac_ensembl_ids = []
+    ensembl_acs = []
 
-    max_values_at_a_time = int(1000000 * config.gigs_of_ram)
+    max_values_at_a_time = int(100000 * config.gigs_of_ram)
 
     with gzip.open(mapping_file_path, 'rb') as f:
+        previous_u_ac = None
+        current_ensembl_ids = []
         for line in f:
             words = line.decode('ascii').split()
             if len(words) == 0:
@@ -211,6 +223,29 @@ def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
                     update(config, 'UNIPROT', ['Uniprot_Ac', 'RefSeq_NT'], ac_ref_nt_values, mapping_db = True)
                     ac_ref_nt_values = []
 
+
+            elif id_name == 'Ensembl_TRS' or id_name == 'Ensembl_PRO':
+                id_value = id_value.split('.')[0]
+                current_ensembl_ids.append(id_value)
+                ensembl_acs.append((id_value, u_ac))
+
+                if len(ensembl_acs) == max_values_at_a_time:
+                    update(config, 'EMBL', ['EMBL_ID', 'Uniprot_Ac'], ensembl_acs, mapping_db = True)
+                    ensembl_acs = []
+
+
+            if u_ac != previous_u_ac:
+                if len(current_ensembl_ids) > 0:
+                    ac_ensembl_ids.append((u_ac, pack(current_ensembl_ids)))
+
+                    current_ensembl_ids = []
+
+                if len(ac_ensembl_ids) >= (max_values_at_a_time/5):
+                    update(config, 'UNIPROT', ['Uniprot_Ac', 'Ensembl_Ids'], ac_ensembl_ids, mapping_db = True)
+                    ac_ensembl_ids = []
+
+            previous_u_ac = u_ac
+
     if not update_mapping_db_keep_raw_files:
         #Step 4: Remove the raw files
         os.remove(mapping_file_path)
@@ -234,3 +269,10 @@ def main(config, fromScratch = False, update_mapping_db_keep_raw_files = False):
     print('\nDatabase update of RefSeq NTs done.\n')
 
 
+    if len(ensembl_acs) > 0:
+        update(config, 'EMBL', ['EMBL_ID', 'Uniprot_Ac'], ensembl_acs, mapping_db = True)
+    print('\nDatabase update of Ensembl IDs done.\n')
+
+
+    if len(ac_ensembl_ids) > 0:
+        update(config, 'UNIPROT', ['Uniprot_Ac', 'Ensembl_Ids'], ac_ensembl_ids, mapping_db = True)

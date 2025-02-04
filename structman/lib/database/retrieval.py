@@ -21,7 +21,7 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
         t1 = time.time()
         print("Time for getstoredresidues 1: %s" % str(t1 - t0))
 
-    max_number_of_structures = 10000
+    max_number_of_structures = 100000
 
     if len(stored_ids) > 0:
         if len(stored_ids) >= max_number_of_structures:
@@ -68,7 +68,10 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
 
             for row in results:
                 try:
-                    res_id = row[2]
+                    try:
+                        res_id = int(row[2])
+                    except:
+                        res_id = row[2]
                     if not retrieve_only_db_ids:
                         (one_letter, lig_dist_str, chain_dist_str, rsa, relative_main_chain_acc, relative_side_chain_acc,
                                ssa, homo_str, profile_str,
@@ -105,31 +108,41 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                     if config.verbosity >= 6:
                         print(f'Calling proteins.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
                 else:
-                    if res_id not in proteins.structures[(pdb_id, chain)].residues:
+                    if not proteins.structures[pdb_id][chain].residues.contains(res_id):
                         residue = residue_package.Residue(res_id, database_id=row[1], stored=True)
                         proteins.add_residue(pdb_id, chain, res_id, residue)
                     else:
-                        proteins.structures[(pdb_id, chain)].residues[res_id].database_id =  row[1]
-                        proteins.structures[(pdb_id, chain)].residues[res_id].stored = True
+                        proteins.structures[pdb_id][chain].residues.get_item(res_id).database_id =  row[1]
+                        proteins.structures[pdb_id][chain].residues.get_item(res_id).stored = True
 
                 stored_res_db_ids[row[1]] = pdb_id, chain, res_id
 
-            rows = ['Residue', 'Interacting_Residue']
-            table = 'RS_Residue_Interface'
-            results = binningSelect(stored_res_db_ids, rows, table, config)
+            if not retrieve_only_db_ids:
 
+                rows = ['Residue', 'Interacting_Residue']
+                table = 'RS_Residue_Interface'
+                results = binningSelect(stored_res_db_ids, rows, table, config)
 
-            for row in results:
-                residue_db_id = row[0]
-                pdb_id, chain, res = stored_res_db_ids[residue_db_id]
-                interacting_chain, i_res, score = row[1].split(',')
+                if config.verbosity >= 4:
+                    print(f'Get Interfaces: {len(stored_res_db_ids)} {len(results)}')
 
-                if not (chain, interacting_chain) in proteins.complexes[pdb_id].interfaces:
-                    proteins.complexes[pdb_id].interfaces[(chain, interacting_chain)] = interface_package.Interface(chain, interacting_chain, stored = True)
-                if i_res != '':
-                    proteins.complexes[pdb_id].interfaces[(chain, interacting_chain)].add_interaction(res, i_res, float(score))
-                else:
-                    proteins.complexes[pdb_id].interfaces[(chain, interacting_chain)].add_support(res)
+                for row in results:
+                    residue_db_id = row[0]
+                    pdb_id, chain, res = stored_res_db_ids[residue_db_id]
+                    interacting_residue_strs = unpack(row[1])
+                    for interacting_residue_str in interacting_residue_strs.split(';'):
+                        interacting_chain, i_res, score = interacting_residue_str.split(',')
+
+                        if not chain in proteins.complexes[pdb_id].interfaces:
+                            proteins.complexes[pdb_id].interfaces[chain] = {}
+                            proteins.complexes[pdb_id].interfaces[chain][interacting_chain] = interface_package.Interface(chain, interacting_chain, stored = True)
+                        elif interacting_chain not in proteins.complexes[pdb_id].interfaces[chain]:
+                            proteins.complexes[pdb_id].interfaces[chain][interacting_chain] = interface_package.Interface(chain, interacting_chain, stored = True)
+
+                        if i_res != '':
+                            proteins.complexes[pdb_id].interfaces[chain][interacting_chain].add_interaction(res, i_res, float(score))
+                        else:
+                            proteins.complexes[pdb_id].interfaces[chain][interacting_chain].add_support(res)
 
     if config.verbosity >= 2:
         t2 = time.time()

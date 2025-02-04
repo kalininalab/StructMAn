@@ -170,7 +170,7 @@ CREATE TABLE `RS_Position_Interface` (
 CREATE TABLE `RS_Residue_Interface` (
   `Residue` integer  NOT NULL REFERENCES `Residue` (`Residue_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Structure` integer  NOT NULL REFERENCES `Structure` (`Structure_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Interacting_Residue` varchar(32) DEFAULT NULL
+  `Interacting_Residue` BLOB(65535) DEFAULT NULL
 );
 
 CREATE TABLE `RS_Indel_Session` (

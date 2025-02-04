@@ -50,7 +50,7 @@ else
 fi
 
 #Check if conda environment already exits, create it if not
-env_list_result=$(conda env list | grep "$env_name")
+env_list_result=$(conda env list | grep -w "$env_name")
 if [ -z "$env_list_result" ]
 then
     echo "Conda environment with name $env_name not in current environment list, setting up new environment ..."
@@ -91,6 +91,8 @@ else
     echo "Mamba already installed: $mamba_version_test_output" >&$verbose_stdout
 fi
 
+mamba update pip -y -c conda-forge >&$verbose_stdout
+
 #install dependencies
 {
     echo "Installing package charset-normalizer ..."
@@ -114,11 +116,21 @@ fi
     mamba install -y -c conda-forge pymol-open-source
     echo "Installing package gawk ..."    
     mamba install -y gawk
+    echo "Installing package sqlite ..."
+    mamba install -y sqlite==3.45.3 -c conda-forge
 } >&$verbose_stdout
 
-pushd "$SCRIPTPATH/structman/scripts/"
-wget https://raw.github.com/Pymol-Scripts/Pymol-script-repo/master/spectrumany.py
-popd
+
+spectrumany_target_path=$"$SCRIPTPATH/structman/scripts/spectrumany.py"
+if [ ! -f "$spectrumany_target_path" ]
+then
+    {
+        pushd "$SCRIPTPATH/structman/scripts/"
+        wget https://raw.github.com/Pymol-Scripts/Pymol-script-repo/master/spectrumany.py
+        popd
+    }
+fi
+
 
 #install the main package
 echo "Installing StructMAn source code using pip ..."
@@ -126,7 +138,7 @@ pip install "$SCRIPTPATH" >&$verbose_stdout
 
 #install mmseqs2
 echo "Installing MMseqs2 ..."
-mamba install -y -c bioconda -c conda-forge mmseqs2 >&$verbose_stdout
+mamba install -y -c bioconda -c conda-forge mmseqs2==15.6f452 >&$verbose_stdout
 
 #install wkhtmltopdf
 mamba install -y -c conda-forge wkhtmltopdf >&$verbose_stdout

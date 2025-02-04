@@ -175,8 +175,8 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
 
     if verbosity >= 3:
         print(f'MMseqs2 results parsed: size of hit map: {len(hits)}')
-    if verbosity >= 4 and len(hits) < 50:
-        print(hits)
+    #if verbosity >= 4 and len(hits) < 50:
+    #    print(hits)
 
     os.remove(temp_outfile)
 
@@ -191,7 +191,7 @@ def wipe_folder(config, folder_path):
                 try:
                     shutil.rmtree(subfolder_path)
                 except:
-                    if config.verbosity >= 4:
+                    if config.verbosity >= 6:
                         config.errorlog.add_warning('Tmp folder wipe failed for: %s' % subfolder_path)
 
 

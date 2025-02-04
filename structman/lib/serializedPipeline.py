@@ -211,7 +211,7 @@ def sequenceScan(config, proteins, indels, genes = None):
                 if proteins[prot_id].input_id in indels:  # Indel proteins need complete classification
                     uni_pos = True
                 sequenceScanNP[proteins[prot_id].input_id] = tags, uni_pos, proteins[prot_id].u_ac
-            elif proteins[prot_id].input_id[:3] == 'ENS':
+            elif proteins[prot_id].input_id[:3] == 'ENS' and (proteins[prot_id].input_id == proteins[prot_id].primary_protein_id):
                 sequenceScanEnsembl[proteins[prot_id].input_id] = tags, uni_pos
             else:
                 if prot_id in indels:  # Indel proteins need complete classification
@@ -332,7 +332,10 @@ def sequenceScan(config, proteins, indels, genes = None):
                 try:
                     proteins.remove_protein(transcript_id)
                 except:
-                    del proteins[transcript_id]
+                    try:
+                        del proteins[transcript_id]
+                    except:
+                        pass
                 if config.verbosity >= 3:
                     print(f'Removed {transcript_id} from Input')
                 removed_proteins.append(transcript_id)
@@ -906,6 +909,9 @@ def buildQueue(config, filename, already_split=False):
 
     proteins, indel_map, genes = uniprot.IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map)
 
+    if config.verbosity >= 3:
+        print(f'Size of proteins after IdMapping: {len(proteins)}')
+
     genes = gene_isoform_check(proteins, genes, indel_map, config)
 
     t2 = time.time()
@@ -1362,9 +1368,13 @@ def autoTemplateSelection(config, proteins):
                     if config.verbosity >= 6:
                         print(f'Adding structural annotation: {u_ac} -> {pdb_id}:{chain}')
 
-                    if not (pdb_id, chain) in proteins.structures:
+                    if not pdb_id in proteins.structures:
                         struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[u_ac], seq_len = raw_structure_map[u_ac][(pdb_id, chain)][4])
                         proteins.add_structure(pdb_id, chain, struct)
+                        
+                    elif chain not in proteins.structures[pdb_id]:
+                        struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[u_ac], seq_len = raw_structure_map[u_ac][(pdb_id, chain)][4])
+                        proteins.add_structure(pdb_id, chain, struct) 
                     else:
                         proteins.add_mapping_to_structure(pdb_id, chain, u_ac)
 
@@ -1411,7 +1421,7 @@ def package_alignment_processes(prots_todo, cost_map, optimal_chunk_cost, protei
             split_cost = 0
             for structure_info in structure_infos:
                 pdb_id, chain, oligo = structure_info
-                str_len = proteins.structures[(pdb_id, chain)].get_seq_len()
+                str_len = proteins.structures[pdb_id][chain].get_seq_len()
                 if str_len is not None:
                     cost = len(seq)*str_len
                 else:
@@ -1757,7 +1767,7 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
                 continue
             if prot_id not in cost_map:
                 cost_map[prot_id] = 0
-            str_len = proteins.structures[(pdb_id, chain)].get_seq_len()
+            str_len = proteins.structures[pdb_id][chain].get_seq_len()
             if str_len is not None:
                 cost_map[prot_id] += len(seq)*str_len
             else:
@@ -1947,6 +1957,9 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
     complexes_to_remove = sus_complexes - safe_complexes
     if config.verbosity >= 5:
         print('Len of sus_complexes:', len(sus_complexes), 'Len of safe complexes:', len(safe_complexes), 'Len of complexes_to_remove:', len(complexes_to_remove))
+        print('Remove complexes:', complexes_to_remove)
+    elif config.verbosity >= 4:
+        print('Len of sus_complexes:', len(sus_complexes), 'Len of safe complexes:', len(safe_complexes), 'Len of complexes_to_remove:', len(complexes_to_remove))
         if len(complexes_to_remove) < 50:
             print('Remove complexes:', complexes_to_remove)
     proteins.remove_complexes(complexes_to_remove)
@@ -2027,7 +2040,7 @@ def align(config, package, static_model_path=None, remote=False):
                 (u_ac, seq, aaclist) = prot_specific_mapping_dump
 
             if config.verbosity >= 5:
-                print(f'Alignment of {u_ac} to {structure_infos}')
+                print(f'Alignment of {u_ac} to {len(structure_infos)} number of Structures')
 
             for pdb_id, chain, oligo in structure_infos:
 

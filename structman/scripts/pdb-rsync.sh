@@ -2,7 +2,7 @@
 trap "exit" INT
 
 BASE_DIR="/scratch/SCRATCH_NVME/pdb"
-SERVER=rsync.wwpdb.org::ftp
+SERVER=132.249.213.147::ftp #Domain name: rsync.wwpdb.org 
 PORT=33444
 
 if [[ ! -d "${BASE_DIR}" ]]

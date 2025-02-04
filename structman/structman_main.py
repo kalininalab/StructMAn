@@ -103,7 +103,7 @@ class Config:
         self.proc_n = 48
 
         # active options
-        self.n_of_chain_thresh = cfg.getint('n_of_chain_thresh', fallback=8)  # Structures with n_of_chain_thresh or more chains get a nested paralellization
+        self.n_of_chain_thresh = cfg.getint('n_of_chain_thresh', fallback=15)  # Structures with n_of_chain_thresh or more chains get a nested paralellization
         self.option_seq_thresh = cfg.getfloat('seq_thresh', fallback=35.0)
         if self.option_seq_thresh <= 1.0:
             self.option_seq_thresh *= 100.0
@@ -599,6 +599,10 @@ def structman_cli():
                 update_mapping_db_from_scratch = True
             if 'mapping_db_keep_raw_files' in argv:
                 update_mapping_db = True
+                update_mapping_db_keep_raw_files = True
+            if 'mapping_db_from_scratch_keep_raw' in argv:
+                update_mapping_db = True
+                update_mapping_db_from_scratch = True
                 update_mapping_db_keep_raw_files = True
             if 'alphafold_db' in argv:
                 update_alphafold_db = True

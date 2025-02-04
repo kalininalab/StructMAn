@@ -62,8 +62,9 @@ class Complex:
         del self.ion_profile
         del self.metal_profile
         del self.lig_profile
-        for inter in self.interfaces:
-            self.interfaces[inter].deconstruct()
+        for chain in self.interfaces:
+            for chain2 in self.interfaces[chain]:
+                self.interfaces[chain][chain2].deconstruct()
         del self.interfaces
         del self.chains
         doomsday_protocol(self)
@@ -249,9 +250,10 @@ class Complex:
         self.atom_count = atom_count
 
     def print_interfaces(self):
-        for (chain_1, chain_2) in self.interfaces:
-            print(chain_1, chain_2, self.interfaces[(chain_1, chain_2)].interactions)
-            print(self.interfaces[(chain_1, chain_2)].residues)
+        for chain_1 in self.interfaces:
+            for chain_2 in self.interfaces[chain_1]:
+                print(chain_1, chain_2, self.interfaces[chain_1][chain_2].interactions)
+                print(self.interfaces[chain_1][chain_2].residues)
 
     def getPage(self, config, self_update=False):
         if self_update:

@@ -40,7 +40,7 @@ def main(
 
     pdb_path = config.pdb_path
     pdb_update_script = config.pdb_sync_script
-    print(pdb_update_script)
+    print(f'================================\nStructMAn Update Script:\n Update PDB: {not skipUpdatePDB}\n Update RIN DB: {not skipUpdatePDB}\n Update AF DB: {update_alphafold_db}\n Update Mapping DB: {update_mapping_db}\n Check Search DB: {check_search_db}\n================================')
 
     rinerator_base_path = config.rinerator_base_path
     rin_db_path = config.rin_db_path

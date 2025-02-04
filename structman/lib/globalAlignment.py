@@ -3,6 +3,7 @@ import time
 from Bio import Align
 
 from structman.lib.sdsc.consts import residues as residue_consts
+from structman.lib.sdsc.residue import Residue_Map
 
 
 def toOne(res_name, only_natural=False):
@@ -101,7 +102,10 @@ def createTemplateFasta(template_page, template_name, chain, config, onlySeqResM
                         seq = seq + aa
                         # else:
                         #    seq += '-%s' % aa
-                        seq_res_map.append(res_nr)
+                        try:
+                            seq_res_map.append(int(res_nr))
+                        except:
+                            seq_res_map.append(res_nr)
                         used_res.add(res_nr)
                         last_residue = res_nr
                         if first_residue is None:
@@ -114,7 +118,10 @@ def createTemplateFasta(template_page, template_name, chain, config, onlySeqResM
                         if aa not in residue_consts.ONE_TO_THREE:
                             aa = 'X'
                         seq = seq + aa
-                        seq_res_map.append(res_nr)
+                        try:
+                            seq_res_map.append(int(res_nr))
+                        except:
+                            seq_res_map.append(res_nr)
                         used_res.add(res_nr)
                         last_residue = res_nr
                         if first_residue is None:
@@ -170,11 +177,10 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
     target_aligned_sequence = target_aligned_sequence.replace("\n", "")
     template_aligned_sequence = template_aligned_sequence.replace("\n", "")
 
-    sub_infos = {}
-    backmap = {}
+    backmap = Residue_Map()
 
     errors = []
-    align_map = {}
+    align_map = [None]
     n = 0
     tar_n = 0
     tem_n = 0
@@ -187,22 +193,22 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
         if char != '-':
             tar_n += 1
             if tem_char == '-':
-                align_map[tar_n] = ((None, '-', None), char)
+                align_map.append(((None, '-', None), char))
             else:
                 if tem_n - 1 >= len(seq_res_map):
                     return ("Seq_res_map too short: %s, %s, %s" % (u_ac, tem_n, len(seq_res_map)))
-                align_map[tar_n] = ((seq_res_map[tem_n - 1], tem_char, tem_n), char)
-                backmap[seq_res_map[tem_n - 1]] = tar_n
-        else:
-            backmap[seq_res_map[tem_n - 1]] = None
+                align_map.append(((seq_res_map[tem_n - 1], tem_char, tem_n), char))
+                backmap.add_item(seq_res_map[tem_n - 1], tar_n)
+
 
     error_count = 0
     error_example = None
+    sub_infos = [None] * len(align_map)
 
     for aac_base in aaclist:
         target_pos = int(aac_base[1:])
         target_aa = aac_base[0]
-        if target_pos not in align_map:
+        if target_pos >= len(align_map):
             error = 'Mutation not inside target sequence: %s %s' % (u_ac, aac_base)
             config.errorlog.add_warning(error, lock=lock)
             continue

@@ -1,9 +1,10 @@
 from structman.lib import globalAlignment, pdbParser
 from structman.lib.sdsc.sdsc_utils import process_alignment_data, doomsday_protocol
+from structman.lib.sdsc.residue import Residue_Map
 
 
 class Structure:
-    __slots__ = ['pdb_id', 'chain', 'oligo', 'database_id', 'stored', 'mapped_proteins', 'residues', 'last_residue', 'first_residue', 'sequence', 'seq_len', 'new_interacting_chain', 'interacting_structure']
+    __slots__ = ['pdb_id', 'chain', 'oligo', 'database_id', 'stored', 'mapped_proteins', 'residues', 'last_residue', 'first_residue', 'sequence', 'seq_len', 'new_interacting_chain', 'interacting_structure', 'backmaps']
 
     def __init__(self, pdb_id, chain, oligo=set(), mapped_proteins = None, database_id=None, last_residue=None, first_residue=None, sequence=None, seq_len = None, new_interacting_chain = False):
         self.pdb_id = pdb_id
@@ -18,20 +19,21 @@ class Structure:
             self.mapped_proteins = []
         else:
             self.mapped_proteins = mapped_proteins[:]
-        self.residues = {}
+        self.residues = Residue_Map()
         self.last_residue = last_residue
         self.first_residue = first_residue
         self.sequence = sequence
         self.seq_len = seq_len
         self.new_interacting_chain = new_interacting_chain
         self.interacting_structure = False
+        self.backmaps = {}
 
     def deconstruct(self):
         del self.mapped_proteins
-        for res in self.residues:
-            self.residues[res].deconstruct()
+        
         del self.residues
         del self.sequence
+        del self.backmaps
         doomsday_protocol(self)
 
     def parse_page(self, page, config):
@@ -49,18 +51,6 @@ class Structure:
 
     def get_mapped_proteins(self):
         return self.mapped_proteins
-
-    def get_mapped_positions(self, res_nr, proteins):
-
-        #if len(self.mapped_proteins) > 0:
-        #    print(f'Call of get_mapped_positions for {self.pdb_id} {self.chain} {res_nr}\nMapped proteins: {self.mapped_proteins}')
-
-        mapped_positions = {}
-        for protein_id in self.mapped_proteins:
-            backmap = proteins.get_backmap(protein_id, self.pdb_id, self.chain)
-            if res_nr in backmap:
-                mapped_positions[protein_id] = backmap[res_nr]
-        return mapped_positions
 
     def set_database_id(self, value):
         self.database_id = value
@@ -87,80 +77,72 @@ class Structure:
         return self.stored
 
     def add_residue(self, res_nr, residue_obj):
-        self.residues[res_nr] = residue_obj
+        self.residues.add_item(res_nr, residue_obj)
 
-    def get_residue_list(self):
-        return self.residues.keys()
-
-    def get_last_residue(self):
-        return self.last_residue
-
-    def get_first_residue(self):
-        return self.first_residue
 
     def set_residue_db_id(self, res_nr, value):
-        self.residues[res_nr].set_database_id(value)
+        self.residues.get_item(res_nr).set_database_id(value)
 
     def contains_residue(self, res_nr):
-        return res_nr in self.residues
+        return self.residues.contains(res_nr)
 
     def get_residue_db_id(self, res_nr):
-        return self.residues[res_nr].get_database_id()
+        return self.residues.get_item(res_nr).get_database_id()
 
     def get_residue_aa(self, res_nr):
         try:
-            return self.residues[res_nr].get_aa()
+            return self.residues.get_item(res_nr).get_aa()
         except:
             #print(f'Length of self.residues in get_residue_aa({res_nr}): {len(self.residues)}')
             return None
 
     def get_residue_sld(self, res_nr):
-        return self.residues[res_nr].get_ligand_distances()
+        return self.residues.get_item(res_nr).get_ligand_distances()
 
     def get_residue_scd(self, res_nr):
-        return self.residues[res_nr].get_chain_distances()
+        return self.residues.get_item(res_nr).get_chain_distances()
 
     def get_residue_homomer_dists(self, res_nr):
-        return self.residues[res_nr].get_homomer_dists()
+        return self.residues.get_item(res_nr).get_homomer_dists()
 
     def get_residue_centralities(self, res_nr, get_whats_there=False):
-        return self.residues[res_nr].get_centralities(get_whats_there=get_whats_there)
+        return self.residues.get_item(res_nr).get_centralities(get_whats_there=get_whats_there)
 
     def get_residue_modres(self, res_nr):
-        return self.residues[res_nr].get_modres()
+        return self.residues.get_item(res_nr).get_modres()
 
     def get_residue_b_factor(self, res_nr):
-        return self.residues[res_nr].get_b_factor()
+        return self.residues.get_item(res_nr).get_b_factor()
 
     def get_residue_rsa(self, res_nr):
-        return self.residues[res_nr].get_rsa()
+        return self.residues.get_item(res_nr).get_rsa()
 
     def get_residue_rsa_triple(self, res_nr):
-        return self.residues[res_nr].get_rsa(splitted=True)
+        return self.residues.get_item(res_nr).get_rsa(splitted=True)
 
     def get_residue_ssa(self, res_nr):
-        return self.residues[res_nr].get_ssa()
+        return self.residues.get_item(res_nr).get_ssa()
 
     def get_residue_phi(self, res_nr):
-        return self.residues[res_nr].get_phi()
+        return self.residues.get_item(res_nr).get_phi()
 
     def get_residue_psi(self, res_nr):
-        return self.residues[res_nr].get_psi()
+        return self.residues.get_item(res_nr).get_psi()
 
     def get_residue_link_information(self, res_nr):
-        return self.residues[res_nr].get_residue_link_information()
+        return self.residues.get_item(res_nr).get_residue_link_information()
 
     def get_residue_interaction_profile(self, res_nr, get_whats_there=False):
-        return self.residues[res_nr].get_interaction_profile(get_whats_there=get_whats_there)
+        return self.residues.get_item(res_nr).get_interaction_profile(get_whats_there=get_whats_there)
 
     def get_residue_interaction_profile_str(self, res_nr):
-        return self.residues[res_nr].get_interaction_profile_str()
+        return self.residues.get_item(res_nr).get_interaction_profile_str()
 
     def get_residue_milieu(self, res_nr):
-        return self.residues[res_nr].get_milieu()
+        return self.residues.get_item(res_nr).get_milieu()
 
     def add_residue_classification(self, res_nr, Class, simpleClass):
-        self.residues[res_nr].set_classification(Class, simpleClass)
+        self.residues.get_item(res_nr).set_classification(Class, simpleClass)
 
     def getSequence(self, config, complex_obj=None, for_modeller=False):
         if self.sequence is not None and not for_modeller:
@@ -194,7 +176,7 @@ class StructureAnnotation:
         self.alignment = alignment
         self.coverage = None
         self.sequence_identity = None
-        self.sub_infos = {}  # {pos:(res_nr,res_aa,structure_sequence_number)}
+        self.sub_infos = []  # {pos:(res_nr,res_aa,structure_sequence_number)}
         self.stored = stored
         self.database_id = None
         self.backmap = backmap
@@ -257,7 +239,7 @@ class StructureAnnotation:
         return self.backmap
 
     def is_covered(self, pos):
-        if pos not in self.sub_infos:
+        if self.sub_infos[pos] is None:
             return False
         if self.sub_infos[pos][0] is None:
             return False
@@ -267,7 +249,7 @@ class StructureAnnotation:
         return ((self.sub_infos[right_pos][2] - self.sub_infos[left_pos][2]) == 1)
 
     def is_terminal(self, pos):
-        if pos not in self.sub_infos:
+        if self.sub_infos[pos] is None:
             return False
         structure_sequence_number = self.sub_infos[pos][2]
         if structure_sequence_number == 1:

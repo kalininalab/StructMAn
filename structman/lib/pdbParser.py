@@ -310,7 +310,10 @@ def getSequencePlain(pdb_id, chain, pdb_path, verbosity=0):
         buf.close()
     else:
         seq, res_pos_map = parsePDBSequence(buf, chain)
-        buf.close()
+        try:
+            buf.close()
+        except:
+            buf = None
     return seq, res_pos_map
 
 

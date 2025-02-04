@@ -31,7 +31,7 @@ def create_ppi_network(session, config, outfile):
             sub_infos = proteins.get_sub_infos(u_ac, pdb_id, chain)
             n_sub_infos += len(sub_infos)
             for pos in positions:
-                if pos not in sub_infos:
+                if sub_infos[pos] is None:
                     continue
                 sub_info = sub_infos[pos]
                 res_nr = sub_info[0]

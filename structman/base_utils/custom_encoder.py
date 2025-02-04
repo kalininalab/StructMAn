@@ -164,6 +164,12 @@ def custom_encoder(obj):
     if isinstance(obj, set):
         return {'__set__': True, 'as_list': list(obj)}
 
+    if 'Residue_Map' in str(type(obj)): #isinstance just won't work, don't know why
+        serialized_object = []
+        for attribute_name in obj.__slots__:
+            serialized_object.append(obj.__getattribute__(attribute_name))
+        return {'__Residue_Map__': True, 'as_list': serialized_object}
+
     if 'Residue' in str(type(obj)): #isinstance just won't work, don't know why
         serialized_residue = []
         for attribute_name in obj.__slots__:
@@ -304,12 +310,23 @@ def custom_encoder(obj):
             serialized_object.append(obj.__getattribute__(attribute_name))
         return {'__Feature__': True, 'as_list': serialized_object}
 
+
+
+
     return obj
 
 def custom_decoder(obj):
 
     if '__set__' in obj:
         return set(obj['as_list'])
+
+
+    if '__Residue_Map__' in obj:
+        serialized_object = obj['as_list']
+        rebuild_obj = sdsc.residue.Residue_Map()
+        for i, attribute_name in enumerate(rebuild_obj.__slots__):
+            rebuild_obj.__setattr__(attribute_name, serialized_object[i])
+        return rebuild_obj    
 
     if '__residue__' in obj:
         serialized_residue = obj['as_list']
@@ -467,5 +484,6 @@ def custom_decoder(obj):
             rebuild_obj.__setattr__(attribute_name, serialized_object[i])
 
         return rebuild_obj
+
 
     return obj

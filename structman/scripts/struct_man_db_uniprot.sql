@@ -33,17 +33,20 @@ CREATE TABLE `UNIPROT` (
   `Uniprot_Id` varchar(32) COLLATE utf8_unicode_ci DEFAULT NULL,
   `RefSeq` varchar(16) COLLATE utf8_unicode_ci DEFAULT NULL,
   `RefSeq_NT` varchar(16) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `Ensembl_Ids` BLOB DEFAULT NULL,
   `Sequence` BLOB(65535) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 --
--- Tabellenstruktur für Tabelle `EMBL_Transcripts`
+-- Tabellenstruktur für Tabelle `EMBL
 --
 
-CREATE TABLE `EMBL_Transcripts` (
-  `Transcript_ID` varchar(32) COLLATE utf8_unicode_ci NOT NULL,
-  `Gene_ID` varchar(32) COLLATE utf8_unicode_ci NOT NULL,  
-  `Sequence` blob
+CREATE TABLE `EMBL` (
+  `EMBL_ID` varchar(32) COLLATE utf8_unicode_ci NOT NULL,
+  `Gene_ID` varchar(32) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `Name` varchar(32) COLLATE utf8_unicode_ci DEFAULT NULL,  
+  `Uniprot_Ac` varchar(16) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `Sequence` BLOB(65535) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 -- --------------------------------------------------------
@@ -64,8 +67,8 @@ ALTER TABLE `UNIPROT`
 --
 -- Indizes für die Tabelle `EMBL_Transcripts`
 --
-ALTER TABLE `EMBL_Transcripts`
-  ADD PRIMARY KEY (`Transcript_ID`);
+ALTER TABLE `EMBL`
+  ADD PRIMARY KEY (`EMBL_ID`);
 
 
 COMMIT;

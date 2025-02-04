@@ -1,3 +1,14 @@
+Version 1.6.0
+    - Many fixes and improvements regarding the Gene report feature, documentation on how to use coming soon.
+    - Many fixes regarding the installer
+    - Added dedicated modes for usage in the webserver: read-only and read-hybrid
+    - Redesign of process management in the results aggregation step
+        - Changed datastructures to be more memory efficient
+        - Changed the database structure to store the information of residues interaction with multiple other residues in other chains
+            This leds to the change of 1.5.x to 1.6.x
+    - Redesign of the mapping database, now supporting mapping ensembl identifiers to uniprot acs in both directions
+        This would also require a jump from 1.5.x to 1.6.x
+
 Version 1.5.1
     - Improved the Gene report feature
     - Improved the installer

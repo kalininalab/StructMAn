@@ -39,7 +39,7 @@ def create_annotation_table(session, config, outfile):
             coverage = proteins[prot_id].structure_annotations[(pdb_id, chain)].coverage
 
             for pos in positions:
-                if pos not in sub_infos:
+                if sub_infos[pos] is None:
                     continue
                 sub_info = sub_infos[pos]
                 res_nr = sub_info[0]
@@ -60,11 +60,11 @@ def create_annotation_table(session, config, outfile):
                 fat_output.add_value('Coverage', coverage)
                 fat_output.add_value('Resolution', resolution)
 
-                rin_class, rin_simple_class = proteins.structures[(pdb_id, chain)].residues[res_nr].get_classification(config)
+                rin_class, rin_simple_class = proteins.structures[pdb_id][chain].residues[res_nr].get_classification(config)
 
                 fat_output.add_value('Residue RIN simple classification', rin_simple_class)
 
-                interacting_chains, interacting_ligands = proteins.structures[(pdb_id, chain)].residues[res_nr].get_interaction_partners()
+                interacting_chains, interacting_ligands = proteins.structures[pdb_id][chain].residues[res_nr].get_interaction_partners()
 
                 fat_output.add_value('Chain type interaction partners', ','.join(interacting_chains))
                 fat_output.add_value('Small molecules type interaction partners', ','.join(interacting_ligands))

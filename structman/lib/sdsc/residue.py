@@ -3,6 +3,71 @@ from structman.lib.rin import Interaction_profile, Centrality_scores
 from structman.lib.sdsc.consts.residues import METAL_ATOMS, ION_ATOMS
 from structman.lib.sdsc.sdsc_utils import rin_classify, doomsday_protocol
 
+class Residue_Map(object):
+    __slots__ = ['value_list', 'value_dict']
+
+    def __init__(self):
+        self.value_list = [None]
+        self.value_dict = {}
+
+    def add_item(self, key, value):
+        if type(key) == int:
+            if key > 0:
+                self.add_intkey_item(key, value)
+            else:
+                self.add_strkey_item(str(key), value)
+        else:
+            try:
+                int_key = int(key)
+                if int_key > 0:
+                    self.add_intkey_item(int_key, value)
+                else:
+                    self.add_strkey_item(key, value)
+            except:
+                self.add_strkey_item(key, value)
+
+    def add_intkey_item(self, intkey, value):
+        try:
+            self.value_list[intkey] = value
+        except:
+            if intkey == len(self.value_list):
+                self.value_list.append(value)
+            else:
+                d = intkey - len(self.value_list)
+                for _ in range(d):
+                    self.value_list.append(None)
+                self.value_list.append(value)
+
+    def add_strkey_item(self, strkey, value):
+        self.value_dict[strkey] = value
+
+    def get_item(self, key):
+        if type(key) == int:
+            try:
+                if key > 0:
+                    return self.value_list[key]
+                else:
+                    return self.value_dict[str(key)]
+            except:
+                return None
+        try:
+            intkey = int(key)
+            value = self.value_list[intkey]
+            return value
+        except:
+            try:
+                return self.value_dict[key]
+            except:
+                return None
+
+    def get_keys(self):
+        return list(range(1, len(self.value_list))) + list(self.value_dict.keys())
+
+    def contains(self, key):
+        return self.get_item(key) is not None
+
+    def __len__(self):
+        return len(self.value_list) + len(self.value_dict)
 
 class Residue(object):
     __slots__ = ['res_num', 'aa', 'lig_dist_str', 'lig_dists', 'chain_dist_str', 'chain_distances', 'RSA',

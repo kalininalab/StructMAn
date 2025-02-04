@@ -61,7 +61,8 @@ def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
     for row in results:
         prot_id = row[0]
         gene_db_id = row[7]
-        gene_db_ids.add(gene_db_id)
+        if gene_db_id is not None:
+            gene_db_ids.add(gene_db_id)
         if prot_id in prot_input_dict:
             if not includeSequence:
                 protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], prot_input_dict[prot_id], gene_db_id)
@@ -157,7 +158,10 @@ def protCheck(proteins, genes, session_id, config):
                 mut_type = proteins[prot_id].mutant_type
                 gene_id = proteins[prot_id].gene
                 if gene_id is not None:
-                    gene_db_id = genes[gene_id].database_id
+                    if gene_id in genes:
+                        gene_db_id = genes[gene_id].database_id
+                    else:
+                        gene_db_id = None
                 else:
                     gene_db_id = None
                 if mut_type is None:
@@ -978,7 +982,7 @@ def structureCheck(proteins, config):
         results = select(config, rows, table)
     elif len(proteins.structures) > 0:
         structure_ids = []
-        for structure_id, chain in proteins.structures:
+        for structure_id in proteins.structures:
             structure_ids.append(structure_id)
         results = select(config, rows, table, in_rows={'PDB': structure_ids})
     else:
@@ -1343,7 +1347,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
         print("Time for part 9 in getAlignments: %s" % (str(t9 - t8)))
 
     pdb_ids = set()
-    for (pdb_id, chain) in structure_map:
+    for pdb_id in structure_map:
         pdb_ids.add(pdb_id)
 
     complex_map = getComplexMap(config, pdb_ids=pdb_ids)
@@ -1365,7 +1369,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
             #print('Add annotation', prot_id, pdb_id, chain)
 
             if not proteins.contains_structure(pdb_id, chain):
-                oligo = structure_map[(pdb_id, chain)][1]
+                oligo = structure_map[pdb_id][ chain][1]
                 struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[prot_id], database_id=structure_id)
                 if structure_id in interacting_structures:
                     struct.interacting_structure = True
@@ -1403,7 +1407,9 @@ def getStructure_map(structure_ids, config):
             pdb_id = row[1]
             chain = row[2]
             oligo = row[3]
-            structure_map[(pdb_id, chain)] = (s_id, oligo)
+            if pdb_id not in structure_map:
+                structure_map[pdb_id] = {}
+            structure_map[pdb_id][chain] = (s_id, oligo)
             id_structure_map[s_id] = (pdb_id, chain)
     return structure_map, id_structure_map
 

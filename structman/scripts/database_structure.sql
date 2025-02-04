@@ -313,7 +313,7 @@ CREATE TABLE `RS_Position_Interface` (
 CREATE TABLE `RS_Residue_Interface` (
   `Residue` int(11) UNSIGNED NOT NULL,
   `Structure` int(11) UNSIGNED NOT NULL,
-  `Interacting_Residue` varchar(32) DEFAULT NULL
+  `Interacting_Residue` BLOB(65535) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- --------------------------------------------------------

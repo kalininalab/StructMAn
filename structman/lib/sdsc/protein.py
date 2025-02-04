@@ -9,8 +9,8 @@ from structman.lib.sdsc.position import Position
 class Protein:
     __slots__ = ['primary_protein_id', 'u_ac', 'u_id', 'ref_id', 'ref_nt_id', 'other_ids', 'pdb_id', 'positions', 'res_id_map',
                  'sequence', 'nucleotide_sequence', 'stored', 'completely_stored', 'wildtype_protein', 'gene', 'tags',
-                 'go_terms', 'pathways', 'disorder_regions', 'disorder_tool', 'database_id', 'structure_annotations', 'input_id', 'multi_mutations',
-                 'aggregated_contact_matrix', 'aggregated_interface_map', 'mutant_type', 'sav_positions', 'insertion_positions', 'deletion_flanks'
+                 'go_terms', 'pathways', 'disorder_regions', 'disorder_tool', 'database_id', 'structure_annotations', 'mapped_complexes', 'input_id', 'multi_mutations',
+                 'aggregated_contact_matrix', 'aggregated_interface_map', 'mutant_type', 'sav_positions', 'insertion_positions', 'deletion_flanks', 'number_of_mappings'
                 ]
 
     def __init__(self, errorlog, primary_protein_id=None, u_ac=None, u_id=None, ref_id=None, ref_nt_id = None, wildtype_protein=None, gene = None,
@@ -38,6 +38,7 @@ class Protein:
         self.disorder_regions = None
         self.disorder_tool = None
         self.structure_annotations = {}
+        self.mapped_complexes = set()
         self.multi_mutations = []
         self.wildtype_protein = wildtype_protein
         self.aggregated_contact_matrix = aggregated_contact_matrix
@@ -46,6 +47,7 @@ class Protein:
         self.sav_positions = sav_positions
         self.insertion_positions = insertion_positions
         self.deletion_flanks = deletion_flanks
+        self.number_of_mappings = 0
 
         self.gene = gene
         if tags is None:
@@ -76,7 +78,8 @@ class Protein:
         del self.positions
         del self.sequence
         for struct_id in self.structure_annotations:
-            self.structure_annotations[struct_id].deconstruct()
+            for chain in self.structure_annotations[struct_id]:
+                self.structure_annotations[struct_id][chain].deconstruct()
         del self.structure_annotations
         for interface_obj in self.aggregated_interface_map:
             interface_obj.deconstruct()
@@ -226,11 +229,12 @@ class Protein:
     def get_most_similar_structure(self):
         max_score = 0
         rec_struct = None
-        for (structure_id, chain) in self.structure_annotations:
-            score = self.structure_annotations[(structure_id, chain)].sequence_identity * self.structure_annotations[(structure_id, chain)].coverage
-            if score > max_score:
-                max_score = score
-                rec_struct = f'{structure_id}:{chain}'
+        for structure_id in self.structure_annotations:
+            for chain in self.structure_annotations[structure_id]:
+                score = self.structure_annotations[structure_id][chain].sequence_identity * self.structure_annotations[structure_id][chain].coverage
+                if score > max_score:
+                    max_score = score
+                    rec_struct = f'{structure_id}:{chain}'
         return rec_struct
 
     def get_major_recommend_structure(self, prefer_mutation_positions = False, custom_mutations = None, functionally_weighted = False):
@@ -485,68 +489,82 @@ class Protein:
         return tag_value
 
     def add_annotation(self, pdb_id, chain, anno_obj):
-        self.structure_annotations[(pdb_id, chain)] = anno_obj
+        self.mapped_complexes.add(pdb_id)
+        if pdb_id not in self.structure_annotations:
+            self.structure_annotations[pdb_id] = {}
+        self.structure_annotations[pdb_id][chain] = anno_obj
 
     def remove_annotation(self, pdb_id, chain):
-        if not (pdb_id, chain) in self.structure_annotations:
+        if not pdb_id in self.structure_annotations:
+            return
+        elif not chain in self.structure_annotations[pdb_id]:
             return
         else:
-            del self.structure_annotations[(pdb_id, chain)]
+            del self.structure_annotations[pdb_id][chain]
+            if len(self.structure_annotations[pdb_id]) == 0:
+                del self.structure_annotations[pdb_id]
 
     def remove_annotations(self):
         del self.structure_annotations
 
     def get_annotation_list(self):
-        return list(self.structure_annotations.keys())
+        annotation_list = []
+        for structure_id in self.structure_annotations:
+            for chain in self.structure_annotations[structure_id]:
+                annotation_list.append((structure_id, chain))
+        return annotation_list
 
     def get_structure_annotations(self):
         return self.structure_annotations
 
     def is_annotation_stored(self, pdb_id, chain):
-        return self.structure_annotations[(pdb_id, chain)].get_stored()
+        return self.structure_annotations[pdb_id][chain].get_stored()
 
     def set_alignment(self, pdb_id, chain, value):
-        self.structure_annotations[(pdb_id, chain)].set_alignment(value)
+        self.structure_annotations[pdb_id][chain].set_alignment(value)
 
     def get_alignment(self, pdb_id, chain):
-        if not (pdb_id, chain) in self.structure_annotations:
+        if not pdb_id in self.structure_annotations:
+            return 'Structure %s:%s not in annotation list of %s' % (pdb_id, chain, self.primary_protein_id)
+        if not chain in self.structure_annotations[pdb_id][chain]:
             return 'Structure %s:%s not in annotation list of %s' % (pdb_id, chain, self.primary_protein_id)
 
-        return self.structure_annotations[(pdb_id, chain)].get_alignment()
+        return self.structure_annotations[pdb_id][chain].get_alignment()
 
     def pop_alignment(self, pdb_id, chain):
-        return self.structure_annotations[(pdb_id, chain)].pop_alignment()
+        return self.structure_annotations[pdb_id][chain].pop_alignment()
 
     def set_coverage(self, pdb_id, chain, value):
-        self.structure_annotations[(pdb_id, chain)].set_coverage(value)
+        self.structure_annotations[pdb_id][chain].set_coverage(value)
+        self.number_of_mappings += int(len(self.positions) * value)
 
     def get_coverage(self, pdb_id, chain):
-        return self.structure_annotations[(pdb_id, chain)].get_coverage()
+        return self.structure_annotations[pdb_id][chain].get_coverage()
 
     def set_sequence_id(self, pdb_id, chain, value):
-        self.structure_annotations[(pdb_id, chain)].set_sequence_id(value)
+        self.structure_annotations[pdb_id][chain].set_sequence_id(value)
 
     def get_sequence_id(self, pdb_id, chain):
-        return self.structure_annotations[(pdb_id, chain)].get_sequence_id()
+        return self.structure_annotations[pdb_id][chain].get_sequence_id()
 
     def set_annotation_db_id(self, pdb_id, chain, value):
-        self.structure_annotations[(pdb_id, chain)].set_database_id(value)
+        self.structure_annotations[pdb_id][chain].set_database_id(value)
 
     def set_sub_infos(self, pdb_id, chain, value):
-        self.structure_annotations[(pdb_id, chain)].set_sub_infos(value)
+        self.structure_annotations[pdb_id][chain].set_sub_infos(value)
 
     def get_sub_infos(self, pdb_id, chain):
-        return self.structure_annotations[(pdb_id, chain)].get_sub_infos()
+        return self.structure_annotations[pdb_id][chain].get_sub_infos()
 
     def set_backmap(self, structure_id, chain, backmap):
-        self.structure_annotations[(structure_id, chain)].set_backmap(backmap)
+        self.structure_annotations[structure_id][chain].set_backmap(backmap)
 
     def get_backmap(self, structure_id, chain):
-        if (structure_id, chain) not in self.structure_annotations:
-            #print(f'\n\n{(structure_id, chain)} not in structure_annotations of {self.primary_protein_id}\n\n')
+        if structure_id not in self.structure_annotations:
             return {}
-        #print(f'\n\nBackmap of {(structure_id, chain)} -> {self.primary_protein_id}:\n{self.structure_annotations[(structure_id, chain)].get_backmap()}\n\n')
-        return self.structure_annotations[(structure_id, chain)].get_backmap()
+        if chain in self.structure_annotations[structure_id]:
+            return {}
+        return self.structure_annotations[structure_id][chain].get_backmap()
 
     def set_aggregated_contact_matrix(self, aggregated_contact_matrix):
         self.aggregated_contact_matrix = aggregated_contact_matrix
@@ -756,7 +774,8 @@ class Proteins:
         del self.not_stored_ids
         del self.id_map
         for struct in self.structures:
-            self.structures[struct].deconstruct()
+            for chain in self.structures[struct]:
+                self.structures[struct][chain].deconstruct()
         del self.structures
         for comp in self.complexes:
             self.complexes[comp].deconstruct()
@@ -860,7 +879,8 @@ class Proteins:
             self.complexes[structure_id].print_interfaces()
 
     def set_backmap(self, protein_id, structure_id, chain, backmap):
-        self.protein_map[protein_id].set_backmap(structure_id, chain, backmap)
+        #self.protein_map[protein_id].set_backmap(structure_id, chain, backmap)
+        self.structures[structure_id][chain].backmaps[protein_id] = backmap
 
     def get_backmap(self, protein_id, structure_id, chain):
         return self.protein_map[protein_id].get_backmap(structure_id, chain)
@@ -931,112 +951,122 @@ class Proteins:
         chains = self.get_complex_chains(pdb_id)
         structures = {}
         for chain in chains:
-            if not (pdb_id, chain) in self.structures:
+            if not pdb_id in self.structures:
                 continue
-            structures[(pdb_id, chain)] = self.structures[(pdb_id, chain)]
+            if not chain in self.structures[pdb_id]:
+                continue
+            structures[pdb_id][chain] = self.structures[pdb_id][chain]
         return structures
 
     def get_structures(self):
         return self.structures
 
     def add_structure(self, pdb_id, chain, struct_obj):
-        self.structures[(pdb_id, chain)] = struct_obj
+        if pdb_id not in self.structures:
+            self.structures[pdb_id] = {}
+        self.structures[pdb_id][chain] = struct_obj
 
     def contains_structure(self, pdb_id, chain):
-        return (pdb_id, chain) in self.structures
+        if pdb_id in self.structures:
+            if chain in self.structures[pdb_id]:
+                return True
 
+        return False
+    
     def set_oligo(self, pdb_id, chain, value):
-        self.structures[(pdb_id, chain)].set_oligo(value)
+        self.structures[pdb_id][chain].set_oligo(value)
 
     def get_oligo(self, pdb_id, chain):
-        return self.structures[(pdb_id, chain)].get_oligo()
+        return self.structures[pdb_id][chain].get_oligo()
 
     def set_last_residue(self, pdb_id, chain, last_residue):
-        self.structures[(pdb_id, chain)].set_last_residue(last_residue)
+        self.structures[pdb_id][chain].set_last_residue(last_residue)
         return
 
     def set_first_residue(self, pdb_id, chain, first_residue):
-        self.structures[(pdb_id, chain)].set_first_residue(first_residue)
+        self.structures[pdb_id][chain].set_first_residue(first_residue)
         return
 
     def set_structure_db_id(self, pdb_id, chain, value):
-        self.structures[(pdb_id, chain)].set_database_id(value)
+        self.structures[pdb_id][chain].set_database_id(value)
 
     def get_structure_db_id(self, pdb_id, chain):
-        return self.structures[(pdb_id, chain)].get_database_id()
+        return self.structures[pdb_id][chain].get_database_id()
 
     def set_structure_stored(self, pdb_id, chain, value):
-        self.structures[(pdb_id, chain)].set_stored(value)
+        self.structures[pdb_id][chain].set_stored(value)
 
     def is_structure_stored(self, pdb_id, chain):
-        return self.structures[(pdb_id, chain)].get_stored()
+        return self.structures[pdb_id][chain].get_stored()
 
     def add_residue(self, pdb_id, chain, res_nr, residue_obj):
-        self.structures[(pdb_id, chain)].add_residue(res_nr, residue_obj)
+        self.structures[pdb_id][chain].add_residue(res_nr, residue_obj)
 
     def set_residue_db_id(self, pdb_id, chain, res_nr, value):
-        self.structures[(pdb_id, chain)].set_residue_db_id(res_nr, value)
+        self.structures[pdb_id][chain].set_residue_db_id(res_nr, value)
 
     def contains_residue(self, pdb_id, chain, res_nr):
-        if not (pdb_id, chain) in self.structures:
+        if not pdb_id in self.structures:
             return False
-        return self.structures[(pdb_id, chain)].contains_residue(res_nr)
+        if not chain in self.structures[pdb_id]:
+            return False
+        return self.structures[pdb_id][chain].contains_residue(res_nr)
 
     def get_residue_db_id(self, pdb_id, chain, res_nr):
         if not self.contains_residue(pdb_id, chain, res_nr):
             return None
-        return self.structures[(pdb_id, chain)].get_residue_db_id(res_nr)
+        return self.structures[pdb_id][chain].get_residue_db_id(res_nr)
 
     def get_residue_aa(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_aa(res_nr)
+        return self.structures[pdb_id][chain].get_residue_aa(res_nr)
 
     def get_residue_sld(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_sld(res_nr)
+        return self.structures[pdb_id][chain].get_residue_sld(res_nr)
 
     def get_residue_scd(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_scd(res_nr)
+        return self.structures[pdb_id][chain].get_residue_scd(res_nr)
 
     def get_residue_homomer_dists(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_homomer_dists(res_nr)
+        return self.structures[pdb_id][chain].get_residue_homomer_dists(res_nr)
 
     def get_residue_centralities(self, pdb_id, chain, res_nr, get_whats_there=False):
-        return self.structures[(pdb_id, chain)].get_residue_centralities(res_nr, get_whats_there=get_whats_there)
+        return self.structures[pdb_id][chain].get_residue_centralities(res_nr, get_whats_there=get_whats_there)
 
     def get_residue_modres(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_modres(res_nr)
+        return self.structures[pdb_id][chain].get_residue_modres(res_nr)
 
     def get_residue_b_factor(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_b_factor(res_nr)
+        return self.structures[pdb_id][chain].get_residue_b_factor(res_nr)
 
     def get_residue_rsa(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_rsa(res_nr)
+        return self.structures[pdb_id][chain].get_residue_rsa(res_nr)
 
     def get_residue_rsa_triple(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_rsa_triple(res_nr)
+        return self.structures[pdb_id][chain].get_residue_rsa_triple(res_nr)
 
     def get_residue_ssa(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_ssa(res_nr)
+        return self.structures[pdb_id][chain].get_residue_ssa(res_nr)
 
     def get_residue_phi(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_phi(res_nr)
+        return self.structures[pdb_id][chain].get_residue_phi(res_nr)
 
     def get_residue_psi(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_psi(res_nr)
+        return self.structures[pdb_id][chain].get_residue_psi(res_nr)
 
     def get_residue_link_information(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_link_information(res_nr)
+        return self.structures[pdb_id][chain].get_residue_link_information(res_nr)
 
     def get_residue_interaction_profile(self, pdb_id, chain, res_nr, get_whats_there=False):
-        return self.structures[(pdb_id, chain)].get_residue_interaction_profile(res_nr, get_whats_there=get_whats_there)
+        return self.structures[pdb_id][chain].get_residue_interaction_profile(res_nr, get_whats_there=get_whats_there)
 
     def get_residue_interaction_profile_str(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_interaction_profile_str(res_nr)
+        return self.structures[pdb_id][chain].get_residue_interaction_profile_str(res_nr)
 
     def get_residue_milieu(self, pdb_id, chain, res_nr):
-        return self.structures[(pdb_id, chain)].get_residue_milieu(res_nr)
+        return self.structures[pdb_id][chain].get_residue_milieu(res_nr)
 
     def add_residue_classification(self, pdb_id, chain, res_nr, Class, simpleClass):
-        self.structures[(pdb_id, chain)].add_residue_classification(res_nr, Class, simpleClass)
+        self.structures[pdb_id][chain].add_residue_classification(res_nr, Class, simpleClass)
 
     def get_protein_annotation_list(self, u_ac):
         return self.protein_map[u_ac].get_annotation_list()
@@ -1045,7 +1075,7 @@ class Proteins:
         return self.protein_map[u_ac].get_structure_annotations()
 
     def add_mapping_to_structure(self, pdb_id, chain, u_ac):
-        self.structures[(pdb_id, chain)].add_mapping(u_ac)
+        self.structures[pdb_id][chain].add_mapping(u_ac)
 
     def is_annotation_stored(self, pdb_id, chain, u_ac):
         return self.protein_map[u_ac].is_annotation_stored(pdb_id, chain)
@@ -1243,12 +1273,13 @@ class Proteins:
 
     def getStoredStructureIds(self, exclude_interacting_chains = False):
         stored_ids = {}
-        for (pdb_id, chain) in self.structures:
-            if exclude_interacting_chains:
-                if self.structures[(pdb_id, chain)].interacting_structure:
-                    continue
-            if self.structures[(pdb_id, chain)].get_stored():
-                stored_ids[self.structures[(pdb_id, chain)].get_database_id()] = (pdb_id, chain)
+        for pdb_id in self.structures:
+            for chain in self.structures[pdb_id]:
+                if exclude_interacting_chains:
+                    if self.structures[pdb_id][chain].interacting_structure:
+                        continue
+                if self.structures[pdb_id][chain].get_stored():
+                    stored_ids[self.structures[pdb_id][chain].get_database_id()] = (pdb_id, chain)
         return stored_ids
 
     def get_protein_database_id(self, u_ac):
@@ -1282,9 +1313,11 @@ class Proteins:
             return
 
     def remove_structures(self, structure_ids):
-        for structure_id in structure_ids:
+        for (structure_id, chain) in structure_ids:
             try:
-                del self.structures[structure_id]
+                del self.structures[structure_id][chain]
+                if len(self.structures[structure_id]) == 0:
+                    del self.structures[structure_id]
             except:
                 continue
 
@@ -1299,9 +1332,11 @@ class Proteins:
             if chains[chain] != 'Protein':
                 continue
             target_dict[chain] = {}
-            if not (pdb_id, chain) in self.structures:
+            if not pdb_id in self.structures:
                 continue
-            mapped_proteins = self.structures[(pdb_id, chain)].get_mapped_proteins()
+            if not chain in self.structres[pdb_id]:
+                continue
+            mapped_proteins = self.structures[pdb_id][chain].get_mapped_proteins()
             for u_ac in mapped_proteins:
                 try:
                     sub_infos = self.get_sub_infos(u_ac, pdb_id, chain)
