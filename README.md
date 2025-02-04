@@ -23,6 +23,11 @@ StructMAn needs to be deployed in a a conda environment, therefore a installatio
   ```
 
 * Install structman (installation script inside the cloned repo)
+
+
+>[!WARNING]
+>**You need to be in conda base environment to call the install.sh script.**
+  
   ```
   ./install.sh [optional flags listed below]
   ```
