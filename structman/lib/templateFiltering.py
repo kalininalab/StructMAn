@@ -10,7 +10,7 @@ import ray
 
 from structman.lib import pdbParser, rin, spherecon
 from structman.lib.database.retrieval import getStoredResidues
-from structman.lib.database.insertion_lib import insertInteractingChains, insertResidues, insertClassifications, insertComplexes, insert_interface_residues
+from structman.lib.database.insertion_lib import insertInteractingChains, insertResidues, insertClassifications, insertComplexes, insert_interface_residues, insert_interfaces
 from structman.base_utils.base_utils import median, distance, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path
 from structman.lib.sdsc.consts.residues import CORRECT_COUNT, THREE_TO_ONE, BLOSUM62, ONE_TO_THREE, RESIDUE_MAX_ACC, HYDROPATHY, METAL_ATOMS, ION_ATOMS
 from structman.lib.sdsc import sdsc_utils
@@ -1452,7 +1452,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         t11 = time.time()
         print(f"Annotation Part 1.1: {t11 - t0}, {len(size_map)}")
 
-    getStoredResidues(proteins, config, exclude_interacting_chains = not config.compute_ppi)  # has to be called after insertStructures
+    #getStoredResidues(proteins, config, exclude_interacting_chains = not config.compute_ppi)  # has to be called after insertStructures
+    getStoredResidues(proteins, config, exclude_interacting_chains=True)
 
     if config.verbosity >= 2:
         t1 = time.time()
@@ -1846,7 +1847,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
     if config.verbosity >= 2:
         t32 = time.time()
-        print('Annotation Part 3.1:', t32 - t2)
+        print(f'Annotation Part 3.1: {t32 - t2} {len(interaction_structures)} {len(interacting_structure_ids)}')
 
     insertComplexes(proteins, config)
 
@@ -1877,6 +1878,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         background_insert_residues_process.join()
         background_insert_residues_process.close()
         background_insert_residues_process = None
+        insert_interfaces(proteins, config)
 
     insert_interface_residues(proteins, config)
 

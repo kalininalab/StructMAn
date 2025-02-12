@@ -23,7 +23,7 @@ def insert_interfaces(proteins, config):
             prot_db_ids.add(prot_a_db_id)
             structure_recommendation = f'{aggregated_interface.recommended_complex},{aggregated_interface.chain},{aggregated_interface.interacting_chain}'
             if config.verbosity >= 6:
-                print('In insert_interfaces:', protein_id, structure_recommendation)
+                print(f'In insert_interfaces: {protein_id} {structure_recommendation} {len(aggregated_interface.pos_pos_interactions)}')
                 aggregated_interface.print_interface(verbosity = config.verbosity)
 
             #structure_ids_for_residue_retrieval[proteins.structures[(aggregated_interface.recommended_complex, aggregated_interface.chain)].database_id] = (aggregated_interface.recommended_complex, aggregated_interface.chain)
@@ -56,14 +56,14 @@ def insert_interfaces(proteins, config):
                         #structure_ids_for_residue_retrieval[proteins.structures[(pos_pos_interaction.recommended_complex, chain_b)].database_id] = (pos_pos_interaction.recommended_complex, chain_b)
 
                         pos_pos_pre_values.append((pos_a_db_id, pos_b_db_id, pos_pos_interaction.recommended_complex, chain_a, chain_b, res_a, res_b, pos_pos_interaction.interaction_score))
-
-                        if not pos_pos_interaction.protein_b in prot_prot_map:
-                            pos_pos_pre_values.append((pos_b_db_id, pos_a_db_id, pos_pos_interaction.recommended_complex, chain_b, chain_a, res_b, res_a, pos_pos_interaction.interaction_score))
-
+                        
                         if not prot_a_db_id in prot_prot_map:
                             prot_prot_map[prot_a_db_id] = {}
 
                         prot_b_db_id = proteins.protein_map[pos_pos_interaction.protein_b].database_id
+
+                        if not prot_b_db_id in prot_prot_map:
+                            pos_pos_pre_values.append((pos_b_db_id, pos_a_db_id, pos_pos_interaction.recommended_complex, chain_b, chain_a, res_b, res_a, pos_pos_interaction.interaction_score))
 
                         prot_db_ids.add(prot_b_db_id)
 
@@ -97,18 +97,26 @@ def insert_interfaces(proteins, config):
                             continue
                     structure_ids_for_residue_retrieval[proteins.structures[structure_id][chain].database_id] = (structure_id, chain)
 
-    getStoredResidues(proteins, config, custom_ids = structure_ids_for_residue_retrieval, retrieve_only_db_ids = True)
+    getStoredResidues(proteins, config, custom_ids = structure_ids_for_residue_retrieval, retrieve_only_db_ids = True, exclude_interacting_chains=True)
+
 
     for (pos_a_db_id, pos_b_db_id, recommended_complex, chain_a, chain_b, res_a, res_b, interaction_score) in pos_pos_pre_values:
-        if not proteins.structures[recommended_complex][chain_a].residues.contains(res_a):
-            continue
-        res_a_db_id = proteins.structures[recommended_complex][chain_a].residues.get_item(res_a).database_id
+        if config.verbosity >= 7:
+            print((pos_a_db_id, pos_b_db_id, recommended_complex, chain_a, chain_b, res_a, res_b, interaction_score))
         if not recommended_complex in proteins.structures:
             continue
+
+        if not proteins.structures[recommended_complex][chain_a].residues.contains(res_a):
+            continue
+
+        res_a_db_id = proteins.structures[recommended_complex][chain_a].residues.get_item(res_a).database_id
+
         if not chain_b in proteins.structures[recommended_complex]:
             continue
+
         if not proteins.structures[recommended_complex][chain_b].residues.contains(res_b):
             continue
+
         res_b_db_id = proteins.structures[recommended_complex][chain_b].residues.get_item(res_b).database_id
         pos_pos_values.append((pos_a_db_id, pos_b_db_id, res_a_db_id, res_b_db_id, interaction_score))
 
@@ -371,6 +379,7 @@ def insertResidues(structural_analysis, interacting_structure_ids, proteins, con
                 t_0 += time.time()
                 residue = analysis_map.get_item(res_id)
                 if residue is None:
+                    t_1 += time.time()
                     continue
 
                 one_letter = residue.get_aa()
@@ -498,9 +507,8 @@ def createClassValues(proteins):
         if proteins.is_completely_stored(u_ac):
             continue
         positions = proteins.get_position_ids(u_ac)
+
         for pos in positions:
-            aachange = proteins.get_aac_base(u_ac, pos)
-            pos = int(aachange[1:])
 
             if proteins.is_position_stored(u_ac, pos):
                 continue

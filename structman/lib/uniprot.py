@@ -11,14 +11,12 @@ import json
 
 from Bio import Entrez
 
-from structman.lib.database.database_core_functions import select, insert, update
+from structman.lib.database.database_core_functions import select, update
 from structman.lib.sdsc.sdsc_utils import translate
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import protein as protein_package
 from structman.lib.sdsc import gene as gene_package
-from structman.lib.pdbParser import standardParsePDB
-from structman.lib.templateFiltering import parsePDB
-from structman.lib.sdsc.consts import codons
+from structman.lib.pdbParser import standardParsePDB, parse_chaintype_map
 from structman.base_utils import base_utils
 from structman.settings import HUMAN_INFO_MAP
 
@@ -567,11 +565,14 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
         else:
             gene_id = None
         if pdb_tuple[-1] == '-':
-            page, _ = standardParsePDB(pdb_tuple[:4], config.pdb_path)
+            page, _ = standardParsePDB(pdb_tuple[:4], config.pdb_path, only_first_model = True)
             if page == '':
                 continue
 
-            (_, _, _, _, _, _, _, chain_type_map, _, _, _, _, _, _, _) = parsePDB(page)
+            chain_type_map = parse_chaintype_map(page)
+
+            if config.verbosity >= 5:
+                print(f'Chaintype map for {pdb_tuple}: {chain_type_map}')
 
             chains = []
             for chain_id in chain_type_map:

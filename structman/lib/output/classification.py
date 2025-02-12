@@ -274,8 +274,6 @@ def unpack_rows(package, store_data, tag_map, snv_map, snv_tag_map, protein_dict
         else:
             stat_dict[m] = (Class, float(max_seq_seq_id), recommended_structure)
 
-        if config.skipref:
-            refseq = ''
         classification_output.add_value('Input Protein ID', input_id)
         classification_output.add_value('Primary Protein ID', prot_id)
         classification_output.add_value('Uniprot-Ac', u_ac)
@@ -541,7 +539,7 @@ def generate_multi_sav_table(config, outfile, session_id, snv_position_dict, pos
     f.write(''.join(lines))
     f.close()
 
-def classificationOutput(config, outfolder, session_name, session_id, ligand_filter=None):
+def classificationOutput(config, outfolder, session_name, session_id, ligand_filter=None, enhance_network = True):
     outfile = '%s/%s' % (outfolder, session_name)
     if config.verbosity >= 2:
         t0 = time.time()
@@ -668,12 +666,32 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
 
         ppi_map = {}
         complex_ids = set()
+        interacting_interfaces = set()
         for row in results:
             if row[0] not in ppi_map:
                 ppi_map[row[0]] = [row[1:]]
             else:
                 ppi_map[row[0]].append(row[1:])
             complex_ids.add(row[2])
+            interacting_interfaces.add(row[1])
+
+        if enhance_network:
+            table = 'Interface'
+            columns = ['Interface_Id', 'Protein', 'Structure_Recommendation']
+
+            results = binningSelect(interacting_interfaces, columns, table, config)
+
+            expanded_protein_ids = set()
+
+            for row in results:
+                interface_dict[row[0]] = (row[1], row[2])
+                expanded_protein_ids.add(row[1])
+
+            expanded_protein_dict, expanded_gene_db_ids = database.getProteinDict(expanded_protein_ids, None, config)
+
+            gene_id_map.update(database.retrieve_gene_id_map(expanded_gene_db_ids, config))
+        else:
+            expanded_protein_dict = protein_dict
 
         table = 'Complex'
         columns = ['Complex_Id', 'PDB']
@@ -711,13 +729,15 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 session_less_position_ids.add(row[1])
 
         table = 'Residue'
-        columns = ['Residue_Id', 'Number']
+        columns = ['Residue_Id', 'Number', 'Structure']
 
         results = binningSelect(list(residue_ids), columns, table, config)
 
         res_nr_map = {}
+        structure_ids = set()
         for row in results:
-            res_nr_map[row[0]] = row[1]
+            res_nr_map[row[0]] = (row[1], row[2])
+            structure_ids.add(row[2])
 
         table = 'Position'
         columns = ['Position_Id', 'Position_Number', 'Wildtype_Residue']
@@ -729,6 +749,14 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
         for row in results:
             pos_info_map[row[0]] = row[2], row[1]
 
+        table = 'Structure'
+        columns = ['Structure_Id', 'PDB', 'Chain']
+
+        results = binningSelect(structure_ids, columns, table, config)
+
+        structure_info_dict = {}
+        for row in results:
+            structure_info_dict[row[0]] = (row[1], row[2])
     else:
         interface_dict = None
         position_interface_map = None
@@ -1008,8 +1036,6 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
 
                 (prot_id, u_ac, refseq, u_id, error_code, error, input_id, gene_db_id, sequence) = protein_dict[prot_db_id]
 
-                if config.skipref:
-                    refseq = ''
                 classification_output.add_value('Input Protein ID', input_id)
                 classification_output.add_value('Primary Protein ID', prot_id)
                 classification_output.add_value('Uniprot-Ac', u_ac)
@@ -1177,7 +1203,8 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
                 interface_a_number = interface_numbers[prot_a_db_id][interface_a_db_id]
                 prot_prot_output.add_value('Interface Number A', interface_a_number)
 
-                (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, seq_b) = protein_dict[prot_b_db_id]
+                (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, _) = expanded_protein_dict[prot_b_db_id]
+
                 if gene_db_id is not None:
                     gene_name_b, _ = gene_id_map[gene_db_id_b]
                 else:
@@ -1238,7 +1265,7 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
             interface_a_number = interface_numbers[prot_a_db_id][interface_db_id]
             pos_pos_output.add_value('Interface Number A', interface_a_number)
 
-            (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, seq_b) = protein_dict[prot_b_db_id]
+            (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, _) = expanded_protein_dict[prot_b_db_id]
             pos_pos_output.add_value('Input Protein ID B', input_id_b)
             pos_pos_output.add_value('Primary Protein ID B', prot_b_id)
             pos_pos_output.add_value('Uniprot-Ac B', u_ac_b)
@@ -1247,15 +1274,14 @@ def classificationOutput(config, outfolder, session_name, session_id, ligand_fil
             pos_pos_output.add_value('WT Amino Acid B', wt_aa_b)
             pos_pos_output.add_value('Position B', position_number_b)
 
-
             pos_pos_output.add_value('Interface Number B', interface_b_number)
 
+            res_nr_a, struct_a_db_id = res_nr_map[res_a_db_id]
+            res_nr_b, struct_b_db_id = res_nr_map[res_b_db_id]
+            rec_pdb_id, chain_a = structure_info_dict[struct_a_db_id]
+            rec_pdb_id, chain_b = structure_info_dict[struct_b_db_id]
 
-
-            res_nr_a = res_nr_map[res_a_db_id]
-            res_nr_b = res_nr_map[res_b_db_id]
-
-            pos_pos_output.add_value('Structure Recommendation', f'{rec_struct_id}:{chain_a}-{res_nr_a}:{chain_b}-{res_nr_b}')
+            pos_pos_output.add_value('Structure Recommendation', f'{rec_pdb_id}:{chain_a}-{res_nr_a}:{chain_b}-{res_nr_b}')
             pos_pos_output.add_value('Interaction Score', pos_pos_interaction_score)
             pos_pos_f.write(pos_pos_output.pop_line())
 

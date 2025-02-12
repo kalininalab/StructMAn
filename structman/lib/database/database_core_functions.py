@@ -147,6 +147,62 @@ def insert(table, columns, values, config, n_trials=3, mapping_db = False):
             raise NameError('Invalid Insert: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, str(f), g))
 
 
+def remove(config, table, between_rows={}, in_rows={}, equals_rows={}, null_columns=set(), n_trials=3, from_mapping_db=False):
+    if config.db_address != '-':
+        wildcard_symbol = '%s'
+    else:
+        wildcard_symbol = '?'
+
+    params = []
+
+    if len(between_rows) == 0 and len(in_rows) == 0 and len(equals_rows) == 0:
+        where_str = ''
+    else:
+        where_parts = []
+
+        for equals_row in equals_rows:
+            params.append(equals_rows[equals_row])
+            where_parts.append(equals_row + f' = {wildcard_symbol}')
+
+        for null_column in null_columns:
+            where_parts.append(null_column + ' IS NULL')
+
+        for in_row in in_rows:
+            for param in in_rows[in_row]:
+                params.append(param)
+            where_parts.append(in_row + ' IN (%s)' % ','.join([wildcard_symbol] * len(in_rows[in_row])))  # There have to be as many %s placeholders in the statement as there are parameters for the IN clasue
+
+        for bet_row in between_rows:
+            (low, high) = between_rows[bet_row]
+            params.append(low)
+            params.append(high)
+            where_parts.append(bet_row + f' BETWEEN {wildcard_symbol} AND {wildcard_symbol}')
+
+        where_str = ' WHERE %s' % ' AND '.join(where_parts)
+
+        if len(params) == 0:
+            return []
+
+    statement = 'DELETE FROM %s%s' % (table, where_str)
+
+    n = 0
+    while n < n_trials:  # Repeat the querry if fails for n_trials times
+        db, cursor = config.getDB(mapping_db=from_mapping_db)
+        try:
+            cursor.execute(statement, params)
+            results = cursor.fetchall()
+            db.commit()
+            break
+        except:
+            if n == 0:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+            n += 1
+        db.close()
+    if n == n_trials:
+        raise NameError('Invalid Delete: %s\nParam size:%s\n%s\n%s, %s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:50]), from_mapping_db, config.mapping_db, e, str(f), g))
+    return results
+
 def size_estimation(config, values):
     # Select 100 random rows and calculate their str size
     n_of_r_values = 100

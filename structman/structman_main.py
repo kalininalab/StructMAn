@@ -94,7 +94,6 @@ class Config:
 
         self.verbosity = cfg.getint('verbosity', fallback=1)
 
-        self.skipref = cfg.getboolean('skipref', fallback=False)
         self.test_low_mem_system = cfg.getboolean('test_low_mem_system', fallback=False)
 
         self.resources = cfg.get('resources', fallback='manu')
@@ -461,81 +460,42 @@ def structman_cli():
     main_file_path = resolve_path(__file__)
 
     disclaimer = ''.join([
-        'Usage: structman.py <-i input_file>\n',
+                
+        ' .d8888b.  888                              888    888b     d888        d8888           .d8888b.       .d8888b. \n',
+        'd88P  Y88b 888                              888    8888b   d8888       d88888          d88P  Y88b     d88P  Y88b\n', 
+        'Y88b.      888                              888    88888b.d88888      d88P888                 888     888    888\n', 
+        ' "Y888b.   888888 888d888 888  888  .d8888b 888888 888Y88888P888     d88P 888 88888b.       .d88P     888    888\n',
+        '    "Y88b. 888    888P"   888  888 d88P"    888    888 Y888P 888    d88P  888 888 "88b  .od888P"      888    888\n', 
+        '      "888 888    888     888  888 888      888    888  Y8P  888   d88P   888 888  888 d88P"          888    888\n',
+        'Y88b  d88P Y88b.  888     Y88b 888 Y88b.    Y88b.  888   "   888  d8888888888 888  888 888"       d8b Y88b  d88P\n', 
+        ' "Y8888P"   "Y888 888      "Y88888  "Y8888P  "Y888 888       888 d88P     888 888  888 888888888  Y8P  "Y8888P" \n',
+        '\n',                                                                                                     
+        '                    ======================================\n',
+        '                    |                                    |\n',                                                                                                                                    
+        '                    |  Usage: structman <-i input_file>  |\n',
+        '                    |                                    |\n',           
+        '                    ======================================\n\n',
         'more functionalities can be used giving a second key word:\n',
-        'structman.py database    gives you more info about the database utility functions\n',
-        'structman.py config      gives you more info about the config utility functions\n',
-        'structman.py update      gives you more info about the different update options\n\n\n',
-        '| Optional parameter  | Default value           | Description                               |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <-n threads>        | All available -1        | Number of cores to be used                |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <-o output_folder>  | standard installation:  | Path to the output folder                 |\n',
-        '|                     | Output/infilename/      |                                           |\n',
-        '|                     | container installation: |                                           |\n',
-        '|                     | structman/results/      |                                           |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <-c config_file>    | standard installation:  | Path to the configuration file            |\n',
-        '|                     | config.txt              |                                           |\n',
-        '|                     | container installation: | create custom config.txt inside mounted   |\n',
-        '|                     | not mounted             | folder, or use <structman config>         |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <--verbosity> [0-5] | 1                       | verbosity of command line messages        |\n',
-        '|                     |                         | 0: silence; 1: minimal progress reports   |\n',
-        '|                     |                         | 2: more detailed progress reports         |\n',
-        '|                     |                         | 3: details for debugging, 4: more details |\n',
-        '|                     |                         | 5: too much details                       |\n',
-        '|                     |                         | pipe output to a file for verbosity >= 3  |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <--printerrors>     | False                   | prints error messages in the console      |\n',
-        '|                     |                         | instead of logging them. Warning messages |\n',
-        '|                     |                         | still go into the log                     |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <--printwarnings>   | False                   | prints error and warning messages in      |\n',
-        '|                     |                         | the console instead of logging them       |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <--restartlog>      | False                   | wipes the log before starting the session |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <--norin>           | False                   | disable all RIN-based calculation         |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n',
-        '| <--custom_db>       | False                   | custom database usage                      |\n',
-        '|---------------------|-------------------------|-------------------------------------------|\n'
+        'structman database    gives you more info about the database utility functions\n',
+        'structman config      gives you more info about the config utility functions\n',
+        'structman update      gives you more info about the different update options\n',
+        'structman dev         gives you more info about options for developers\n\n\n',
+
+        '----------------------------------------------------------------------------------------------------------------\n',
+        '| Optional parameter  | Default value               | Description                                              |\n',
+        '|---------------------|-----------------------------|----------------------------------------------------------|\n',
+        '| <-n threads>        | All available -1            | Number of cores to be used                               |\n',
+        '|---------------------|-----------------------------|----------------------------------------------------------|\n',
+        '| <-o output_folder>  | cwd/Output/infilename       | Path to the output directory                             |\n',
+        '|---------------------|-----------------------------|----------------------------------------------------------|\n',
+        '| <--verbosity> [0-8] | 1                           | verbosity of command line messages                       |\n',
+        '|                     |                             | 0: silence; 1: minimal progress reports;                 |\n',
+        '|                     |                             | 2: more detailed progress reports;                       |\n',
+        '|                     |                             | 3: 3 and greater are for debugging, more time stamps;    |\n',
+        '|                     |                             | 4: subprocesses printing, best redirect into a log file; |\n',
+        '|                     |                             | 5-8: more and more debug prints                          |\n',  
+        '---------------------------------------------------------------------------------------------------------------|\n'
     ])
-
-    argv = sys.argv[1:]
-
-    if len(argv) == 0:
-        print(disclaimer)
-        sys.exit(1)
-
-    database_util_disclaimer = ''.join([
-        'Usage: structman.py database [command] <-c config_file>\n\n',
-        '#### Commands: ####\n\n',
-        'reset :\n  deletes all content of the database\n\n',
-        'clear :\n  deletes all content of the database, but keeps the results of all stored structures\n\n',
-        'export <-p path_to_a_folder> :\n  exports the database to a .sql.gz format file\n\n',
-        'destroy :\n  completely removes the database (database name is taken from config file)\n\n',
-        'create  :\n  creates an instance of the database (database name is taken from config file)'
-    ])
-
-    database_util = False
-    if argv[0] == 'database':
-        database_util = True
-        argv = argv[1:]
-
-        possible_key_words = set(['reset', 'out', 'create', 'destroy', 'clear', 'export', 'reduce', 'remove_sessions'])
-
-        if len(argv) == 0 or argv[0] == '-h' or argv[0] == '--help':
-            print(database_util_disclaimer)
-            sys.exit(1)
-        if argv[0] in possible_key_words:
-            db_mode = argv[0]
-            argv = argv[1:]
-        else:
-            print(database_util_disclaimer)
-            sys.exit(1)
-    else:
-        db_mode = None
 
     update_util_disclaimer = ''.join([
         'Usage: structman.py update [commands] <-c config_file> <-p path_to_local_pdb>\n',
@@ -563,6 +523,75 @@ def structman_cli():
 
         'alphafold_db              downloads all available protein structures models created by alphafold stored at: https://alphafold.ebi.ac.uk/\n'
     ])
+
+    config_util_disclaimer = ''.join([
+        'Usage: structman.py config [command] [value] <-c config_file>\n',
+        'The config commands enable the expansion of StructMAn by giving it access to additional functionalities, which are too large to be included by default or require an external license.\n\n',
+        '#### Commands: ####\n\n',
+        'set_local_pdb_path <path_to_local_pdb> :               enables the usage of a local instance of the PDB. If this is not available, StructMAn has to download all structural information from the web.\n\n',
+        'set_local_iupred_path <path_to_iupred_executable> :    enables StructMAn to use the predicted disordered regions performed by iupred3.\n\n',
+        '<any config variable name> <any value> :               modifies any variable in the config file. Warning: does not check if given input makes sense.',
+    ])
+
+    database_util_disclaimer = ''.join([
+        'Usage: structman.py database [command] <-c config_file>\n\n',
+        '#### Commands: ####\n\n',
+        'reset :\n  deletes all content of the database\n\n',
+        'clear :\n  deletes all content of the database, but keeps the results of all stored structures\n\n',
+        'export <-p path_to_a_folder> :\n  exports the database to a .sql.gz format file\n\n',
+        'destroy :\n  completely removes the database (database name is taken from config file)\n\n',
+        'create  :\n  creates an instance of the database (database name is taken from config file)'
+    ])
+
+    dev_util_disclaimer = ''.join([
+        'Hi, are you a dev? If yes, can you please write the disclaimer for the dev options? Just look in what miserable state they are currently in:\n'
+
+        '| <-c config_file>    | standard installation:  | Path to the configuration file                               |\n',
+        '|                     | config.txt              |                                                              |\n',
+        '|                     | container installation: | create custom config.txt inside mounted                      |\n',
+        '|                     | not mounted             | folder, or use <structman config>                            |\n',
+        '|---------------------|-------------------------|-------------------------------------------                   |\n',
+        '|---------------------|-------------------------|-------------------------------------------                   |\n',
+        '| <--printerrors>     | False                   | prints error messages in the console                         |\n',
+        '|                     |                         | instead of logging them. Warning messages                    |\n',
+        '|                     |                         | still go into the log                                        |\n',
+        '|---------------------|-------------------------|-------------------------------------------                   |\n',
+        '| <--printwarnings>   | False                   | prints error and warning messages in                         |\n',
+        '|                     |                         | the console instead of logging them                          |\n',
+        '|---------------------|-------------------------|-------------------------------------------                   |\n',
+        '| <--restartlog>      | False                   | wipes the log before starting the session                    |\n',
+        '|---------------------|-----------------------------|----------------------------------------------------------|\n',
+        '| <--custom_db>       | False                       | custom database usage                                    |\n',
+    ])
+
+    argv = sys.argv[1:]
+
+    if len(argv) == 0:
+        print(disclaimer)
+        sys.exit(1)
+
+    if argv[0] == 'dev':
+        print(dev_util_disclaimer)
+        sys.exit(0)
+
+    database_util = False
+    if argv[0] == 'database':
+        database_util = True
+        argv = argv[1:]
+
+        possible_key_words = set(['reset', 'out', 'create', 'destroy', 'clear', 'export', 'reduce', 'remove_sessions', 'fix'])
+
+        if len(argv) == 0 or argv[0] == '-h' or argv[0] == '--help':
+            print(database_util_disclaimer)
+            sys.exit(1)
+        if argv[0] in possible_key_words:
+            db_mode = argv[0]
+            argv = argv[1:]
+        else:
+            print(database_util_disclaimer)
+            sys.exit(1)
+    else:
+        db_mode = None
 
     update_util = False
     update_pdb = False
@@ -618,15 +647,6 @@ def structman_cli():
             if not (update_pdb or update_rindb or update_mapping_db or update_alphafold_db or update_microminer or check_search_db):
                 print(update_util_disclaimer)
                 sys.exit(1)
-
-    config_util_disclaimer = ''.join([
-        'Usage: structman.py config [command] [value] <-c config_file>\n',
-        'The config commands enable the expansion of StructMAn by giving it access to additional functionalities, which are too large to be included by default or require an external license.\n\n',
-        '#### Commands: ####\n\n',
-        'set_local_pdb_path <path_to_local_pdb> :               enables the usage of a local instance of the PDB. If this is not available, StructMAn has to download all structural information from the web.\n\n',
-        'set_local_iupred_path <path_to_iupred_executable> :    enables StructMAn to use the predicted disordered regions performed by iupred3.\n\n',
-        '<any config variable name> <any value> :               modifies any variable in the config file. Warning: does not check if given input makes sense.',
-    ])
 
     configure_mode = False
     configure_help_mode = False
@@ -739,15 +759,14 @@ def structman_cli():
 
     try:
         long_paras = [
-            'help', 'skipref', 'rlimit=', 'verbosity=',
-            'printerrors', 'printwarnings', 'chunksize=', 'norin',
+            'help', 'verbosity=', 'printerrors', 'printwarnings', 'chunksize=',
             'dbname=', 'fdbname=', 'restartlog', 'only_snvs', 'skip_indel_analysis', 'only_wt', 'mem_limit=',
             'model_indel_structures', 'ignore_local_pdb', 'ignore_local_rindb', 'ignore_local_mapping_db',
             'skip_main_output_generation', 'ray_local_mode', 'compute_ppi', 'structure_limiter=',
             'force_modelling', 'target=', 'custom_db', 'update_source=', 'condition_1=', 'condition_2=',
             'local_db=', 'read_only', 'read_hybrid', 'fast_pdb_annotation'
         ]
-        opts, args = getopt.getopt(argv, "c:i:n:o:h:ldp:", long_paras)
+        opts, args = getopt.getopt(argv, "c:i:n:o:hp:", long_paras)
 
     except getopt.GetoptError:
         print("Illegal Input\n\n", disclaimer)
@@ -759,7 +778,6 @@ def structman_cli():
     outfolder = ''
     verbosity = None
 
-    skipref = False
     print_all_errors = False
     print_all_warns = False
     chunksize = None
@@ -791,7 +809,6 @@ def structman_cli():
     #mmcif mode flag is added
     mmcif_mode = False
     '''
-    norin = False
     minus_p_path = None  # different modes can use this way a path given with -p
     mem_limit = None
 
@@ -816,13 +833,9 @@ def structman_cli():
         if opt == '-h' or opt == '--help':
             print(disclaimer)
             sys.exit(0)
-        if opt == '--rlimit':
-            rlimit = arg
+
         if opt == '--verbosity':
             verbosity = int(arg)
-
-        if opt == '--skipref':
-            skipref = True
 
         if opt == '--printerrors':
             print_all_errors = True
@@ -832,8 +845,7 @@ def structman_cli():
 
         if opt == '--chunksize':
             chunksize = int(arg)
-        if opt == '--norin':
-            norin = True
+
         if opt == '--dbname':
             dbname = arg
         if opt == '--fdbname':
@@ -1019,10 +1031,6 @@ def structman_cli():
     if config.verbosity >= 1:
         print(f"Using following config file: {config_path}")
 
-    config.calculate_interaction_profiles = not norin
-
-    config.skipref = skipref
-
     if dbname is not None:
         if not force_db_name:
             if dbname[:len(config.db_user_name)] != config.db_user_name:
@@ -1068,6 +1076,9 @@ def structman_cli():
             repairDB.reduceToStructures(config, infile)
         elif db_mode == 'remove_sessions':
             repairDB.remove_sessions(config)
+
+        elif db_mode == 'fix':
+            repairDB.fix_database(config)
 
     elif output_util:
         if config.verbosity >= 1:

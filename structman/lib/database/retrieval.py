@@ -53,6 +53,8 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                 ]
         """
         for id_package in id_packages:
+            if config.verbosity >= 2:
+                t10 = time.time()
             if not retrieve_only_db_ids:
                 rows = ['Structure', 'Residue_Id', 'Number', 'Residue_Data']
             else:
@@ -61,8 +63,8 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
             results = binningSelect(id_package, rows, table, config)
 
             if config.verbosity >= 2:
-                t10 = time.time()
-                print("Time for getstoredresidues 2.1: %s" % str(t10 - t1))
+                t11 = time.time()
+                print("Time for getstoredresidues 2.1: %s" % str(t11 - t10))
 
             stored_res_db_ids = {}
 
@@ -143,6 +145,10 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                             proteins.complexes[pdb_id].interfaces[chain][interacting_chain].add_interaction(res, i_res, float(score))
                         else:
                             proteins.complexes[pdb_id].interfaces[chain][interacting_chain].add_support(res)
+
+            if config.verbosity >= 2:
+                t12 = time.time()
+                print("Time for getstoredresidues 2.2: %s" % str(t12 - t11))
 
     if config.verbosity >= 2:
         t2 = time.time()

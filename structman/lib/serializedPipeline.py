@@ -112,14 +112,18 @@ def sizeof_fmt(num, suffix='B'):
 
 def remove_sanity_filtered(config, proteins, indels, primary_protein_id):
     del_list = []
-    for pos in proteins[primary_protein_id].positions:
-        if not proteins[primary_protein_id].positions[pos].checked:
-            del_list.append((pos, proteins[primary_protein_id].positions[pos].wt_aa))
+    for pos_obj in proteins[primary_protein_id].positions:
+        if pos_obj is None:
+            continue
+        if not pos_obj.checked:
+            del_list.append((pos_obj.pos, pos_obj.wt_aa))
     for pos, wt_aa in del_list:
         remove_position(config, proteins, indels, pos, wt_aa, primary_protein_id, degrade_to_session_less = True)
 
 
 def remove_position(config, proteins, indels, pos, wt_aa, primary_protein_id, degrade_to_session_less = False):
+    if pos == 0:
+        return
     if degrade_to_session_less:
         warn_text = 'Degraded position through sanity check:%s,%s' % (primary_protein_id, pos)
     else:
@@ -251,13 +255,13 @@ def sequenceScan(config, proteins, indels, genes = None):
 
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
-                if seq_pos in proteins[primary_protein_id].positions:
+                if proteins[primary_protein_id].contains_position(seq_pos):
                     proteins[primary_protein_id].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
                     proteins[primary_protein_id].positions[seq_pos].add_tags(tags)
                 elif uni_pos:
-                    if seq_pos not in proteins[primary_protein_id].positions:
+                    if not proteins[primary_protein_id].contains_position(seq_pos):
                         position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
-                        proteins[primary_protein_id].positions[seq_pos] = position
+                        proteins[primary_protein_id].add_positions([position])
 
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
@@ -296,13 +300,13 @@ def sequenceScan(config, proteins, indels, genes = None):
 
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
-                if seq_pos in proteins[primary_protein_id].positions:
+                if proteins[primary_protein_id].contains_position(seq_pos):
                     proteins[primary_protein_id].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
                     proteins[primary_protein_id].positions[seq_pos].add_tags(tags)
                 elif uni_pos:
-                    if seq_pos not in proteins[primary_protein_id].positions:
+                    if not proteins[primary_protein_id].contains_position(seq_pos):
                         position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
-                        proteins[primary_protein_id].positions[seq_pos] = position
+                        proteins[primary_protein_id].add_positions([position])
 
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
@@ -361,13 +365,13 @@ def sequenceScan(config, proteins, indels, genes = None):
 
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
-                if seq_pos in proteins[primary_protein_id].positions:
+                if proteins[primary_protein_id].contains_position(seq_pos):
                     proteins[primary_protein_id].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
                     proteins[primary_protein_id].positions[seq_pos].add_tags(tags)
                 elif uni_pos:
-                    if seq_pos not in proteins[primary_protein_id].positions:
+                    if not proteins[primary_protein_id].contains_position(seq_pos):
                         position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
-                        proteins[primary_protein_id].positions[seq_pos] = position
+                        proteins[primary_protein_id].add_positions([position])
 
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
@@ -406,13 +410,13 @@ def sequenceScan(config, proteins, indels, genes = None):
                 session_less = False
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
-                if seq_pos in proteins[u_ac].positions:
+                if proteins[u_ac].contains_position(seq_pos):
                     proteins[u_ac].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
                     proteins[u_ac].positions[seq_pos].add_tags(tags)
                 elif uni_pos:
-                    if seq_pos not in proteins[u_ac].positions:
+                    if not proteins[u_ac].contains_position(seq_pos):
                         position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
-                        proteins[u_ac].positions[seq_pos] = position
+                        proteins[u_ac].add_positions([position])
 
             proteins[u_ac].set_disorder_scores(disorder_scores)
             proteins[u_ac].set_disorder_regions(disorder_regions_datastruct)
@@ -453,9 +457,9 @@ def sequenceScan(config, proteins, indels, genes = None):
                         continue
                     proteins[u_ac].positions[seq_pos].add_tags(tags)
                 elif uni_pos:
-                    if seq_pos not in proteins[u_ac].positions:
+                    if not proteins[u_ac].contains_position(seq_pos):
                         position = position_package.Position(pos=seq_pos, pdb_res_nr=res_id, wt_aa=aa, tags=tags, session_less = session_less)
-                        proteins[u_ac].positions[seq_pos] = position
+                        proteins[u_ac].add_positions([position])
                         proteins[u_ac].res_id_map[res_id] = position
                     elif not res_id in proteins[u_ac].res_id_map:
                         proteins[u_ac].res_id_map[res_id] = proteins[u_ac].positions[seq_pos]
@@ -468,9 +472,9 @@ def sequenceScan(config, proteins, indels, genes = None):
 
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
-                if seq_pos not in proteins[prot_id].positions:
+                if not proteins[prot_id].contains_positions(seq_pos):
                     position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True)
-                    proteins[prot_id].positions[seq_pos] = position
+                    proteins[prot_id].add_positions([position])
 
     if config.verbosity >= 3:
         print('Before indel mutation with:', len(indels), 'number of indels')
@@ -909,20 +913,25 @@ def buildQueue(config, filename, already_split=False):
 
     proteins, indel_map, genes = uniprot.IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map)
 
-    if config.verbosity >= 3:
-        print(f'Size of proteins after IdMapping: {len(proteins)}')
-
-    genes = gene_isoform_check(proteins, genes, indel_map, config)
 
     t2 = time.time()
     if config.verbosity >= 2:
         print("buildQueue Part 2: ", str(t2 - t1))
 
-    outlist = input_chunking(config, proteins, indel_map)
+    if config.verbosity >= 3:
+        print(f'Size of proteins after IdMapping: {len(proteins)}')
+
+    genes = gene_isoform_check(proteins, genes, indel_map, config)
 
     t3 = time.time()
     if config.verbosity >= 2:
         print("buildQueue Part 3: ", str(t3 - t2))
+
+    outlist = input_chunking(config, proteins, indel_map)
+
+    t4 = time.time()
+    if config.verbosity >= 2:
+        print("buildQueue Part 3: ", str(t4 - t3))
 
     return outlist, [None], genes
 
@@ -1149,6 +1158,10 @@ def getSequences(proteins, config):
             elif disorder_scores != 'Stored':
                 proteins.set_disorder_tool(u_ac, 'MobiDB3.0')
 
+        t1 = time.time()
+        if config.verbosity >= 2:
+            print(f"Time for addIupred Part 1: {t1 - t0}")
+
         if not mobi_lite:
             if config.proc_n > 1:
                 iupred_out = ray.get(iupred_results)
@@ -1195,18 +1208,18 @@ def getSequences(proteins, config):
                     proteins.set_disorder_regions(u_ac, regions)
                     proteins.set_disorder_tool(u_ac, 'mobidb-lite')
 
-        t1 = time.time()
+        t2 = time.time()
         if config.verbosity >= 2:
-            print(f"Time for addIupred Part 1: {t1 - t0}")
+            print(f"Time for addIupred Part 2: {t2 - t1}")
 
         if not config.read_only_mode:
             background_iu_process = database.addIupred(proteins, config)
         else:
             background_iu_process = None
 
-        t2 = time.time()
+        t3 = time.time()
         if config.verbosity >= 2:
-            print("Time for addIupred Part 2: %s" % str(t2 - t1))
+            print("Time for addIupred Part 3: %s" % str(t3 - t2))
 
     del store
 

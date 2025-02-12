@@ -14,7 +14,7 @@ class Protein:
                 ]
 
     def __init__(self, errorlog, primary_protein_id=None, u_ac=None, u_id=None, ref_id=None, ref_nt_id = None, wildtype_protein=None, gene = None,
-                 pdb_id=None, positions={}, database_id=None, other_ids=[], input_id=None, sequence=None, aggregated_contact_matrix = {},
+                 pdb_id=None, positions=[], database_id=None, other_ids=[], input_id=None, sequence=None, aggregated_contact_matrix = {},
                  aggregated_interface_map = {}, mutant_type = None, sav_positions = None, insertion_positions = None, deletion_flanks = None,
                  tags = None
                 ):
@@ -25,7 +25,7 @@ class Protein:
         self.ref_nt_id = ref_nt_id
         self.pdb_id = pdb_id
         self.input_id = input_id
-        self.positions = {}
+        self.positions = [None]
         self.res_id_map = {}
         self.sequence = sequence
         self.nucleotide_sequence = None
@@ -71,10 +71,11 @@ class Protein:
             self.other_ids[id_id] = other_id
 
     def deconstruct(self):
-        for pos in self.positions:
-            self.positions[pos].deconstruct(completely = True)
-        for pos in list(self.positions.keys()):
-            del self.positions[pos]
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            pos_obj.deconstruct(completely = True)
+
         del self.positions
         del self.sequence
         for struct_id in self.structure_annotations:
@@ -89,14 +90,18 @@ class Protein:
     def print_state(self):
         print('----State of %s----' % self.u_ac)
         print('Uniprot Id:', self.u_id)
-        for pos in self.positions:
-            self.positions[pos].print_state()
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            pos_obj.print_state()
 
     def print_all_snvs(self):
         print(f'---All SNVs of {self.primary_protein_id}:')
-        for pos in self.positions:
-            if len(self.positions[pos].mut_aas) > 0:
-                self.positions[pos].print_state()
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            if len(pos_obj.mut_aas) > 0:
+                pos_obj.print_state()
                 
 
     def get_u_ac(self):
@@ -110,7 +115,12 @@ class Protein:
         del_list = []
         for p, position in enumerate(positions):
             warn = False
-            if position.pos not in self.positions:
+            if position.pos >= len(self.positions):
+                d = position.pos - len(self.positions)
+                for _ in range(d):
+                    self.positions.append(None)
+                self.positions.append(position)
+            elif self.positions[position.pos] is None:
                 self.positions[position.pos] = position
             elif position.pos is not None:
                 warn = self.positions[position.pos].fuse(position)
@@ -166,9 +176,9 @@ class Protein:
 
     def popNone(self):
         if self.pdb_id is None:
-            if None in self.positions:
-                tags = self.positions[None].pos_tags
-                del self.positions[None]
+            if self.positions[0] is not None:
+                tags = self.positions[0].pos_tags
+                self.positions[0] = None
                 return True, tags
             else:
                 return True, None
@@ -180,43 +190,19 @@ class Protein:
             else:
                 return True, None
 
-    def translatePositions(self, nuc_seq):
-        new_positions = {}
-        for nuc_pos in self.positions:
-            digital_nuc_pos = nuc_pos - 1
-            codon_pos = digital_nuc_pos % 3
-            codon_start = digital_nuc_pos - codon_pos
-            digital_aa_pos = codon_start // 3
-            aa_pos = digital_aa_pos + 1
-            self.positions[nuc_pos].pos = aa_pos
-            codon = nuc_seq[codon_start:(codon_start + 3)]
-            wt_aa = codons.CODONS[codon]
-            mut_aas = set()
-            for mut_nuc in self.positions[nuc_pos].mut_aas:
-                if codon_pos == 0:
-                    mut_codon = '%s%s' % (mut_nuc, nuc_seq[(codon_start + 1):(codon_start + 3)])
-                elif codon_pos == 1:
-                    mut_codon = '%s%s%s' % (nuc_seq[codon_start], mut_nuc, nuc_seq[codon_start + 2])
-                else:
-                    mut_codon = '%s%s' % (nuc_seq[codon_start:(codon_start + 2)], mut_nuc)
-                mut_aas.add(codons.CODONS[mut_codon])
-            self.positions[nuc_pos].mut_aas = mut_aas
-            self.positions[nuc_pos].wt_aa = wt_aa
-            new_positions[aa_pos] = self.positions[nuc_pos]
-        self.positions = new_positions
-        return
-
     def getRecommendedStructures(self):
         rec_structs = {}
-        for pos in self.positions:
-            recommended_structure = self.positions[pos].get_recommended_structure()
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            recommended_structure = pos_obj.get_recommended_structure()
             if recommended_structure == '-':
                 continue
             struct_tuple, res_info = recommended_structure.split()
             if struct_tuple not in rec_structs:
-                rec_structs[struct_tuple] = [pos]
+                rec_structs[struct_tuple] = [pos_obj.pos]
             else:
-                rec_structs[struct_tuple].append(pos)
+                rec_structs[struct_tuple].append(pos_obj.pos)
         return rec_structs
 
     def get_recommended_structure(self, scheme = 'functional_annotation', prefer_mutation_positions = False, custom_mutations = None, functionally_weighted = False):
@@ -266,10 +252,12 @@ class Protein:
                         mut_pos.add(lf)
                     if rf is not None:
                         mut_pos.add(rf)
-        for pos in self.positions:
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
             if prefer_mutation_positions and pos not in mut_pos:
                 continue
-            recommended_structure = self.positions[pos].get_recommended_structure()
+            recommended_structure = pos_obj.get_recommended_structure()
             if recommended_structure == '-':
                 continue
             struct_tuple, res_info = recommended_structure.split()
@@ -277,13 +265,9 @@ class Protein:
                 rec_structs[struct_tuple] = 0
             weight = 1
             if functionally_weighted:
-                weight = self.positions[pos].get_score()
-
-            #print(pos, recommended_structure, weight, self.positions[pos].get_classification())
+                weight = pos_obj.get_score()
 
             rec_structs[struct_tuple] += weight
-
-        #print(rec_structs)
             rec_structs[struct_tuple] += 1
 
         max_count = 0
@@ -327,9 +311,11 @@ class Protein:
 
     def getAACList(self):
         aaclist = {}
-        for pos in self.positions:
-            aac_base = self.positions[pos].getAACBase()
-            aaclist[aac_base] = self.positions[pos].get_database_id()
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            aac_base = pos_obj.getAACBase()
+            aaclist[aac_base] = pos_obj.get_database_id()
         return aaclist
 
     def get_aac_base(self, pos):
@@ -354,7 +340,13 @@ class Protein:
         return seq
 
     def contains_position(self, pos):
-        return pos in self.positions
+        if pos < len(self.positions):
+            if self.positions[pos] is None:
+                return False
+            else:
+                return True
+        else:
+            return False
 
     def set_stored(self, value):
         self.stored = value
@@ -388,17 +380,19 @@ class Protein:
         if disorder_scores is None:
             return
         for pos in disorder_scores:
-            if pos not in self.positions:
+            if not self.contains_position(pos):
                 continue
             self.positions[pos].set_disorder_score(disorder_scores[pos])
 
     def get_disorder_scores(self):
         disorder_scores = {}
-        for pos in self.positions:
-            pos_dis = self.positions[pos].get_disorder_score()
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            pos_dis = pos_obj.get_disorder_score()
             if pos_dis is None: #If the disordered regions annotation did not happen yet, then all scores of the positions are None, then return the whole dict as None 
                 return None
-            disorder_scores[pos] = pos_dis
+            disorder_scores[pos_obj.pos] = pos_dis
         return disorder_scores
 
     def get_disorder_score(self, pos):
@@ -410,7 +404,7 @@ class Protein:
             return
         for [a, b, region_type] in regions:
             for pos in range(int(a), int(b + 1)):
-                if pos not in self.positions:
+                if not self.contains_position(pos):
                     continue
                 self.positions[pos].set_disorder_region(region_type)
 
@@ -433,12 +427,12 @@ class Protein:
             return self.positions[pos].get_stored()
 
     def get_position(self, pos):
-        if pos not in self.positions:
+        if pos >= len(self.positions):
             return None
         return self.positions[pos]
 
     def get_position_ids(self):
-        return self.positions.keys()
+        return list(range(1,len(self.positions)))
 
     def set_position_stored(self, pos, stored_value):
         self.positions[pos].set_stored(stored_value)
@@ -468,7 +462,9 @@ class Protein:
         return self.positions[pos].get_mut_aas()
 
     def get_mut_tags(self, pos, new_aa):
-        if pos not in self.positions:
+        if pos >= len(self.positions):
+            return None
+        if self.positions[pos] is None:
             return None
         return self.positions[pos].get_mut_tags(new_aa)
 
@@ -577,20 +573,23 @@ class Protein:
 
     def get_ordered_classifications(self):
         classifications = []
-        for _pos in range(len(self.positions)):
-            pos = _pos + 1
-            c = self.positions[pos].get_classification()
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            c = pos_obj.get_classification()
             classifications.append(c)
         return classifications
 
     def mutate_snvs(self, proteins, config):
-        for pos in self.positions:
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
             mut_seq = self.sequence
-            for aa2 in self.positions[pos].mut_aas:
-                protein_name = '%s_%s%s%s' % (self.primary_protein_id, self.positions[pos].wt_aa, str(pos), aa2)
+            for aa2 in pos_obj.mut_aas:
+                protein_name = '%s_%s%s%s' % (self.primary_protein_id, pos_obj.wt_aa, str(pos_obj.pos), aa2)
 
-                mut_seq = '%s%s%s' % (mut_seq[:(pos - 1)], aa2, mut_seq[pos:])
-                mut_protein = Protein(config.errorlog, primary_protein_id=protein_name, sequence=mut_seq, wildtype_protein=self.primary_protein_id, mutant_type = 'SAV', sav_positions = [pos])
+                mut_seq = '%s%s%s' % (mut_seq[:(pos_obj.pos - 1)], aa2, mut_seq[pos_obj.pos:])
+                mut_protein = Protein(config.errorlog, primary_protein_id=protein_name, sequence=mut_seq, wildtype_protein=self.primary_protein_id, mutant_type = 'SAV', sav_positions = [pos_obj.pos])
                 proteins[protein_name] = mut_protein
 
                 if config.verbosity >= 4:
@@ -598,7 +597,7 @@ class Protein:
 
                 for (mpos, aa) in enumerate(mut_seq):
                     seq_pos = mpos + 1
-                    position = Position(pos=seq_pos, wt_aa=aa, checked=True, recommended_structure = self.positions[pos].recommended_structure)
+                    position = Position(pos=seq_pos, wt_aa=aa, checked=True, recommended_structure = pos_obj.recommended_structure)
                     proteins[protein_name].positions[seq_pos] = position
 
     def create_multi_mutations(self, proteins, config):
@@ -1188,9 +1187,6 @@ class Proteins:
 
     def set_protein_sequence(self, u_ac, value):
         self.protein_map[u_ac].set_sequence(value)
-
-    def translatePositions(self, u_ac, nuc_seq):
-        self.protein_map[u_ac].translatePositions(nuc_seq)
 
     def get_sequence(self, u_ac):
         return self.protein_map[u_ac].get_sequence()

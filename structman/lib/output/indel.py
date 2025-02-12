@@ -153,7 +153,7 @@ def create_indel_results_table(config, output_path, session_name, session_id):
 
         indel_notation = row[2]
         wt_prot_db_id = row[3]
-        (prot_id, u_ac, refseq, u_id, error_code, error, input_id, gene_db_id) = protein_dict[wt_prot_db_id]
+        (prot_id, u_ac, refseq, u_id, error_code, error, input_id, gene_db_id, _) = protein_dict[wt_prot_db_id]
         indel_output.add_value('Protein', prot_id)
         mut_prot_db_id = row[4]
 

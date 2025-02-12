@@ -111,7 +111,7 @@ class MultiMutation:
             for (pos, aa) in enumerate(mut_seq):
                 seq_pos = pos + 1
                 position = position_package.Position(pos=seq_pos, wt_aa=aa, checked=True)
-                proteins[self.mut_prot].positions[seq_pos] = position
+                proteins[self.mut_prot].add_positions([position])
 
         else:
             mut_seq = proteins[self.mut_prot].sequence

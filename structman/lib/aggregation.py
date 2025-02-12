@@ -44,7 +44,7 @@ def para_classify_remote_wrapper(cld_1, cld_2, package):
 def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
     t0 = time.time()
     if not cld_is_packed:
-        config, complexes = cld_1,
+        config, complexes = cld_1
         structure_quality_measures, structure_backmaps, interface_map = cld_2
     else:
         config, p_complexes = cld_1
@@ -541,8 +541,8 @@ def group_proteins(config, size_sorted, proteins, max_number_of_groups = 10):
     for protein_id, size in size_sorted:
 
         structures = set(proteins[protein_id].get_annotation_list())
-
-        print(protein_id, len(structures))
+        if config.verbosity >= 4:
+            print(protein_id, len(structures))
         if len(groups) == 0:
             groups.append([[(protein_id, size)], structures])
             group_order.append([0, len(structures)])
@@ -978,7 +978,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
     if not nested_para:        
 
         if not para and len(package) > 0:
-            classification_results.append(para_classify(cld_1, cld_2, package, para=True, cld_is_packed=cld_is_packed))
+            classification_results.append(para_classify(cld_1, cld_2, package, para=para, cld_is_packed=cld_is_packed))
         elif not para and len(package) == 0:
             return
         
@@ -1123,8 +1123,11 @@ def classification(proteins, config, background_insert_residues_process, custom_
                 break
                 
 
-    del config_store
-    del classification_dump
+    try:
+        del config_store
+        del classification_dump
+    except:
+        pass
 
     if config.verbosity >= 6:
         print(recommended_complexes)

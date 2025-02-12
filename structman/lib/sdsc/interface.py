@@ -61,12 +61,15 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
 
                         if config.verbosity >= 7:
                             print(f'Fusion about to happen: {protein_id} {known_interface_number} {structure_id} {chain} {i_chain}')
-                            print(f'Current state of the interface:')
+                            print(f'Current state of the interface {known_interface_number}:')
                             aggregated_interfaces[known_interface_number].print_interface()
 
                         no_fusion_happened = False
                         seq_id, cov = quality_measures[protein_id][structure_id][chain]
                         interface_annotation_score = calc_interface_annotation_score(seq_id, cov, interfaces[chain][i_chain].interactions)
+
+                        if config.verbosity >= 7:
+                            print(f'Interface annotation score: {interface_annotation_score}')
 
                         for res in interfaces[chain][i_chain].residues:
                             position = backmap.get_item(res)
@@ -74,7 +77,7 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                                 #print('position is none',protein_id, structure_id, chain, i_chain)
                                 continue
                             position_interface_map[position].add(known_interface_number)
-                            if (not position in aggregated_interfaces[known_interface_number].positions) or interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score:
+                            if (not position in aggregated_interfaces[known_interface_number].positions) or (interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score):
                                 aggregated_interfaces[known_interface_number].add_position(position, (structure_id, chain, res))
                             if res in interfaces[chain][i_chain].interactions:
                                 for i_res in interfaces[chain][i_chain].interactions[res]:
@@ -84,11 +87,9 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                                     if not i_chain in structure_backmaps[structure_id]:
                                         continue
                                     if config.verbosity >= 7:
-                                        print(f'Fusing interaction: {chain} {res} <-> {i_chain} {i_res}')
+                                        print(f'Fusing interaction: {chain} {res} <-> {i_chain} {i_res}: {len(structure_backmaps[structure_id][i_chain])}')
 
                                     for i_protein in structure_backmaps[structure_id][i_chain]:
-                                        if i_protein == protein_id:
-                                            continue
 
                                         i_res_mapped_pos = structure_backmaps[structure_id][i_chain][i_protein].get_item(i_res)
 
@@ -98,20 +99,26 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                                         pos_pos_i = Position_Position_Interaction(protein_id, position, i_protein, i_res_mapped_pos)
                                         new_pos_pos_i = aggregated_interfaces[known_interface_number].add_pos_pos_interaction(pos_pos_i)
 
-                                        if new_pos_pos_i or interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score:
-                                            aggregated_interfaces[known_interface_number].pos_pos_interactions[position][i_protein][i_res_mapped_pos].set_recommended_complex(structure_id, (chain, res, i_chain, i_res), residue_interaction_score)
+                                        if config.verbosity >= 7:
+                                            print(new_pos_pos_i or (interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score))
 
-                        if config.verbosity >= 6:
-                            print(f'Fusion happend: {protein_id} {known_interface_number} {structure_id} {chain} {i_chain}, old recommended_complex: {aggregated_interfaces[known_interface_number].recommended_complex} {aggregated_interfaces[known_interface_number].chain} {aggregated_interfaces[known_interface_number].interacting_chain}')
-                        if config.verbosity >= 7:
-                            print(f'Current state of the fused interface:')
-                            aggregated_interfaces[known_interface_number].print_interface()
+                                        if new_pos_pos_i or (interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score):
+                                            aggregated_interfaces[known_interface_number].pos_pos_interactions[position][i_protein][i_res_mapped_pos].set_recommended_complex(structure_id, (chain, res, i_chain, i_res), residue_interaction_score)
+                                            if config.verbosity >= 7:
+                                                print(f'Overwrite of recommended complex of {position} -> {i_protein} {i_res_mapped_pos}: {new_pos_pos_i} {structure_id} {chain} {i_chain}')
+
 
                         fused_with.append(known_interface_number)
                         if interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score:
                             aggregated_interfaces[known_interface_number].set_recommended_complex(structure_id, chain, i_chain, interface_annotation_score)
                             if config.verbosity >= 6:
                                 print(f'Overwrite of recommended_complex: {structure_id}, {chain}, {i_chain}')
+
+                        if config.verbosity >= 6:
+                            print(f'Fusion happend: {protein_id} {known_interface_number} {structure_id} {chain} {i_chain}, old recommended_complex: {aggregated_interfaces[known_interface_number].recommended_complex} {aggregated_interfaces[known_interface_number].chain} {aggregated_interfaces[known_interface_number].interacting_chain}')
+                        if config.verbosity >= 7:
+                            print(f'Current state of the fused interface {known_interface_number}:')
+                            aggregated_interfaces[known_interface_number].print_interface()
 
                 if len(fused_with) > 1:
                     fused_with = sorted(fused_with)
@@ -166,7 +173,7 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                         position_interface_map[position].add(len(aggregated_interfaces) - 1) 
                         if res in interfaces[chain][i_chain].interactions:
                             for i_res in interfaces[chain][i_chain].interactions[res]:
-                                residue_interaction_score = interfaces[chain][i_chain].interactions[res]
+                                residue_interaction_score = interfaces[chain][i_chain].interactions[res][i_res]
                                 if not structure_id in structure_backmaps:
                                     #print(structure_id, i_chain, 'not in structures 2', protein_id, chain, res, i_res)
                                     continue
@@ -176,7 +183,7 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                                     print(f'In residue aggregation of {res} - {i_res}')
 
                                 for i_protein in structure_backmaps[structure_id][i_chain]:
-                                    i_protein_pos = structure_backmaps[structure_id][i_chain][i_protein].get_item([i_res])
+                                    i_protein_pos = structure_backmaps[structure_id][i_chain][i_protein].get_item(i_res)
                                     if i_protein_pos is None: #Unmapped residues
                                         continue
                                     pos_pos_i = Position_Position_Interaction(protein_id, position, i_protein, i_protein_pos)
@@ -223,11 +230,14 @@ class Aggregated_interface:
     def add_pos_pos_interaction(self, pos_pos_interaction):
         if pos_pos_interaction.position_a not in self.pos_pos_interactions:
             self.pos_pos_interactions[pos_pos_interaction.position_a] = {}
+
         if pos_pos_interaction.protein_b not in self.pos_pos_interactions[pos_pos_interaction.position_a]:
             self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b] = {}
+
         if pos_pos_interaction.position_b not in self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b]:
             self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b][pos_pos_interaction.position_b] = pos_pos_interaction
             return True
+        
         return False
 
     def set_recommended_complex(self, recommended_complex, chain, interacting_chain, interface_annotation_score):
@@ -262,12 +272,14 @@ class Aggregated_interface:
 
     def print_interface(self, verbosity = 6):
         max_prints = 100
+        print('==============================================')
         print(f'Aggregated interface object: {self.protein}')
         print(f'Recommended complex: {self.recommended_complex} {self.chain} {self.interacting_chain}')
         if len(self.positions) < max_prints:
             print(f'Positions:\n{self.positions}')
         else:
             print(f'Positions, in total {len(self.positions)}')
+        print(f'Interface score: {self.interface_annotation_score}')
         if verbosity >= 7:
             print('Interactions:')
             n = 0
@@ -280,6 +292,7 @@ class Aggregated_interface:
                             break
                 if n >= max_prints:
                     break
+        print('==============================================')
 
 class Position_Position_Interaction:
     __slots__ = ['protein_a', 'position_a', 'protein_b', 'position_b', 

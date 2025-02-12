@@ -8,7 +8,7 @@ import traceback
 import sqlite3
 
 import structman
-from structman.lib.database.database_core_functions import binningSelect, select
+from structman.lib.database.database_core_functions import binningSelect, select, remove
 from structman import _version
 
 # Tries to reclassify all positions with no classification in the database
@@ -391,6 +391,46 @@ def reinit(config):
     destroy(config)
     load(config)
 
+
+def remove_empty_structures(config):
+    results = select(config, ['Structure_Id'], 'Structure')
+
+    stored_structures = []
+    for row in results:
+        stored_structures.append(row[0])
+
+    results = select(config, ['Structure'], 'Residue')
+    structures_with_residues = set()
+
+    for row in results:
+        structures_with_residues.add(row[0])
+
+    empty_structures = []
+    for structure_id in stored_structures:
+        if not structure_id in structures_with_residues:
+            empty_structures.append(structure_id)
+
+    remove(config, 'Structure', in_rows={'Structure_Id' : empty_structures})
+
+
+def fix_database(config):
+    remove_empty_structures(config)
+
+
+
+def reroll(config):
+    results = select(config, ['Session_Id'], 'Session')
+
+    last_session = None
+    for row in results:
+        if last_session is None:
+            last_session = row[0]
+        elif last_session < row[0]:
+            last_session = row[0]
+
+    
+
+        
 
 def main(config, reclassify_null=False):
     # called with --rcn

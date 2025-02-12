@@ -453,6 +453,114 @@ def parsePDBSequence(buf, chain):
     return seq, res_pos_map
 
 
+
+def parse_chaintype_map(input_page):
+    """
+    Parses a PDB-file and takes all atomic coordinates.
+
+    Input:
+    input_page: String ; content of a pdb file
+
+    Output:
+    chaintype_map
+    """
+
+    lines = input_page.split('\n')
+
+    chain_type_map = {}
+    chain_type = '-'
+
+    peptide_count = {}
+
+    rare_residues = set()
+
+    firstAltLoc = None
+
+    for line in lines:
+        if len(line) > 5:
+            record_name = line[0:6].replace(" ", "")
+            if record_name == "ENDMDL":
+                break
+            elif record_name == 'SEQRES':
+                for tlc in line[19:].split():
+                    tlc = tlc.strip()
+                    if len(tlc) != 3:
+                        continue
+                    if tlc not in residue_consts.THREE_TO_ONE:
+                        rare_residues.add(tlc)
+
+        # ignore short lines
+        if len(line) > 20:
+            atom_nr = line[6:11].replace(" ", "")
+            if record_name.count('ATOM') > 0 and record_name != 'ATOM':  # 100k atom bug fix
+                atom_nr = '%s%s' % (record_name[4:], atom_nr)
+                record_name = 'ATOM'
+
+            res_name = line[17:20].replace(" ", "")
+
+            if len(line) > 21:
+
+                chain_id = line[21]
+
+                if record_name == "ATOM" or record_name == "HETATM":
+                    altLoc = line[16]
+                    if firstAltLoc is None and altLoc != ' ':
+                        firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
+                    if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
+                        continue
+
+
+            if record_name == "ATOM" or record_name == 'MODRES' or record_name == "HETATM":
+                if chain_id not in chain_type_map:
+                    if record_name == "ATOM" or record_name == 'MODRES':
+                        if len(res_name) == 1:
+                            chain_type = "RNA"
+                        elif len(res_name) == 2:
+                            chain_type = "DNA"
+                        elif len(res_name) == 3:
+                            chain_type = "Protein"
+                        chain_type_map[chain_id] = chain_type
+                        peptide_count[chain_id] = [0, 0]
+                    elif record_name == 'HETATM':
+                        if res_name in residue_consts.THREE_TO_ONE or not sdsc_utils.boring(res_name) or (res_name in rare_residues):
+                            chain_type_map[chain_id] = "Protein"
+                            peptide_count[chain_id] = [0, 0]
+                        elif len(res_name) == 1:
+                            chain_type_map[chain_id] = "RNA"
+                            peptide_count[chain_id] = [0, 0]
+                        elif len(res_name) == 2:
+                            chain_type_map[chain_id] = "DNA"
+                            peptide_count[chain_id] = [0, 0]
+                        else:
+                            chain_type_map[chain_id] = 'MISC'
+
+
+                if record_name == 'HETATM':
+                    if res_name in residue_consts.THREE_TO_ONE or not sdsc_utils.boring(res_name) or (res_name in rare_residues):  # For a hetero peptide 'boring' hetero amino acids are allowed as well as other non boring molecules not in THREE_TO_ONE, which are hopefully some kind of anormal amino acids
+                        peptide_count[chain_id][1] += 1
+                    elif len(res_name) < 3:
+                        peptide_count[chain_id][0] += 1
+
+                elif record_name == "ATOM" or record_name == 'MODRES':
+                    peptide_count[chain_id][0] += 1
+                    if len(res_name) == 1:
+                        chain_type_map[chain_id] = "RNA"
+                    elif len(res_name) == 2:
+                        chain_type_map[chain_id] = "DNA"
+
+
+    # New Peptide detection counts irregular amino acids
+    for chain_id in peptide_count:
+        if chain_type_map[chain_id] == 'DNA' or chain_type_map[chain_id] == 'RNA':
+            continue
+        if peptide_count[chain_id][0] <= peptide_count[chain_id][1] * 2:
+            chain_type_map[chain_id] = 'Peptide'
+        elif (peptide_count[chain_id][0] + peptide_count[chain_id][1]) < 150:  # Total number of atoms
+            chain_type_map[chain_id] = 'Peptide'
+
+    return chain_type_map
+
+
 def get_all_chains(buf):
     chains = set()
     for line in buf:
@@ -533,7 +641,7 @@ def parseMMCIFSequence(buf, chain):
 # called by sdsc
 
 
-def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=False, get_is_local=False, verbosity=0, model_path=None):
+def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=False, get_is_local=False, verbosity=0, model_path=None, only_first_model = False):
     AU = False
     if pdb_id.count('_AU') == 1:
         pdb_id = pdb_id[0:4]
@@ -604,7 +712,7 @@ def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=Fal
             continue
 
         elif record_name == b'ENDMDL':
-            if not_crystal:
+            if not_crystal or only_first_model:
                 newlines.append(line)
                 break
             elif not multi_model_mode:
@@ -647,7 +755,6 @@ def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=Fal
                 continue
             res_name = line[17:20].strip().decode('ascii')
             chain_id = line[21:22].decode('ascii')
-            res_nr = line[22:27].strip().decode('ascii')
 
             if record_name == b'HETATM':
                 if res_name not in residue_consts.THREE_TO_ONE and sdsc_utils.boring(res_name) and (len(res_name) == 3) and (res_name not in rare_residues):

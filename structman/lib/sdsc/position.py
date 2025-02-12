@@ -8,7 +8,7 @@ class Position:
                  'disorder_score', 'disorder_region', 'recommended_structure', 'session_less',
                  ]
 
-    def __init__(self, pos=None, wt_aa='X', mut_aas=set(), tags = None, mut_tags_map={}, pdb_res_nr=None,
+    def __init__(self, pos=0, wt_aa='X', mut_aas=set(), tags = None, mut_tags_map={}, pdb_res_nr=None,
                  checked=False, database_id=None, recommended_structure=None, session_less = False):
 
         self.pos = pos  # the position in a protein sequence, int or None

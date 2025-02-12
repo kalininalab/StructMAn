@@ -271,6 +271,8 @@ def search(proteins, config):
 
     for pos, search_db in enumerate(search_dbs):
 
+        t10 = time.time()
+
         if numbers_of_returned_hits[pos] is None:
             number_of_returned_hits = default_number_of_returned_hits
         else:
@@ -280,6 +282,10 @@ def search(proteins, config):
 
         hits, pdb_ids, debug_store = apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, config.gigs_of_ram, config.errorlog, option_seq_thresh, small_proteins = small_proteins, verbosity = config.verbosity, number_of_returned_hits = number_of_returned_hits, is_model_db = is_model_db)
 
+        t11 = time.time()
+        if config.verbosity >= 2:
+            print(f'MMseqs2 {search_db} Part 2.1: {t11 - t10}')
+
         for u_ac in small_proteins:
             if u_ac.count(':') == 1:
                 if u_ac not in hits:
@@ -287,10 +293,22 @@ def search(proteins, config):
                     hits[u_ac] = {(pdb_id, chain): [100.0, 1.0, [chain], len(proteins.get_sequence(u_ac)), len(proteins.get_sequence(u_ac))]}
                     pdb_ids.add(pdb_id)
 
+        t12 = time.time()
+        if config.verbosity >= 2:
+            print(f'MMseqs2 {search_db} Part 2.2: {t12 - t11}')
+
         wipe_folder(config, mmseqs_tmp_folder)
+
+        t13 = time.time()
+        if config.verbosity >= 2:
+            print(f'MMseqs2 {search_db} Part 2.3: {t13 - t12}')
 
         search_results.append((hits, pdb_ids, is_model_db))
     
+        t14 = time.time()
+        if config.verbosity >= 2:
+            print(f'MMseqs2 {search_db} Part 2.4: {t14 - t13}')    
+
     if not debug_store:
         os.remove(temp_fasta)
 

@@ -36,17 +36,19 @@ def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
     table = 'RS_Protein_Session'
     columns = ['Protein', 'Session', 'Input_Id']
 
-    results = select(config, columns, table, equals_rows={'Session': session_id})
-    db, cursor = config.getDB()
+    if session_id is not None:
+        results = select(config, columns, table, equals_rows={'Session': session_id})
 
-    prot_input_dict = {}
+        prot_input_dict = {}
 
-    for row in results:
-        if row[1] != session_id:
-            continue
-        prot_id = row[0]
-        if prot_id in prot_id_list:
-            prot_input_dict[prot_id] = row[2]
+        for row in results:
+            if row[1] != session_id:
+                continue
+            prot_id = row[0]
+            if prot_id in prot_id_list:
+                prot_input_dict[prot_id] = row[2]
+    else:
+        prot_input_dict = set(prot_id_list)
 
     if not includeSequence:
         rows = ['Protein_Id', 'Primary_Protein_Id', 'Uniprot_Ac', 'RefSeq_Ids', 'Uniprot_Id', 'Error_Code', 'Error', 'Gene']
@@ -64,10 +66,14 @@ def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
         if gene_db_id is not None:
             gene_db_ids.add(gene_db_id)
         if prot_id in prot_input_dict:
-            if not includeSequence:
-                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], prot_input_dict[prot_id], gene_db_id)
+            if session_id is not None:
+                input_id = prot_input_dict[prot_id]
             else:
-                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], prot_input_dict[prot_id], gene_db_id, row[8])
+                input_id = None
+            if not includeSequence:
+                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], input_id, gene_db_id, None)
+            else:
+                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], input_id, gene_db_id, row[8])
 
     return protein_dict, gene_db_ids
 
@@ -563,10 +569,12 @@ def positionCheck(proteins, database_session, config):
 
         values = []
         for prot_id in prot_ids:
-            for pos in proteins[prot_id].positions:
-                pos_database_id = proteins[prot_id].positions[pos].database_id
+            for pos_obj in proteins[prot_id].positions:
+                if pos_obj is None:
+                    continue
+                pos_database_id = pos_obj.database_id
                 #proteins[prot_id].positions[pos].print_state()
-                for new_aa in proteins[prot_id].positions[pos].mut_aas:
+                for new_aa in pos_obj.mut_aas:
                     values.append((pos_database_id, new_aa))
 
         if config.verbosity >= 6:
@@ -596,10 +604,12 @@ def positionCheck(proteins, database_session, config):
     # insert the the SNV session connections
     values = []
     for prot_id in prot_ids:
-        for pos in proteins[prot_id].positions:
-            for new_aa in proteins[prot_id].positions[pos].mut_aas:
-                tags = ','.join(proteins[prot_id].positions[pos].mut_aas[new_aa].tags)
-                snv_database_id = proteins[prot_id].positions[pos].mut_aas[new_aa].database_id
+        for pos_obj in proteins[prot_id].positions:
+            if pos_obj is None:
+                continue
+            for new_aa in pos_obj.mut_aas:
+                tags = ','.join(pos_obj.mut_aas[new_aa].tags)
+                snv_database_id = pos_obj.mut_aas[new_aa].database_id
                 values.append((database_session, snv_database_id, tags))
 
     if len(values) > 0:
@@ -1327,7 +1337,8 @@ def getAlignments(proteins, config, get_all_alignments=False):
         print("Time for part 6 in getAlignments: %s" % (str(t6 - t5)))
 
     if config.compute_ppi:
-        pos_db_map = retrieve_stored_proteins(interacting_protein_db_ids, config, proteins)
+        #pos_db_map = retrieve_stored_proteins(interacting_protein_db_ids, config, proteins, without_positions=True)
+        _ = retrieve_stored_proteins(interacting_protein_db_ids, config, proteins, with_struct_recs=False, return_pos_db_map=False)
 
     if config.verbosity >= 2:
         t7 = time.time()
@@ -1969,7 +1980,9 @@ def retrieve_gene_id_map(gene_db_ids, config):
         gene_id_map[row[0]] = (row[1], row[2])
     return gene_id_map
 
-def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = False):
+def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = False, with_struct_recs = True, without_positions = False, return_pos_db_map = True):
+    if config.verbosity >= 2:
+        t0 = time.time()
     cols = ['Protein_Id', 'Primary_Protein_Id', 'Sequence', 'Mutant_Type', 'Mutant_Positions', 'Gene']
     if not isinstance(prot_db_ids, dict):
         protein_ids_unknown = True
@@ -1980,6 +1993,11 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
         results = binningSelect(prot_db_ids, cols, 'Protein', config)
     else:
         results = binningSelect(prot_db_ids.keys(), cols, 'Protein', config)
+
+    if config.verbosity >= 2:
+        t1 = time.time()
+        print(f'Retrieve stored proteins, part 1: {t1 - t0} {len(prot_db_ids)}')
+
     id_prot_id_map = {}
 
     prot_id_list = set()
@@ -2046,79 +2064,117 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
         if mut_type is not None:
             prot_ids_mutants_excluded.add(row[0])
 
+    if config.verbosity >= 2:
+        t2 = time.time()
+        print(f'Retrieve stored proteins, part 2: {t2 - t1}')
+
     proteins.set_stored_ids(prot_id_list, prot_ids_mutants_excluded)
 
+    if config.verbosity >= 2:
+        t3 = time.time()
+        print(f'Retrieve stored proteins, part 3: {t3 - t2}')
+
     gene_id_map = retrieve_gene_id_map(gene_db_ids, config)
+
+    if config.verbosity >= 2:
+        t4 = time.time()
+        print(f'Retrieve stored proteins, part 4: {t4 - t3}')
 
     for prot_id in prot_gene_db_id_map:
         proteins[prot_id].gene = gene_id_map[prot_gene_db_id_map[prot_id]][0]
 
-    if with_mappings:
-        cols = ['Protein', 'Position_Number', 'Position_Id', 'Recommended_Structure_Data', 'Wildtype_Residue', 'IUPRED', 'IUPRED_Glob', 'Position_Data']
-    else:
-        cols = ['Protein', 'Position_Number', 'Position_Id', 'Recommended_Structure_Data', 'Wildtype_Residue']
-    table = 'Position'
-
-    if protein_ids_unknown:
-        results = binningSelect(prot_db_ids, cols, table, config)
-    else:
-        results = binningSelect(prot_db_ids.keys(), cols, table, config)
+    if config.verbosity >= 2:
+        t5 = time.time()
+        print(f'Retrieve stored proteins, part 5: {t5 - t4}')
 
     pos_db_map = {}
 
     error_count = 0
     error_message = None
 
-    for row in results:
-        p_id = row[0]
-
-        m_id = row[2]
-        pos = row[1]
-        if row[3] is not None:
-            (recommended_structure_str, max_seq_structure_str) = unpack(row[3])
+    if not without_positions:
+        if with_mappings:
+            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data', 'IUPRED', 'IUPRED_Glob', 'Position_Data']
+        elif with_struct_recs:
+            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data']
         else:
-            recommended_structure_str = None
-            max_seq_structure_str = None
+            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data']
+        table = 'Position'
 
-        recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(recommended_structure_str)
-        max_seq_structure, max_seq_seq_id, max_seq_cov, max_seq_resolution = sdsc_utils.process_recommend_structure_str(max_seq_structure_str)
+        if protein_ids_unknown:
+            results = binningSelect(prot_db_ids, cols, table, config)
+        else:
+            results = binningSelect(prot_db_ids.keys(), cols, table, config)
 
-        wt_aa = row[4]
+        if config.verbosity >= 2:
+            t6 = time.time()
+            print(f'Retrieve stored proteins, part 6: {t6 - t5} {len(results)}')
 
-        if with_mappings:
+        for row in results:
+            p_id = row[0]
 
-            if row[7] is None:
-                mapping_results = None
+            m_id = row[2]
+            pos = row[1]
 
+            wt_aa = row[3]
+
+            if with_struct_recs:
+                if row[4] is not None:
+                    (recommended_structure_str, max_seq_structure_str) = unpack(row[3])
+                else:
+                    recommended_structure_str = None
+                    max_seq_structure_str = None
+
+                recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(recommended_structure_str)
+                max_seq_structure, max_seq_seq_id, max_seq_cov, max_seq_resolution = sdsc_utils.process_recommend_structure_str(max_seq_structure_str)
+
+
+
+            if with_mappings:
+
+                if row[7] is None:
+                    mapping_results = None
+
+                else:
+                    try:
+                        (
+                            interaction_str,
+                            amount_of_structures,
+                            raw_structural_features,
+                            raw_rin_features,
+                            raw_microminer_features,
+                            raw_integrated_features
+                        ) = unpack(row[7])
+
+
+                        mapping_results = ([], recommended_structure, max_seq_structure, None, amount_of_structures, raw_structural_features, raw_microminer_features, raw_rin_features, raw_integrated_features)
+
+                    except:
+                        error_count += 1
+                        if error_message is None:
+                            [e, f, g] = sys.exc_info()
+                            g = traceback.format_exc()
+                            error_message = f'Error in retrieving position data, couldnt unpack: {m_id}\n{e}\n{f}\n{g}'
+                        continue
+                mappings_obj = mappings_package.Mappings(raw_results = mapping_results)
+
+            if with_struct_recs:
+                pos_obj = position_package.Position(pos=pos, checked=True, recommended_structure=recommended_structure, database_id=m_id, wt_aa = wt_aa)
             else:
-                try:
-                    (
-                        interaction_str,
-                        amount_of_structures,
-                        raw_structural_features,
-                        raw_rin_features,
-                        raw_microminer_features,
-                        raw_integrated_features
-                    ) = unpack(row[7])
+                pos_obj = position_package.Position(pos=pos, checked=True, database_id=m_id, wt_aa = wt_aa)
 
+            if with_mappings:
+                pos_obj.mappings = mappings_obj
+            prot_id = id_prot_id_map[p_id]
+            proteins[prot_id].add_positions([pos_obj])
+            if return_pos_db_map:
+                pos_db_map[m_id] = (prot_id, pos)
+    else:
+        t6 = time.time()
 
-                    mapping_results = ([], recommended_structure, max_seq_structure, None, amount_of_structures, raw_structural_features, raw_microminer_features, raw_rin_features, raw_integrated_features)
-
-                except:
-                    error_count += 1
-                    if error_message is None:
-                        [e, f, g] = sys.exc_info()
-                        g = traceback.format_exc()
-                        error_message = f'Error in retrieving position data, couldnt unpack: {m_id}\n{e}\n{f}\n{g}'
-                    continue
-            mappings_obj = mappings_package.Mappings(raw_results = mapping_results)
-
-        pos_obj = position_package.Position(pos=pos, checked=True, recommended_structure=recommended_structure, database_id=m_id, wt_aa = wt_aa)
-        if with_mappings:
-            pos_obj.mappings = mappings_obj
-        prot_id = id_prot_id_map[p_id]
-        proteins[prot_id].add_positions([pos_obj])
-        pos_db_map[m_id] = (prot_id, pos)
+    if config.verbosity >= 2:
+        t7 = time.time()
+        print(f'Retrieve stored proteins, part 7: {t7 - t6}')
 
     if error_count > 0:
         print(f'There were {error_count} number of errors retrieving position data, example error:\n{error_message}')
