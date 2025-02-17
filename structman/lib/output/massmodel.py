@@ -210,8 +210,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                         structures = proteins.get_complex_structures(pdb_id)
                         try:
                             alignment_tuple = proteins.get_alignment(prot_id, pdb_id, tchain)
-                            seq_id = proteins[prot_id].structure_annotations[(pdb_id, tchain)].sequence_identity
-                            cov = proteins[prot_id].structure_annotations[(pdb_id, tchain)].coverage
+                            seq_id = proteins[prot_id].structure_annotations[pdb_id][tchain].sequence_identity
+                            cov = proteins[prot_id].structure_annotations[pdb_id][tchain].coverage
                         except:
                             [e, f, g] = sys.exc_info()
                             g = traceback.format_exc()

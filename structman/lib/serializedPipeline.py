@@ -193,7 +193,7 @@ def sequenceScan(config, proteins, indels, genes = None):
         if len(proteins) <= 100:
             print(f'Protein IDs going into sequence scan: {proteins}, genes set: {genes is not None}')
         else:
-            print(f'{len(proteins)} number of Protein IDs going into sequence scan, genes set: {genes is None}')
+            print(f'{len(proteins)} number of Protein IDs going into sequence scan, genes set: {genes is not None}')
 
     for prot_id in proteins:
         uni_pos, tags = proteins[prot_id].popNone()
@@ -215,12 +215,12 @@ def sequenceScan(config, proteins, indels, genes = None):
                 if proteins[prot_id].input_id in indels:  # Indel proteins need complete classification
                     uni_pos = True
                 sequenceScanNP[proteins[prot_id].input_id] = tags, uni_pos, proteins[prot_id].u_ac
-            elif proteins[prot_id].input_id[:3] == 'ENS' and (proteins[prot_id].input_id == proteins[prot_id].primary_protein_id):
+            elif proteins[prot_id].input_id[:3] == 'ENS' and ((proteins[prot_id].input_id == proteins[prot_id].primary_protein_id) or genes is not None):
                 sequenceScanEnsembl[proteins[prot_id].input_id] = tags, uni_pos
             else:
                 if prot_id in indels:  # Indel proteins need complete classification
                     uni_pos = True
-                sequenceScanProteins[prot_id] = tags, uni_pos  # New: process everything to filter input by sanity checks
+                sequenceScanProteins[proteins[prot_id].u_ac] = tags, uni_pos  # New: process everything to filter input by sanity checks
 
     if len(sequenceScanNP) > 0:
         if config.verbosity >= 1:
@@ -331,7 +331,7 @@ def sequenceScan(config, proteins, indels, genes = None):
             else:
                 session_less = False
 
-            if transcript_id not in gene_sequence_map:
+            if (transcript_id not in gene_sequence_map) and (transcript_id not in gene_id_map):
                 #This happens for problematic Ensembl transcript ids, for example for entries without an open reading frame (due to the transcript being non-coding)
                 try:
                     proteins.remove_protein(transcript_id)
@@ -345,33 +345,36 @@ def sequenceScan(config, proteins, indels, genes = None):
                 removed_proteins.append(transcript_id)
                 continue
 
-            seq = gene_sequence_map[transcript_id]
+            if genes is not None:
+                gene_id, gene_name = gene_id_map[transcript_id]
+                primary_protein_id = proteins[transcript_id].primary_protein_id
+                if gene_id not in genes:
+                    gene_obj = gene_package.Gene(gene_id, proteins = {transcript_id:primary_protein_id}, gene_name = gene_name)
+                    genes[gene_id] = gene_obj
+                else:
+                    genes[gene_id].proteins[transcript_id] = primary_protein_id
+                    genes[gene_id].gene_name = gene_name
+
+                proteins[transcript_id].gene = gene_id
 
             primary_protein_id = transcript_id
 
-            proteins[primary_protein_id].sequence = seq
-            n += 1
-            mean_seq_len += len(seq)
+            if transcript_id in gene_sequence_map:
+                seq = gene_sequence_map[transcript_id]
 
-            if genes is not None:
-                gene_id, gene_name = gene_id_map[transcript_id]
-                if gene_id not in genes:
-                    gene_obj = gene_package.Gene(gene_id, proteins = [primary_protein_id], gene_name = gene_name)
-                    genes[gene_id] = gene_obj
-                else:
-                    genes[gene_id].proteins.add(primary_protein_id)
+                proteins[primary_protein_id].sequence = seq
+                n += 1
+                mean_seq_len += len(seq)
 
-                proteins[primary_protein_id].gene = gene_id
-
-            for (pos, aa) in enumerate(seq):
-                seq_pos = pos + 1
-                if proteins[primary_protein_id].contains_position(seq_pos):
-                    proteins[primary_protein_id].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
-                    proteins[primary_protein_id].positions[seq_pos].add_tags(tags)
-                elif uni_pos:
-                    if not proteins[primary_protein_id].contains_position(seq_pos):
-                        position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
-                        proteins[primary_protein_id].add_positions([position])
+                for (pos, aa) in enumerate(seq):
+                    seq_pos = pos + 1
+                    if proteins[primary_protein_id].contains_position(seq_pos):
+                        proteins[primary_protein_id].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
+                        proteins[primary_protein_id].positions[seq_pos].add_tags(tags)
+                    elif uni_pos:
+                        if not proteins[primary_protein_id].contains_position(seq_pos):
+                            position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
+                            proteins[primary_protein_id].add_positions([position])
 
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
@@ -472,7 +475,7 @@ def sequenceScan(config, proteins, indels, genes = None):
 
             for (pos, aa) in enumerate(seq):
                 seq_pos = pos + 1
-                if not proteins[prot_id].contains_positions(seq_pos):
+                if not proteins[prot_id].contains_position(seq_pos):
                     position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True)
                     proteins[prot_id].add_positions([position])
 
@@ -938,28 +941,40 @@ def buildQueue(config, filename, already_split=False):
 
 def gene_isoform_check(proteins, genes, indel_map, config):
     extra_sequence_scan_proteins = {}
+    prots_to_check = []
     for gene_id in genes:
         if len(genes[gene_id].proteins) < 2:
             continue
 
         if gene_id == 'to_fetch':
             for protein_id in genes[gene_id].proteins:
-                extra_sequence_scan_proteins[protein_id] = proteins[protein_id]
+                extra_sequence_scan_proteins[protein_id] = proteins[genes[gene_id].proteins[protein_id]]
+                prots_to_check.append(genes[gene_id].proteins[protein_id])
             continue
 
-        isoform_list = list(genes[gene_id].proteins)
+        isoform_list = list(genes[gene_id].proteins.keys())
 
         for iso1 in isoform_list:
             for iso2 in isoform_list:
                 if iso1 == iso2:
                     continue
-                extra_sequence_scan_proteins[iso1] = proteins[iso1]
-                extra_sequence_scan_proteins[iso2] = proteins[iso2]
+                extra_sequence_scan_proteins[iso1] = proteins[genes[gene_id].proteins[iso1]]
+                extra_sequence_scan_proteins[iso2] = proteins[genes[gene_id].proteins[iso2]]
 
     if config.verbosity >= 3:
         print(f'In gene_isoform_check: Number of extra_sequence_scan_proteins: {len(extra_sequence_scan_proteins)}, Number of Genes: {len(genes)}')
 
+    if config.verbosity >= 3:
+        if len(genes) < 10:
+            for gene_id in genes:
+                genes[gene_id].print_content()
+
     extra_sequence_scan_proteins, indel_map, _, removed_proteins, genes = sequenceScan(config, extra_sequence_scan_proteins, indel_map, genes = genes)
+
+    if config.verbosity >= 3:
+        if len(genes) < 10:
+            for gene_id in genes:
+                genes[gene_id].print_content()
 
     n = 0
     mean_seq_len = 0
@@ -983,7 +998,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
     for gene_id in genes:
         if len(genes[gene_id].proteins) < 2:
             continue
-        isoform_list = list(genes[gene_id].proteins)
+        isoform_list = list(genes[gene_id].proteins.values())
 
         sequence_map = {}
         iso_pairs = []
@@ -991,12 +1006,12 @@ def gene_isoform_check(proteins, genes, indel_map, config):
         for iso1 in isoform_list:
             if iso1 not in proteins:
                 if iso1 in genes[gene_id].proteins:
-                    genes[gene_id].proteins.remove(iso1)
+                    del genes[gene_id].proteins[iso1]
                 continue
             for iso2 in isoform_list:
                 if iso2 not in proteins:
                     if iso2 in genes[gene_id].proteins:
-                        genes[gene_id].proteins.remove(iso2)
+                        del genes[gene_id].proteins[iso2]
                     continue
                 if iso1 == iso2:
                     continue
@@ -1054,7 +1069,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
             proteins[iso1].add_multi_mutation(multi_mutation, indel_map_entry, mut_prot_id = iso2)
 
     #Remove the sequences for saving memory (sequences will be refetched in the individual chunk loops)
-    for prot_id in extra_sequence_scan_proteins:
+    for prot_id in prots_to_check:
         proteins[prot_id].sequence = None
 
     return genes

@@ -177,14 +177,14 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
         protein_specific_tags = set([])
     if gene_id is not None:
         if gene_id not in genes:
-            gene_obj = gene_package.Gene(gene_id, proteins = [primary_protein_id])
+            gene_obj = gene_package.Gene(gene_id, proteins = {input_id:primary_protein_id})
             genes[gene_id] = gene_obj
         else:
-            genes[gene_id].proteins.add(primary_protein_id)
+            genes[gene_id].proteins[input_id] = primary_protein_id
 
     if config.verbosity >= 6:
         t1 = time.time()
-        print(f'Time for integrate_protein part 1: {t1-t0}, {len(other_ids)} {len(prot_map[input_id][0])}')
+        print(f'Time for integrate_protein part 1: {t1-t0}, {primary_protein_id} {input_id} {gene_id} {len(other_ids)} {len(prot_map[input_id][0])}')
 
 
     if primary_protein_id not in proteins:
@@ -891,19 +891,25 @@ def embl_database_lookup(config, transcript_ids):
         gene_id = row[1]
         gene_name = row[2]
         try:
-            seq = base_utils.unpack(row[3])
+            if row[3] is not None:
+                seq = base_utils.unpack(row[3])
+            else:
+                seq = None
         except:
             broken_ids.add(transcript_id)
             continue
 
         if seq is None:
+            if gene_id is None:
+                continue
             missing_ids.remove(transcript_id)
             continue
+
+        gene_id_map[transcript_id] = (gene_id, gene_name)
 
         sequence_map[transcript_id] = seq
 
         mean_seq_len += len(seq)
-        gene_id_map[transcript_id] = (gene_id, gene_name)
         missing_ids.remove(transcript_id)
     if len(sequence_map) > 0:
         mean_seq_len = mean_seq_len / len(sequence_map)
@@ -1298,7 +1304,7 @@ def get_obsolete_sequence(u_ac, config, return_id=False, tries = 0):
 
 def getSequence(uniprot_ac, config, tries=0, return_id=False, obsolete_try = False):
     if config.verbosity >= 3:
-        print('uniprot.getSequence for ', uniprot_ac)
+        print(f'uniprot.getSequence for {uniprot_ac} {tries}')
 
     if uniprot_ac is None:
         config.errorlog.add_error(f'Uniprot Ac is None')

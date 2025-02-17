@@ -305,6 +305,10 @@ def getAAChange(mutation_id, db, cursor):
 
 
 def insertMultiMutations(proteins, genes, session, config):
+
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations: {len(proteins.multi_mutations)}')
+
     db_ids = []
     for wt_prot in proteins.multi_mutations:
         db_ids.append(proteins.get_protein_database_id(wt_prot))
@@ -2120,7 +2124,7 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
             if with_struct_recs:
                 if row[4] is not None:
-                    (recommended_structure_str, max_seq_structure_str) = unpack(row[3])
+                    (recommended_structure_str, max_seq_structure_str) = unpack(row[4])
                 else:
                     recommended_structure_str = None
                     max_seq_structure_str = None

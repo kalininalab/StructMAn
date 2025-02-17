@@ -730,7 +730,15 @@ def getIAmap(interaction_score_file):
         interaction_type_a, interaction_type_b = interaction_sub_type.split('_')
 
         res_nr_a = "%s%s" % (res_nr_a, insertioncode_a.replace('_', ''))
+        try:
+            res_nr_a = int(res_nr_a)
+        except:
+            pass
         res_nr_b = "%s%s" % (res_nr_b, insertioncode_b.replace('_', ''))
+        try:
+            res_nr_b = int(res_nr_b)
+        except:
+            pass
         if res_name_a in ligands.BORING_LIGANDS and res_name_a not in residues.THREE_TO_ONE:
             continue
         if res_name_b in ligands.BORING_LIGANDS and res_name_b not in residues.THREE_TO_ONE:
@@ -870,6 +878,10 @@ def getCentMap(centrality_file):
 
             [chain, res_nr, insertioncode, res_name] = res.split(':')
             res_nr = "%s%s" % (res_nr, insertioncode.replace('_', ''))
+            try:
+                res_nr = int(res_nr)
+            except:
+                pass
 
             if chain not in centrality_map:
                 centrality_map[chain] = {}
@@ -890,7 +902,7 @@ def getProfile(interaction_map, residue, ligands, metals, ions, res_contig_map, 
     profile = Interaction_profile()
     (chain, res) = residue
 
-    if chain not in     interaction_map:
+    if chain not in interaction_map:
         return profile
     if res not in interaction_map[chain]:
         return profile

@@ -255,7 +255,7 @@ class Protein:
         for pos_obj in self.positions:
             if pos_obj is None:
                 continue
-            if prefer_mutation_positions and pos not in mut_pos:
+            if prefer_mutation_positions and pos_obj.pos not in mut_pos:
                 continue
             recommended_structure = pos_obj.get_recommended_structure()
             if recommended_structure == '-':
@@ -522,7 +522,7 @@ class Protein:
     def get_alignment(self, pdb_id, chain):
         if not pdb_id in self.structure_annotations:
             return 'Structure %s:%s not in annotation list of %s' % (pdb_id, chain, self.primary_protein_id)
-        if not chain in self.structure_annotations[pdb_id][chain]:
+        if not chain in self.structure_annotations[pdb_id]:
             return 'Structure %s:%s not in annotation list of %s' % (pdb_id, chain, self.primary_protein_id)
 
         return self.structure_annotations[pdb_id][chain].get_alignment()
@@ -948,7 +948,7 @@ class Proteins:
 
     def get_complex_structures(self, pdb_id):
         chains = self.get_complex_chains(pdb_id)
-        structures = {}
+        structures = {pdb_id : {}}
         for chain in chains:
             if not pdb_id in self.structures:
                 continue

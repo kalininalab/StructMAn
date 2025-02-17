@@ -7,7 +7,12 @@ class Gene:
         self.gene_id = gene_id
         self.gene_name = gene_name
         if proteins is not None:
-            self.proteins = set(proteins)
+            self.proteins = proteins
         else:
-            self.proteins = set([])
+            self.proteins = {}
         self.database_id = None
+
+    def print_content(self):
+        print(f'\nPrint out of Gene: {self.gene_id} {self.gene_name}')
+        for prot_id in self.proteins:
+            print(f'{prot_id} -> {self.proteins[prot_id]}')

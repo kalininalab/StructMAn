@@ -64,7 +64,8 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
         for pos, mappings, disorder_score, disorder_region in classification_inp:
 
             mappings_obj = mappings_package.Mappings()
-            #print(f"In para_classify: {protein_id} {pos} {len(mappings)}")
+            if config.verbosity >= 6:
+                print(f"In para_classify: {protein_id} {pos} {len(mappings)}")
 
             for mapp in mappings:
 
@@ -96,6 +97,7 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
                  intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
                  b_factor, modres,
                  lig_dists, chain_distances, homomer_distances, res_aa) = mapping
+                #print(mapping)
 
                 gsd_return = get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances)
 
@@ -132,6 +134,8 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
                     'surface_value' : rsa, 'mainchain_surface_value' : mc_rsa, 'sidechain_surface_value' : sc_rsa,
                     'rin_class' : rin_class, 'rin_simple_class' : rin_simple_class
                 }
+
+                #print(structural_feature_dict)
 
                 rin_based_feature_dict = {
                     'profile' : profile,
@@ -238,6 +242,7 @@ def get_res_info(structures, pdb_id, chain, res_nr):
                 inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
                 intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
                 residue_obj.b_factor, residue_obj.modres, lig_dists, chain_distances, homomer_distances, residue_obj.aa)
+
     return res_info
 
 
@@ -667,9 +672,6 @@ def generate_classification_dump(size_sorted, config, proteins = None, protein_m
                 structure_quality_measures[protein_id][structure_id] = {}                
             structure_quality_measures[protein_id][structure_id][chain] = (seq_id, coverage)
 
-        if config.verbosity >= 6:
-            print(f'\nMapped positions in generate_classification_dump:\nState of structures:\n{proteins.structures}\nState of complex_store:\n{complex_store}')
-
     t1 = time.time()
     if config.verbosity >= 4:
         size_in_gb_of_complex_store = sys.getsizeof(complex_store) / 1024 / 1024
@@ -723,7 +725,8 @@ def process_classification_outputs(config, outs, proteins, recommended_complexes
         if protein_id not in recommended_complexes:
             recommended_complexes[protein_id] = {}
         for pos, mapping_results in pos_outs:
-            #print(f'In process_classification_outputs: {protein_id} {pos} {mapping_results}')
+            if config.verbosity >= 7:
+                print(f'In process_classification_outputs: {protein_id} {pos} {mapping_results}')
             proteins.protein_map[protein_id].positions[pos].mappings = mappings_package.Mappings(raw_results=mapping_results)
             recommended_complexes[protein_id][pos] = proteins.protein_map[protein_id].positions[pos].mappings.recommendation_order
 

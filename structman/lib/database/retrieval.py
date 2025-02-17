@@ -75,6 +75,8 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                     except:
                         res_id = row[2]
                     if not retrieve_only_db_ids:
+                        unpacked_res_data = unpack(row[3])
+                        #print(unpacked_res_data)
                         (one_letter, lig_dist_str, chain_dist_str, rsa, relative_main_chain_acc, relative_side_chain_acc,
                                ssa, homo_str, profile_str,
                                centrality_score_str, b_factor, modres, phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length,
@@ -83,7 +85,7 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                                intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
                                inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
                                intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
-                               interacting_chains_str, interacting_ligands_str) = unpack(row[3])
+                               interacting_chains_str, interacting_ligands_str) = unpacked_res_data
                 except:
                     config.errorlog.add_warning('Defective database entry in Residue table: %s %s' % (str(row[0]), str(row[1])))
                     continue

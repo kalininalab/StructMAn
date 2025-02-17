@@ -133,10 +133,10 @@ def calcDSSP(path, DSSP, angles=False, verbosity_level=0):
             psi = None
 
         if chain not in dssp_dict:
-            dssp_dict[chain] = {}
-        dssp_dict[chain][res] = (racc, relative_main_chain_acc, relative_side_chain_acc, ssa)
+            dssp_dict[chain] = residue_package.Residue_Map()
+        dssp_dict[chain].add_item(res, (racc, relative_main_chain_acc, relative_side_chain_acc, ssa))
         if angles:
-            dssp_dict[chain][res] = (racc, relative_main_chain_acc, relative_side_chain_acc, ssa, phi, psi)
+            dssp_dict[chain].add_item(res, (racc, relative_main_chain_acc, relative_side_chain_acc, ssa, phi, psi))
     return dssp_dict, errorlist
 
 
@@ -206,15 +206,30 @@ def parsePDB(input_page):
                 if record_name == 'MODRES':
                     chain_id = line[16]
                     res_nr = line[18:23].replace(" ", "")
+                    try:
+                        res_nr = int(res_nr)
+                    except:
+                        pass
                     res_name = line[24:27].replace(" ", "")
-                    if not (chain_id, res_nr) in modres_map:
-                        modres_map[(chain_id, res_nr)] = res_name
+                    if not chain_id in modres_map:
+                        modres_map[chain_id] = {}
+                    if not res_nr in modres_map[chain_id]:
+                        modres_map[chain_id][res_nr] = res_name
 
                 if record_name == 'SSBOND':
                     chain_1 = line[15]
                     res_nr_1 = line[17:22].replace(" ", "")
+                    try:
+                        res_nr_1 = int(res_nr_1)
+                    except:
+                        pass
                     chain_2 = line[29]
                     res_nr_2 = line[31:36].replace(" ", "")
+                    try:
+                        res_nr_2 = int(res_nr_2)
+                    except:
+                        pass
+
                     ssbond_len = float(line[73:78].replace(' ', ''))
                     ssbond_map[(chain_1, res_nr_1)] = (chain_2, res_nr_2, ssbond_len)
                     ssbond_map[(chain_2, res_nr_2)] = (chain_1, res_nr_1, ssbond_len)
@@ -223,11 +238,19 @@ def parsePDB(input_page):
                     atom_1 = line[12:16].replace(" ", "")
                     res_name_1 = line[17:20].replace(" ", "")
                     res_nr_1 = line[22:27].replace(" ", "")
+                    try:
+                        res_nr_1 = int(res_nr_1)
+                    except:
+                        pass                    
                     chain_1 = line[21]
 
                     atom_2 = line[42:46].replace(" ", "")
                     res_name_2 = line[47:50].replace(" ", "")
                     res_nr_2 = line[52:57].replace(" ", "")
+                    try:
+                        res_nr_2 = int(res_nr_2)
+                    except:
+                        pass
                     chain_2 = line[51]
 
                     altLoc_1 = line[16]
@@ -248,17 +271,27 @@ def parsePDB(input_page):
                     res_name_1 = line[11:14].replace(" ", "")
                     chain_1 = line[15]
                     res_nr_1 = line[17:22].replace(" ", "")
-
+                    try:
+                        res_nr_1 = int(res_nr_1)
+                    except:
+                        pass
                     res_name_2 = line[25:28].replace(" ", "")
                     chain_2 = line[29]
                     res_nr_2 = line[31:36].replace(" ", "")
-
+                    try:
+                        res_nr_2 = int(res_nr_2)
+                    except:
+                        pass
                     angle = float(line[53:59].replace(" ", ""))
 
                     cis_conformation_map[(chain_1, res_nr_1)] = (res_name_2, chain_2, res_nr_2, angle)
                     cis_follower_map[(chain_2, res_nr_2)] = (res_name_1, chain_1, res_nr_1, angle)
 
                 chain_id = line[21]
+
+                if not chain_id in modres_map:
+                    modres_map[chain_id] = {}
+
                 try:
                     res_nr = int(line[22:27].replace(" ", ""))  # [22:27] includes the insertion_code
                 except:
@@ -368,11 +401,11 @@ def parsePDB(input_page):
                         coordinate_map[chain_id] = [{}, {}]
                         box_map[chain_id] = [x, x, y, y, z, z]
 
-                    if ((chain_id, res_nr) in modres_map) or (res_name in THREE_TO_ONE) or (res_name in rare_residues):  # If it is a modified residue, than add it to the normal residues...
+                    if res_nr in modres_map[chain_id] or (res_name in THREE_TO_ONE) or (res_name in rare_residues):  # If it is a modified residue, than add it to the normal residues...
                         if atom_name[0] in ('H', 'D'):
                             continue
-                        if not (chain_id, res_nr) in modres_map:
-                            modres_map[(chain_id, res_nr)] = res_name
+                        if not res_nr in modres_map[chain_id]:
+                            modres_map[chain_id][res_nr] = res_name
                         if res_nr not in coordinate_map[chain_id][0]:
                             coordinate_map[chain_id][0][res_nr] = [res_name, {}]
                         coordinate_map[chain_id][0][res_nr][1][atom_nr] = (atom_name, x, y, z)
@@ -619,9 +652,9 @@ def calculate_interfaces(IAmap, dssp_dict, chain_type_map, config):
                     for res_c in IAmap[chain][res]['combi']['all'][chain_c]:
                         if res_c in interfaces[chain][chain_b].interactions:
                             continue
-                        if not res_c in dssp_dict[chain_c]:
+                        if not dssp_dict[chain_c].contains(res_c):
                             continue
-                        sc_rsa = dssp_dict[chain_c][res_c][2]
+                        sc_rsa = dssp_dict[chain_c].get_item(res_c)[2]
                         if sdsc_utils.locate(sc_rsa, config, binary_decision=True) != 'Surface':
                             continue
                         edge_count = 0
@@ -730,8 +763,11 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
     milieu_dict[target_chain] = {}
     sub_loop_broken = False
 
+    #print(dssp_dict)
+
     for target_res_id in target_residues[target_chain]:
         if not target_res_id in res_contig_map[target_chain]:
+            #print(f'{pdb_id} {target_chain} {target_res_id}')
             continue
         if sub_loop_broken:
             break
@@ -783,7 +819,7 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
                     for inter_chain_res in inside_sphere:
                         if chain not in dssp_dict:
                             continue
-                        if inter_chain_res not in dssp_dict[chain]:
+                        if not dssp_dict[chain].contains(inter_chain_res):
                             continue
                         dist = inside_sphere[inter_chain_res]
                         total_inter_dist_weights += 1 / dist
@@ -795,7 +831,7 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
                         kd = HYDROPATHY[inter_chain_res_one_letter]
                         inter_chain_kds.append(kd)
                         inter_chain_dist_weighted_kds.append(kd / dist)
-                        rsa = dssp_dict[chain][inter_chain_res][0]
+                        rsa = dssp_dict[chain].get_item(inter_chain_res)[0]
                         if rsa is not None:
                             inter_chain_rsas.append(rsa)
                             inter_chain_dist_weighted_rsas.append(rsa / dist)
@@ -827,7 +863,7 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
                         print('Residue-Residue calc:', pdb_id, chain, target_res_id, 'inside the sphere:', len(inside_sphere))
 
                     for intra_chain_res in inside_sphere:
-                        if intra_chain_res not in dssp_dict[chain]:
+                        if not dssp_dict[chain].contains(intra_chain_res):
                             continue
                         if not res_contig_map[chain][intra_chain_res][1] in THREE_TO_ONE:
                             continue
@@ -837,7 +873,7 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
                         kd = HYDROPATHY[intra_chain_res_one_letter]
                         intra_chain_kds.append(kd)
                         intra_chain_dist_weighted_kds.append(kd / dist)
-                        rsa = dssp_dict[chain][intra_chain_res][0]
+                        rsa = dssp_dict[chain].get_item(intra_chain_res)[0]
                         if rsa is not None:
                             intra_chain_rsas.append(rsa)
                             intra_chain_dist_weighted_rsas.append(rsa / dist)
@@ -910,8 +946,8 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
 
         if dssp:
             if target_chain in dssp_dict:
-                if target_res_id in dssp_dict[target_chain]:
-                    (rsa, relative_main_chain_acc, relative_side_chain_acc, ssa, phi, psi) = dssp_dict[target_chain][target_res_id]
+                if dssp_dict[target_chain].contains(target_res_id):
+                    (rsa, relative_main_chain_acc, relative_side_chain_acc, ssa, phi, psi) = dssp_dict[target_chain].get_item(target_res_id)
                 else:
                     siss_value = None
                     if target_res_id in siss_map:
@@ -951,6 +987,7 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
             relative_main_chain_acc = None
             relative_side_chain_acc = None
             rsa = siss_value
+
         if target_chain in profiles:
             if target_res_id in profiles[target_chain]:
                 profile, centrality_scores = profiles[target_chain][target_res_id]
@@ -973,8 +1010,13 @@ def analysis_chain(target_chain, config, profiles, centroid_map, analysis_dump):
 
         avg_b_factor = sum(b_factors[target_chain][target_res_id]) / float(len(b_factors[target_chain][target_res_id]))
 
-        if (target_chain, target_res_id) in modres_map:
-            modres = True
+        #print(f'{pdb_id} {target_chain} {target_res_id} {rsa} {relative_side_chain_acc} {avg_b_factor}')
+
+        if target_chain in modres_map:
+            if target_res_id in modres_map[target_chain]:
+                modres = True
+            else:
+                modres = False
         else:
             modres = False
 

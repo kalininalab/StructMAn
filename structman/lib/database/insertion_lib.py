@@ -634,4 +634,3 @@ def insertComplexes(proteins, config):
 
     if len(values) > 0:
         insert('RS_Ligand_Structure', ['Ligand', 'Complex', 'Chain', 'Residue'], values, config)
-

@@ -36,8 +36,6 @@ from structman.lib.output import out_generator, out_utils, massmodel
 from structman.base_utils.base_utils import resolve_path, calculate_chunksizes
 from structman.lib.sdsc.mutations import MultiMutation
 
-import structman.scripts.spectrumany as pymol_spectrumany
-
 class Gene:
 
     def __init__(self, gene_id, name, isoform_pair_multimutations, isoform_pair_scores, isoform_expressions, isoform_prot_objs):
@@ -1338,6 +1336,9 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
 
 
 def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=200):
+    
+    import structman.scripts.spectrumany as pymol_spectrumany
+
     try:
         import pymol
         import pymol.cmd as pymol_cmd
@@ -1352,11 +1353,11 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
 
     pymol_out_f = f"{out_f}/models_pymol_plots"
 
-    if config.verbosity >= 2:
-        print(f'Calling of create_pymol_plot: target protein: {target}, outfolder: {pymol_out_f}')
+    if config.verbosity >= 3:
+        print(f'Calling of create_pymol_plot: target protein: {target}, outfolder: {pymol_out_f}\n{uninterresting_isoform_pairs}')
 
     list_of_paths = model_summary['File location']
-    prot_ids = model_summary['Input ID']
+    prot_ids = model_summary['Wildtype protein']
     mut_prot_ids = model_summary['Additional Label']
     plot_dict = {}
     
@@ -1388,6 +1389,9 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
 
         outfile = f"{pymol_out_f}/{target}_{mut_prot_id}_pymol_indel.png"
         pymol_cmd.png(outfile, width=1200, dpi=dpi, ray=1)
+
+        if config.verbosity >= 3:
+            print(f'Generating pymol plot {outfile}')
 
         #produce legend for indel plot
         pymol.color_list = []
