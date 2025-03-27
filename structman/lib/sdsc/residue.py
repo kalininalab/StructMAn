@@ -1,58 +1,45 @@
 # sdsc: structman datastructures and classes
-from structman.lib.rin import Interaction_profile, Centrality_scores
 from structman.lib.sdsc.consts.residues import METAL_ATOMS, ION_ATOMS
-from structman.lib.sdsc.sdsc_utils import rin_classify, doomsday_protocol
+from structman.lib.sdsc.sdsc_utils import classify, doomsday_protocol, SparseArray, Slotted_obj
+from typing import TypeVar, Generic
 
-class Residue_Map(object):
+T = TypeVar('T')
+
+class Residue_Map(Slotted_obj, Generic[T]):
     __slots__ = ['value_list', 'value_dict']
 
     def __init__(self):
-        self.value_list = [None]
+        self.value_list = SparseArray()
         self.value_dict = {}
 
-    def add_item(self, key, value):
+    #def __setitem__(self, key: int | str, value: any) -> None:
+    #    return self.add_item(key, value)
+
+    def add_item(self, key: int | str, value: any) -> None:
         if type(key) == int:
-            if key > 0:
-                self.add_intkey_item(key, value)
-            else:
-                self.add_strkey_item(str(key), value)
+            self.add_intkey_item(key, value)
         else:
             try:
                 int_key = int(key)
-                if int_key > 0:
-                    self.add_intkey_item(int_key, value)
-                else:
-                    self.add_strkey_item(key, value)
+                self.add_intkey_item(int_key, value)
             except:
                 self.add_strkey_item(key, value)
 
     def add_intkey_item(self, intkey, value):
-        try:
-            self.value_list[intkey] = value
-        except:
-            if intkey == len(self.value_list):
-                self.value_list.append(value)
-            else:
-                d = intkey - len(self.value_list)
-                for _ in range(d):
-                    self.value_list.append(None)
-                self.value_list.append(value)
+        self.value_list.insert(intkey, value)
 
     def add_strkey_item(self, strkey, value):
         self.value_dict[strkey] = value
 
-    def get_item(self, key):
-        if type(key) == int:
-            try:
-                if key > 0:
-                    return self.value_list[key]
-                else:
-                    return self.value_dict[str(key)]
-            except:
-                return None
+    #def __getitem__(self, key: int | str) -> any:
+    #    return self.get_item(key)
+
+    def get_item(self, key: int | str) -> any:
+        if isinstance(key, int):
+            return self.value_list.get(key)
         try:
             intkey = int(key)
-            value = self.value_list[intkey]
+            value = self.value_list.get(intkey)
             return value
         except:
             try:
@@ -60,355 +47,50 @@ class Residue_Map(object):
             except:
                 return None
 
-    def get_keys(self):
-        return list(range(1, len(self.value_list))) + list(self.value_dict.keys())
+    def get_keys(self) -> list[int | str]:
+        return self.value_list.get_keys() + list(self.value_dict.keys())
 
-    def contains(self, key):
+    def contains(self, key: int | str) -> bool:
         return self.get_item(key) is not None
 
     def __len__(self):
         return len(self.value_list) + len(self.value_dict)
 
-class Residue(object):
-    __slots__ = ['res_num', 'aa', 'lig_dist_str', 'lig_dists', 'chain_dist_str', 'chain_distances', 'RSA',
-                 'relative_main_chain_acc', 'relative_side_chain_acc', 'SSA',
-                 'homo_dist_str', 'homomer_distances',
-                 'interaction_profile', 'interaction_profile_str', 'centrality_score_str', 'centralities', 'modres', 'b_factor', 'database_id', 'stored', 'phi', 'psi',
-                 'intra_ssbond', 'inter_ssbond', 'ssbond_length', 'intra_link', 'inter_link', 'link_length', 'cis_conformation', 'cis_follower',
-                 'inter_chain_median_kd', 'inter_chain_dist_weighted_kd', 'inter_chain_median_rsa',
-                 'inter_chain_dist_weighted_rsa', 'intra_chain_median_kd', 'intra_chain_dist_weighted_kd',
-                 'inter_chain_interactions_median', 'inter_chain_interactions_dist_weighted',
-                 'intra_chain_interactions_median', 'intra_chain_interactions_dist_weighted',
-                 'intra_chain_median_rsa', 'intra_chain_dist_weighted_rsa', 'Class', 'simpleClass',
-                 'interacting_chains_str', 'interacting_ligands_str'
-                 ]
+class Residue(Slotted_obj):
+    __slots__ = [
+        'res_num', 'aa', 'lig_dists',
+        'chain_distances', 'RSA', 'relative_main_chain_acc',
+        'relative_side_chain_acc', 'SSA', 'homomer_distances',
+        'interaction_profile', 'centralities', 'modres',
+        'b_factor', 'pLDDT', 'database_id',
+        'stored', 'phi', 'psi',
+        'intra_ssbond', 'inter_ssbond', 'ssbond_length',
+        'intra_link', 'inter_link', 'link_length',
+        'cis_conformation', 'cis_follower', 'inter_chain_median_kd',
+        'inter_chain_dist_weighted_kd', 'inter_chain_median_rsa', 'inter_chain_dist_weighted_rsa',
+        'intra_chain_median_kd', 'intra_chain_dist_weighted_kd', 'inter_chain_interactions_median',
+        'inter_chain_interactions_dist_weighted', 'intra_chain_interactions_median', 'intra_chain_interactions_dist_weighted',
+        'intra_chain_median_rsa', 'intra_chain_dist_weighted_rsa', 'Class',
+        'simpleClass'
+        ]
 
-    def __init__(self, res_num, aa='X', lig_dist_str=None, lig_dists=None, chain_dist_str=None, chain_distances=None, RSA=None,
-                 relative_main_chain_acc=None, relative_side_chain_acc=None,
-                 SSA=None, homo_dist_str=None, homomer_distances=None, interaction_profile=None, interaction_profile_str=None,
-                 centrality_score_str=None, centralities=None, modres=None, b_factor=None, database_id=None, stored=False, phi=None, psi=None,
-                 intra_ssbond=None, inter_ssbond=None, ssbond_length=None, intra_link=None, inter_link = None, link_length=None, cis_conformation=None, cis_follower=None,
-                 inter_chain_median_kd=None, inter_chain_dist_weighted_kd=None, inter_chain_median_rsa=None,
-                 inter_chain_dist_weighted_rsa=None, intra_chain_median_kd=None, intra_chain_dist_weighted_kd=None,
-                 intra_chain_median_rsa=None, intra_chain_dist_weighted_rsa=None,
-                 interacting_chains_str=None, interacting_ligands_str=None, inter_chain_interactions_median=None,
-                 inter_chain_interactions_dist_weighted=None, intra_chain_interactions_median=None,
-                 intra_chain_interactions_dist_weighted=None):
-
-        self.res_num = res_num
-        self.aa = aa
-        self.lig_dist_str = lig_dist_str
-        self.lig_dists = lig_dists
-        self.chain_dist_str = chain_dist_str
-        self.chain_distances = chain_distances
-        self.RSA = RSA  # relative surface accessible area
-        self.SSA = SSA  # secondary structure assignment
-        self.relative_main_chain_acc = relative_main_chain_acc
-        self.relative_side_chain_acc = relative_side_chain_acc
-        self.homomer_distances = homomer_distances
-        self.homo_dist_str = homo_dist_str
-        self.interaction_profile = interaction_profile
-        self.interaction_profile_str = interaction_profile_str  # interaction profile coded into a string, see rin.py for more information
-        self.interacting_chains_str = interacting_chains_str
-        self.interacting_ligands_str = interacting_ligands_str
-        self.centralities = centralities
-        self.centrality_score_str = centrality_score_str
-        self.modres = modres
-        self.b_factor = b_factor
-        self.database_id = database_id
-        self.stored = stored
-        self.phi = phi
-        self.psi = psi
-        self.intra_ssbond = intra_ssbond
-        self.inter_ssbond = inter_ssbond
-        self.ssbond_length = ssbond_length
-        self.intra_link = intra_link
-        self.inter_link = inter_link
-        self.link_length = link_length
-        self.cis_conformation = cis_conformation
-        self.cis_follower = cis_follower
-        self.inter_chain_median_kd = inter_chain_median_kd
-        self.inter_chain_dist_weighted_kd = inter_chain_dist_weighted_kd
-        self.inter_chain_median_rsa = inter_chain_median_rsa
-        self.inter_chain_dist_weighted_rsa = inter_chain_dist_weighted_rsa
-        self.intra_chain_median_kd = intra_chain_median_kd
-        self.intra_chain_dist_weighted_kd = intra_chain_dist_weighted_kd
-        self.intra_chain_median_rsa = intra_chain_median_rsa
-        self.intra_chain_dist_weighted_rsa = intra_chain_dist_weighted_rsa
-        self.inter_chain_interactions_median = inter_chain_interactions_median
-        self.inter_chain_interactions_dist_weighted = inter_chain_interactions_dist_weighted
-        self.intra_chain_interactions_median = intra_chain_interactions_median
-        self.intra_chain_interactions_dist_weighted = intra_chain_interactions_dist_weighted
-        self.Class = None
-        self.simpleClass = None
+    def __init__(self):
+        pass
 
     def deconstruct(self):
         del self.res_num
         doomsday_protocol(self)
 
-    def set_database_id(self, value):
-        self.database_id = value
-
-    def get_database_id(self):
-        return self.database_id
-
-    def get_aa(self):
-        return self.aa
-
-    def get_chain_distances(self):
-        return self.chain_distances
-
-    def get_chain_dist_str(self):
-        if self.chain_dist_str is None:
-            if self.chain_distances is None:
-                return None
-            self.convert_chain_dist_str()
-        return self.chain_dist_str
-
-    def convert_chain_dist_str(self):
-        chain_dist_strings = []
-        for chain_id in self.chain_distances:
-            (dist, atom_pair, min_resi) = self.chain_distances[chain_id]
-            if dist is not None:
-                chain_dist_strings.append("%s.%s:%1.2f:(%s-%s)" % (chain_id, min_resi, dist, str(atom_pair[0]), str(atom_pair[1])))
-
-        self.chain_dist_str = ",".join(chain_dist_strings)
-
-    def get_ligand_distances(self):
-        return self.lig_dists
-
-    def get_lig_dist_str(self):
-        if self.lig_dist_str is None:
-            if self.lig_dists is None:
-                return None
-            self.convert_lig_dist_str()
-        return self.lig_dist_str
-
-    def convert_lig_dist_str(self):
-        lig_dist_strings = []
-
-        for lig_id in self.lig_dists:
-            (dist, atom_pair) = self.lig_dists[lig_id]
-            if dist is not None:
-                lig_dist_strings.append("%s:%1.2f:(%s-%s)" % (lig_id, dist, str(atom_pair[0]), str(atom_pair[1])))
-
-        self.lig_dist_str = ",".join(lig_dist_strings)
-
     def get_interaction_partners(self):
-        if self.interaction_profile is None:
-            self.get_interaction_profile()
         if self.interaction_profile is None:
             return None, None
         return (self.interaction_profile.interacting_chains, self.interaction_profile.interacting_ligands)
-
-    def generate_interacting_chains_str(self):
-        if self.interaction_profile is None:
-            self.get_interaction_profile()
-        if self.interaction_profile is None:
-            return
-        self.interacting_chains_str = ','.join(self.interaction_profile.interacting_chains)
-
-    def generate_interacting_ligands_str(self):
-        if self.interaction_profile is None:
-            self.get_interaction_profile()
-        if self.interaction_profile is None:
-            return
-        self.interacting_ligands_str = ','.join(self.interaction_profile.interacting_ligands)
-
-    def get_shortest_distances(self, chains):
-        min_ld = None
-        min_md = None
-        min_id = None
-        min_cd = None
-        min_dd = None
-        min_rd = None
-        min_hd = None
-
-        ldists = {}
-        mdists = {}
-        idists = {}
-        if self.lig_dists is not None:
-            for lig_id in self.lig_dists:
-                lig_name, res, chain = lig_id.split('_')
-                (dist, atom_pair) = self.lig_dists[lig_id]
-                if lig_name in METAL_ATOMS:
-                    mdists[dist] = lig_name, res, chain
-                elif lig_name in ION_ATOMS:
-                    idists[dist] = lig_name, res, chain
-                else:
-                    ldists[dist] = lig_name, res, chain
-
-        min_lig = None
-        min_metal = None
-        min_ion = None
-
-        if len(ldists) > 0:
-            min_ld = min(ldists.keys())
-            min_lig = ldists[min_ld]
-
-        if len(mdists) > 0:
-            min_md = min(mdists.keys())
-            min_metal = mdists[min_md]
-
-        if len(idists) > 0:
-            min_id = min(idists.keys())
-            min_ion = idists[min_id]
-
-        cdists = {}
-        ddists = {}
-        rdists = {}
-
-        iacs = {}
-
-        if self.chain_distances is not None:
-            for chain_id in self.chain_distances:
-                (dist, atom_pair, min_resi) = self.chain_distances[chain_id]
-                if dist is None:
-                    continue
-                if chain_id not in chains:
-                    chaintype = 'Protein'
-                else:
-                    chaintype = chains[chain_id]
-
-                if chaintype == "Protein" or chaintype == 'Peptide':
-                    cdists[dist] = chain_id
-                elif chaintype == "RNA":
-                    rdists[dist] = chain_id
-                elif chaintype == "DNA":
-                    ddists[dist] = chain_id
-
-        if len(cdists) > 0:
-            min_cd = min(cdists.keys())
-            iacs['Protein'] = cdists[min_cd]
-        if len(rdists) > 0:
-            min_rd = min(rdists.keys())
-            iacs['RNA'] = rdists[min_rd]
-        if len(ddists) > 0:
-            min_dd = min(ddists.keys())
-            iacs['DNA'] = ddists[min_dd]
-
-        homo_dists = []
-        if self.homomer_distances is not None:
-            for homo_chain in self.homomer_distances:
-                dist = self.homomer_distances[homo_chain]
-                homo_dists.append(dist)
-        if len(homo_dists) > 0:
-            min_hd = min(homo_dists)
-
-        return min_hd, min_ld, min_md, min_id, min_cd, min_rd, min_dd, min_lig, min_metal, min_ion, iacs
-
-    def get_homomer_dists(self):
-        return self.homomer_distances
-
-    def get_homo_dist_str(self):
-        if self.homo_dist_str is None:
-            if self.homomer_distances is None:
-                return None
-            self.convert_homo_dist_str()
-        return self.homo_dist_str
-
-    def convert_homo_dist_str(self):
-        homo_strs = []
-        for homo_chain in self.homomer_distances:
-            min_d = self.homomer_distances[homo_chain]
-            homo_strs.append('%s:%1.2f' % (homo_chain, min_d))
-        self.homo_dist_str = ','.join(homo_strs)
-
-    def get_centralities(self, get_whats_there=False):
-        if get_whats_there:
-            if self.centralities is not None:
-                return self.centralities
-            return self.centrality_score_str
-
-        if self.centrality_score_str is not None and self.centralities is None:
-            self.centralities = Centrality_scores(code_str=self.centrality_score_str)
-        return self.centralities
-
-    def get_centrality_str(self):
-        if self.centrality_score_str is None:
-            if self.centralities is None:
-                return None
-            else:
-                self.convert_centrality_str()
-        return self.centrality_score_str
-
-    def convert_centrality_str(self):
-        if self.centralities is None:
-            return
-        self.centrality_score_str = self.centralities.str_encode()
-
-    def get_modres(self):
-        return self.modres
-
-    def get_b_factor(self):
-        return self.b_factor
 
     def get_rsa(self, splitted=False):
         if not splitted:
             return self.RSA
         else:
             return (self.RSA, self.relative_main_chain_acc, self.relative_side_chain_acc)
-
-    def get_ssa(self):
-        return self.SSA
-
-    def get_phi(self):
-        return self.phi
-
-    def get_psi(self):
-        return self.psi
-
-    def get_angles(self):
-        return self.phi, self.psi
-
-    def get_residue_link_information(self):
-        return (self.intra_ssbond, self.inter_ssbond, self.ssbond_length, self.intra_link, self.inter_link, self.link_length, self.cis_conformation, self.cis_follower)
-
-    def get_interaction_profile(self, get_whats_there=False):
-        if get_whats_there:
-            if self.interaction_profile is not None:
-                return self.interaction_profile
-            return self.interaction_profile_str
-
-        if self.interaction_profile_str is not None and self.interaction_profile is None:
-            self.interaction_profile = Interaction_profile(profile_str=self.interaction_profile_str,
-                                                               interacting_chains_str=self.interacting_chains_str,
-                                                               interacting_ligands_str=self.interacting_ligands_str)
-        return self.interaction_profile
-
-    def get_interacting_chains_str(self):
-        if self.interacting_chains_str is None:
-             self.generate_interacting_chains_str()
-        return self.interacting_chains_str
-
-    def get_interacting_ligands_str(self):
-        if self.interacting_ligands_str is None:
-             self.generate_interacting_ligands_str()
-        return self.interacting_ligands_str
-
-    def get_interaction_profile_str(self):
-        if self.interaction_profile_str is None:
-            if self.interaction_profile is None:
-                return None
-            else:
-                self.convert_interaction_profile_str()
-        return self.interaction_profile_str
-
-    def convert_interaction_profile_str(self):
-        if self.interaction_profile is None:
-            return
-        self.interaction_profile_str = self.interaction_profile.encode()
-
-    def get_milieu(self):
-        return (self.inter_chain_median_kd, self.inter_chain_dist_weighted_kd,
-                self.inter_chain_median_rsa, self.inter_chain_dist_weighted_rsa, self.intra_chain_median_kd,
-                self.intra_chain_dist_weighted_kd, self.intra_chain_median_rsa, self.intra_chain_dist_weighted_rsa)
-
-    def get_interface_milieu(self):
-        return (self.inter_chain_interactions_median,
-                self.inter_chain_interactions_dist_weighted,
-                self.intra_chain_interactions_median,
-                self.intra_chain_interactions_dist_weighted)
 
     def get_classification(self, config):
         if self.Class is None and self.simpleClass is None:
@@ -419,11 +101,10 @@ class Residue(object):
                     sc = "Surface"
                 else:
                     sc = "Core"
-            if self.interaction_profile is None:
-                self.get_interaction_profile()
+            
             if self.interaction_profile is None:
                 config.errorlog.add_warning('Interaction profile is None, classification will fail')
-            rin_class, rin_simple_class = rin_classify(self.interaction_profile, sc)
+            rin_class, rin_simple_class = classify(self.interaction_profile, sc)
             self.Class = rin_class
             self.simpleClass = rin_simple_class
         return self.Class, self.simpleClass
@@ -431,3 +112,42 @@ class Residue(object):
     def set_classification(self, Class, simpleClass):
         self.Class = Class
         self.simpleClass = simpleClass
+
+    def checked_get_attribute(self, attribute_name: str):
+        try:
+            value = self.__getattribute__(attribute_name)
+        except AttributeError:
+            value = None
+        return value
+
+    def get_res_info(self):
+        res_info = (self.checked_get_attribute('RSA'), self.checked_get_attribute('relative_main_chain_acc'), self.checked_get_attribute('relative_side_chain_acc'), self.checked_get_attribute('SSA'),
+                    self.checked_get_attribute('interaction_profile'), self.checked_get_attribute('centralities'),
+                    self.checked_get_attribute('phi'), self.checked_get_attribute('psi'), self.checked_get_attribute('intra_ssbond'), self.checked_get_attribute('inter_ssbond'), self.checked_get_attribute('ssbond_length'),
+                    self.checked_get_attribute('intra_link'), self.checked_get_attribute('inter_link'), self.checked_get_attribute('link_length'), self.checked_get_attribute('cis_conformation'), self.checked_get_attribute('cis_follower'),
+                    self.checked_get_attribute('inter_chain_median_kd'), self.checked_get_attribute('inter_chain_dist_weighted_kd'),
+                    self.checked_get_attribute('inter_chain_median_rsa'), self.checked_get_attribute('inter_chain_dist_weighted_rsa'), self.checked_get_attribute('intra_chain_median_kd'),
+                    self.checked_get_attribute('intra_chain_dist_weighted_kd'), self.checked_get_attribute('intra_chain_median_rsa'), self.checked_get_attribute('intra_chain_dist_weighted_rsa'),
+                    self.checked_get_attribute('inter_chain_interactions_median'), self.checked_get_attribute('inter_chain_interactions_dist_weighted'),
+                    self.checked_get_attribute('intra_chain_interactions_median'), self.checked_get_attribute('intra_chain_interactions_dist_weighted'),
+                    self.checked_get_attribute('b_factor'), self.checked_get_attribute('pLDDT'), self.checked_get_attribute('modres'),
+                    self.checked_get_attribute('lig_dists'), self.checked_get_attribute('chain_distances'), self.checked_get_attribute('homomer_distances'), self.checked_get_attribute('aa'))
+
+        return res_info
+    
+    def set_res_info(self, res_data):
+        (
+            self.RSA, self.relative_main_chain_acc, self.relative_side_chain_acc,
+            self.SSA, self.profile, self.centralities, 
+            self.phi, self.psi, self.intra_ssbond,
+            self.inter_ssbond, self.ssbond_length, self.intra_link,
+            self.inter_link, self.link_length, self.cis_conformation,
+            self.cis_follower, self.inter_chain_median_kd, self.inter_chain_dist_weighted_kd,
+            self.inter_chain_median_rsa, self.inter_chain_dist_weighted_rsa, self.intra_chain_median_kd,
+            self.intra_chain_dist_weighted_kd, self.intra_chain_median_rsa, self.intra_chain_dist_weighted_rsa,
+            self.inter_chain_interactions_median, self.inter_chain_interactions_dist_weighted, self.intra_chain_interactions_median,
+            self.intra_chain_interactions_dist_weighted, self.b_factor, self.pLDDT,
+            self.modres, self.lig_dists, self.chain_distances,
+            self.homomer_distances, self.aa
+        ) = res_data
+ 

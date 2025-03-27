@@ -13,18 +13,19 @@ from structman.scripts.createMMDB import feature_names as microminer_feature_nam
 from structman.base_utils.base_utils import calculate_chunksizes, pack, unpack, is_alphafold_model
 from structman.lib.sdsc import mappings as mappings_package
 from structman.lib.sdsc import interface as interface_package
-from structman.lib.rin import Interaction_profile, Centrality_scores
-from structman.lib.sdsc.sdsc_utils import get_shortest_distances, triple_locate, rin_classify
+from structman.lib.sdsc import residue as residue_package
+from structman.lib.sdsc.sdsc_utils import get_shortest_distances, triple_locate, classify
 from structman.lib.database.insertion_lib import insert_interfaces
 
-def qualityScore(resolution, coverage, seq_id, resolution_wf=0.25, coverage_wf=0.5, seq_id_wf=1.0):
-    seq_id = float(seq_id)
-    resolution = float(resolution)
-    coverage = float(coverage)
+def qualityScore(resolution: float, coverage: float, seq_id: float, resolution_wf=0.25, coverage_wf=0.5, seq_id_wf=1.0, pLDDT:float | None = None) -> float:
+
     if seq_id > 1.0:
         seq_id = seq_id / 100.0
     if coverage > 1.0:
         coverage = coverage / 100.0
+
+    if pLDDT is None:
+        pLDDT = 1.0
 
     # project the criteria to [0,1] via logistic regression
     resolution_value = (1 + math.exp((1.5 * resolution) - 4))**(-1)
@@ -32,7 +33,7 @@ def qualityScore(resolution, coverage, seq_id, resolution_wf=0.25, coverage_wf=0
     seq_value = (1 + math.exp(10 * (0.4 - seq_id)))**(-1)
 
     ws = sum((resolution_wf, coverage_wf, seq_id_wf))
-    quality = sum((resolution_value * resolution_wf, coverage * coverage_wf, seq_value * seq_id_wf)) / ws
+    quality = pLDDT * (sum((resolution_value * resolution_wf, coverage * coverage_wf, seq_value * seq_id_wf)) / ws)
     return quality
 
 @ray.remote(max_calls = 1)
@@ -61,7 +62,7 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
    
         pos_outs = []
 
-        for pos, mappings, disorder_score, disorder_region in classification_inp:
+        for pos, mappings in classification_inp:
 
             mappings_obj = mappings_package.Mappings()
             if config.verbosity >= 6:
@@ -73,7 +74,7 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
                     id_triple, quality_measures, mapping = mapp
 
                     (pdb_id, chain, res_nr) = id_triple
-                    (seq_id, cov, identical_aa) = quality_measures
+                    (seq_id, cov, aa1) = quality_measures
                     try:
                         (chains, resolution) = complexes[pdb_id]
                     except:
@@ -83,21 +84,30 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
                     id_triple, quality_measures, structure_infos = mapp
 
                     (pdb_id, chain, res_nr) = id_triple
-                    (seq_id, cov, identical_aa) = quality_measures
+                    (seq_id, cov, aa1) = quality_measures
 
                     structure_info, mapping = structure_infos
                     (chains, resolution) = structure_info
 
-                (rsa, mc_rsa, sc_rsa, ssa, profile_or_str, centralities_or_str,
+                if isinstance(mapping, bytes):
+                    mapping = unpack(mapping)
+
+                (rsa, mc_rsa, sc_rsa, ssa, profile, centralities,
                  phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower,
                  inter_chain_median_kd, inter_chain_dist_weighted_kd,
                  inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
                  intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
                  inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
                  intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
-                 b_factor, modres,
+                 b_factor, pLDDT, modres,
                  lig_dists, chain_distances, homomer_distances, res_aa) = mapping
                 #print(mapping)
+                if res_aa is None:
+                    continue
+
+                identical_aa = res_aa == aa1
+
+                #print(f'{pdb_id} {pLDDT}')
 
                 gsd_return = get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances)
 
@@ -105,24 +115,18 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
                     continue
                 homo_dist, lig_dist, metal_dist, ion_dist, chain_dist, rna_dist, dna_dist, min_lig, min_metal, min_ion, iacs = gsd_return
 
-                if isinstance(profile_or_str, str):
-                    profile = Interaction_profile(profile_str=profile_or_str)
-                else:
-                    profile = profile_or_str
-
-                if isinstance(centralities_or_str, str):
-                    centralities = Centrality_scores(code_str=centralities_or_str)
-                else:
-                    centralities = centralities_or_str
-
                 loc, mc_loc, sc_loc = triple_locate(rsa, mc_rsa, sc_rsa, config)
 
-                rin_class, rin_simple_class = rin_classify(profile, sc_loc)
+                rin_class, rin_simple_class = classify(profile, sc_loc)
 
-                qual = qualityScore(resolution, cov, seq_id)
+                try:
+                    qual: float = qualityScore(resolution, cov, seq_id, pLDDT = pLDDT)
+                except TypeError:
+                    qual = 0.01
+                    resolution = 3.0
 
                 structural_feature_dict = {
-                    'b_factor' : b_factor, 'modres' : modres, 'ssa' : ssa, 'phi' : phi, 'psi' : psi, 'intra_ssbond' : intra_ssbond, 'inter_ssbond' : inter_ssbond, 'ssbond_length' : ssbond_length,
+                    'b_factor' : b_factor, 'pLDDT': pLDDT, 'modres' : modres, 'ssa' : ssa, 'phi' : phi, 'psi' : psi, 'intra_ssbond' : intra_ssbond, 'inter_ssbond' : inter_ssbond, 'ssbond_length' : ssbond_length,
                     'intra_link' : intra_link, 'inter_link' : inter_link, 'link_length' : link_length, 'cis_conformation' : cis_conformation, 'cis_follower' : cis_follower,
                     'inter_chain_median_kd' : inter_chain_median_kd, 'inter_chain_dist_weighted_kd' : inter_chain_dist_weighted_kd,
                     'inter_chain_median_rsa' : inter_chain_median_rsa, 'inter_chain_dist_weighted_rsa' : inter_chain_dist_weighted_rsa,
@@ -141,19 +145,18 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
                     'profile' : profile,
                     'centralities' : centralities
                 }
+                #print(profile)
 
                 mapping = (qual, seq_id, cov, structural_feature_dict, rin_based_feature_dict, identical_aa, resolution, res_aa)
 
                 mappings_obj.add_mapping((pdb_id, chain, res_nr), mapping)
          	
-            mappings_obj.weight_all(config, disorder_score, disorder_region)
+            err = mappings_obj.weight_all(config)
             
-            mapping_results = mappings_obj.get_raw_result()
+            if err is not None and config.verbosity >= 7:
+                print(f'{protein_id} {pos}: {err}')
 
-            pos_outs.append((pos, mapping_results))
-
-            mappings_obj.deconstruct()
-            del mappings_obj
+            pos_outs.append((pos, mappings_obj))
 
         if fresh_prot:
             if config.compute_ppi:
@@ -176,73 +179,32 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
 
 
 def get_res_info_from_store(structure, res_nr):
-    res_aa = structure.residues.get_item(res_nr).aa
+    if isinstance(structure.residues.get_item(res_nr), tuple):
+        res_id, res_db_id, packed_res_data = structure.residues.get_item(res_nr)
+        unpacked_res_data = unpack(packed_res_data)
+        residue_obj: residue_package.Residue = residue_package.Residue()
+        residue_obj.res_num = res_id
+        residue_obj.database_id = res_db_id
+        residue_obj.set_res_info(unpacked_res_data)
+        structure.residues.add_item(res_nr, residue_obj)
 
-    centralities_or_str = structure.residues.get_item(res_nr).get_centralities(get_whats_there=True)
-    modres = structure.residues.get_item(res_nr).modres
-    b_factor = structure.residues.get_item(res_nr).b_factor
-    rsa, mc_rsa, sc_rsa = structure.get_residue_rsa_triple(res_nr)
-    ssa = structure.residues.get_item(res_nr).SSA
-    profile_or_str = structure.residues.get_item(res_nr).get_interaction_profile(get_whats_there=True)
+    res_obj = structure.residues.get_item(res_nr)
 
-    phi = structure.residues.get_item(res_nr).phi
-    psi = structure.residues.get_item(res_nr).psi
-
-    intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower = structure.get_residue_link_information(res_nr)
-
-    (inter_chain_median_kd, inter_chain_dist_weighted_kd,
-     inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
-     intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa) = structure.get_residue_milieu(res_nr)
-
-    (inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
-     intra_chain_interactions_median, intra_chain_interactions_dist_weighted) = structure.residues.get_item(res_nr).get_interface_milieu()
-
-    lig_dists = structure.get_residue_sld(res_nr)
-    chain_distances = structure.get_residue_scd(res_nr)
-    homomer_distances = structure.get_residue_homomer_dists(res_nr)
-
-    res_info = (rsa, mc_rsa, sc_rsa, ssa, profile_or_str, centralities_or_str,
-                phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower,
-                inter_chain_median_kd, inter_chain_dist_weighted_kd,
-                inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
-                intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
-                intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
-                b_factor, modres, lig_dists, chain_distances, homomer_distances, res_aa)
+    res_info = res_obj.get_res_info()
     return res_info
 
 
 def get_res_info(structures, pdb_id, chain, res_nr):
 
-    residue_obj = structures[pdb_id][chain].residues.get_item(res_nr)
+    residue_obj: residue_package.Residue | tuple = structures[pdb_id][chain].residues.get_item(res_nr)
+    if residue_obj is None:
+        return None
 
-    centralities_or_str = residue_obj.get_centrality_str()
-
-    rsa, mc_rsa, sc_rsa = residue_obj.get_rsa(splitted = True)
-    profile_or_str = residue_obj.get_interaction_profile_str()
-
-    intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower = residue_obj.get_residue_link_information()
-
-    (inter_chain_median_kd, inter_chain_dist_weighted_kd,
-     inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
-     intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa) = residue_obj.get_milieu()
-
-    (inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
-     intra_chain_interactions_median, intra_chain_interactions_dist_weighted) = residue_obj.get_interface_milieu()
-
-    lig_dists = residue_obj.get_ligand_distances()
-    chain_distances = residue_obj.get_chain_distances()
-    homomer_distances = residue_obj.get_homomer_dists()
-
-    res_info = (rsa, mc_rsa, sc_rsa, residue_obj.SSA, profile_or_str, centralities_or_str,
-                residue_obj.phi, residue_obj.psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length, cis_conformation, cis_follower,
-                inter_chain_median_kd, inter_chain_dist_weighted_kd,
-                inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
-                intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
-                intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
-                residue_obj.b_factor, residue_obj.modres, lig_dists, chain_distances, homomer_distances, residue_obj.aa)
-
+    if isinstance(residue_obj, tuple):
+        res_id, res_db_id, packed_res_data = residue_obj
+        return packed_res_data
+        
+    res_info = residue_obj.get_res_info()
     return res_info
 
 
@@ -299,10 +261,7 @@ def pack_packages(package_size, package, send_packages, classification_results, 
             t_pack_0 += time.time()
 
             mappings = []
-            model_in_mappings = False
             aacbase = protein_obj.get_aac_base(pos)
-            disorder_score = protein_obj.get_disorder_score(pos)
-            disorder_region = protein_obj.get_disorder_region(pos)
 
             t_pack_01 += time.time()
             
@@ -348,57 +307,30 @@ def pack_packages(package_size, package, send_packages, classification_results, 
                 cov = protein_obj.structure_annotations[pdb_id][chain].get_coverage()
 
                 t_pack_16 += time.time()
+                if not para:
+                    res_info = get_res_info(proteins.structures, pdb_id, chain, res_nr)
+                else:
+                    res_info = get_res_info(structures, pdb_id, chain, res_nr)
 
-                try:
-                    res_aa = structures[pdb_id][chain].get_residue_aa(res_nr)
-                except:
-                    error_count += 1
-                    t_pack_21 += time.time()
-                    if error_count >= 2:
-                        continue
-                    [e, f, g] = sys.exc_info()
-                    g = traceback.format_exc()
-                    if config.verbosity >= 5:
-                        print(f'Skipped annotation of {u_ac} {pos} to {pdb_id} {chain} {res_nr}:\n{e}\n{f}\n{g}')
+                if res_info is None:
                     continue
-
-                if res_aa is None:
-                    if config.verbosity >= 6:
-                        print(f'Skipped annotation of {u_ac} {pos} to {pdb_id} {chain} {res_nr}: res_aa not defined')
-                    t_pack_21 += time.time()
-                    continue
-
-                identical_aa = res_aa == aacbase[0]
 
                 t_pack_21 += time.time()
 
-                if is_alphafold_model(pdb_id):
-                    if len(mappings) > 0: #Mapped residues from models are only going into results aggregation, if it is the only mapped structure
-                        t_pack_22 += time.time()
-                        continue
-                    model_in_mappings = True
-                elif model_in_mappings: #This happens only, if a model was the first mapped structure
-                    mappings = []
-                    model_in_mappings = False
-
                 if not para:
                     try:
-                        resolution = proteins.get_resolution(pdb_id)
-                        if resolution is None:
-                            if config.verbosity >= 4:
-                                print('Skipped classification of', u_ac, 'due to', pdb_id, 'got no resolution')
-                            t_pack_22 += time.time()
-                            continue
+                        resolution = proteins[pdb_id].resolution
+                        
                         package_size += 1
                         chains = proteins.get_complex_chains(pdb_id)
-                        mappings.append(((pdb_id, chain, res_nr), (seq_id, cov, identical_aa), ((chains, resolution), get_res_info(proteins.structures, pdb_id, chain, res_nr))))
+                        mappings.append(((pdb_id, chain, res_nr), (seq_id, cov, aacbase[0]), ((chains, resolution), res_info)))
                     except:
                         package_size += 1
-                        mappings.append(((pdb_id, chain, res_nr), (seq_id, cov, identical_aa), get_res_info(structures, pdb_id, chain, res_nr)))
+                        mappings.append(((pdb_id, chain, res_nr), (seq_id, cov, aacbase[0]), ((proteins.get_complex_chains(pdb_id), None), res_info)))
 
                 else:
                     package_size += 1
-                    mappings.append(((pdb_id, chain, res_nr), (seq_id, cov, identical_aa), get_res_info(structures, pdb_id, chain, res_nr)))
+                    mappings.append(((pdb_id, chain, res_nr), (seq_id, cov, aacbase[0]), res_info))
 
                 t_pack_22 += time.time()
 
@@ -408,7 +340,7 @@ def pack_packages(package_size, package, send_packages, classification_results, 
 
             t_pack_02 += time.time()
 
-            classification_inp.append((pos, mappings, disorder_score, disorder_region))
+            classification_inp.append((pos, mappings))
 
             t_pack_03 += time.time()
 
@@ -649,16 +581,17 @@ def generate_classification_dump(size_sorted, config, proteins = None, protein_m
                 else:
                     complex_store[structure_id] = (complexes[structure_id][0], complexes[structure_id][1])
 
-            if chain not in nested_structures[structure_id]:
-                nested_structures[structure_id][chain] = structures[structure_id][chain].backmaps
-                
-                total_number_of_backmaps += len(structures[structure_id][chain].backmaps)
-                if not proteins is None:
-                    if chain in complexes[structure_id].interfaces:
-                        interface_map[structure_id][chain] = complexes[structure_id].interfaces[chain]
-                else:
-                    if chain in complexes[structure_id][2]:
-                        interface_map[structure_id][chain] = complexes[structure_id][2][chain]
+                for c_chain in complex_store[structure_id][0]:
+                    if (c_chain not in nested_structures[structure_id]) and (c_chain in structures[structure_id]):
+                        nested_structures[structure_id][c_chain] = structures[structure_id][c_chain].backmaps
+                        total_number_of_backmaps += len(structures[structure_id][c_chain].backmaps)
+
+                        if not proteins is None:
+                            if c_chain in complexes[structure_id].interfaces:
+                                interface_map[structure_id][c_chain] = complexes[structure_id].interfaces[c_chain]
+                        else:
+                            if c_chain in complexes[structure_id][2]:
+                                interface_map[structure_id][c_chain] = complexes[structure_id][2][c_chain]
 
             if proteins is None:
                 coverage = protein_map[protein_id].structure_annotations[structure_id][chain].coverage
@@ -724,10 +657,10 @@ def process_classification_outputs(config, outs, proteins, recommended_complexes
                 print(f'Not Setting Agg Interfaces: {protein_id} {aggregated_interfaces}')
         if protein_id not in recommended_complexes:
             recommended_complexes[protein_id] = {}
-        for pos, mapping_results in pos_outs:
+        for pos, mappings_obj in pos_outs:
             if config.verbosity >= 7:
-                print(f'In process_classification_outputs: {protein_id} {pos} {mapping_results}')
-            proteins.protein_map[protein_id].positions[pos].mappings = mappings_package.Mappings(raw_results=mapping_results)
+                print(f'In process_classification_outputs: {protein_id} {pos} {mappings_obj}')
+            proteins.protein_map[protein_id].positions[pos].mappings = mappings_obj
             recommended_complexes[protein_id][pos] = proteins.protein_map[protein_id].positions[pos].mappings.recommendation_order
 
 @ray.remote(max_calls = 1)
@@ -1132,8 +1065,11 @@ def classification(proteins, config, background_insert_residues_process, custom_
     except:
         pass
 
-    if config.verbosity >= 6:
+    if config.verbosity >= 7:
         print(recommended_complexes)
+
+    if config.verbosity >= 2:
+        t_m0 = time.time()
 
     mm_db_dict = {}
     successful_mm_annotations = {}
@@ -1144,7 +1080,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
         for prot_id in recommended_complexes:
             for pos in recommended_complexes[prot_id]:
                 if len(recommended_complexes[prot_id][pos]) > 0:
-                    recommended_structure_triple = recommended_complexes[prot_id][pos][0][1]
+                    recommended_structure_triple = recommended_complexes[prot_id][pos][0]
                     complex_id = recommended_structure_triple[0]
                     mm_inputs.add(complex_id)
                     processed_complexes.add(complex_id)
@@ -1154,7 +1090,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
 
         while len(mm_inputs) > 0:
-            if config.verbosity >= 2:
+            if config.verbosity >= 4:
                 print(f'Calling MicroMiner-lookup for {len(mm_inputs)} Complexes.')
             n_empty = 0
             new_mm_inputs = set()
@@ -1197,7 +1133,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
                             stay_in_loop = True
                             next_try = current_try + 1
                             while len(recommended_complexes[prot_id][pos]) > next_try and stay_in_loop:
-                                recommended_structure_triple = recommended_complexes[prot_id][pos][next_try][1]
+                                recommended_structure_triple = recommended_complexes[prot_id][pos][next_try]
                                 complex_id, chain_id, res = recommended_structure_triple
 
                                 if complex_id in mm_db_dict:
@@ -1219,7 +1155,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
                     else:
                         mm_db_dict[complex_id] = feature_dict
                         for (prot_id, pos, current_try) in rec_complex_pos_dict[complex_id]:
-                            recommended_structure_triple = recommended_complexes[prot_id][pos][current_try][1]
+                            recommended_structure_triple = recommended_complexes[prot_id][pos][current_try]
                             complex_id, chain_id, res = recommended_structure_triple
                             if (chain_id, res) in feature_dict:
                                 successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
@@ -1227,7 +1163,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
                                 next_try = current_try + 1
                                 stay_in_loop = True
                                 while len(recommended_complexes[prot_id][pos]) > next_try and stay_in_loop:
-                                    recommended_structure_triple = recommended_complexes[prot_id][pos][next_try][1]
+                                    recommended_structure_triple = recommended_complexes[prot_id][pos][next_try]
                                     complex_id, chain_id, res = recommended_structure_triple
                                     if complex_id in mm_db_dict:
                                         successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
@@ -1242,10 +1178,14 @@ def classification(proteins, config, background_insert_residues_process, custom_
                                     else:
                                         next_try += 1
 
-            if config.verbosity >= 2:
+            if config.verbosity >= 4:
                 print(f'MicroMiner-lookup succesful for {len(mm_inputs) - n_empty} Complexes.')
             
             mm_inputs = new_mm_inputs
+
+    if config.verbosity >= 2:
+        t_m1 = time.time()
+        print(f'Time for MicroMiner search Part 1: {t_m1 - t_m0} {len(successful_mm_annotations)=} {len(mm_db_dict)=}')
 
     prot_ids = proteins.get_protein_ids()
 
@@ -1254,10 +1194,17 @@ def classification(proteins, config, background_insert_residues_process, custom_
         for pos in positions:
             if (prot_id, pos) in successful_mm_annotations:
                 complex_id, chain_id, res = successful_mm_annotations[(prot_id, pos)]
+                #print([chain_id, res])
+                #print(mm_db_dict[complex_id])
                 if (chain_id, res) in mm_db_dict[complex_id]:
                     mm_feat_vec = mm_db_dict[complex_id][(chain_id, res)]
+                    if config.verbosity >= 6:
+                        print(f'Setting mm_feat_vec ({len(mm_feat_vec)}) {prot_id} {pos} {complex_id} {chain_id} {res}')
                     proteins.protein_map[prot_id].positions[pos].mappings.microminer_features.set_values(mm_feat_vec)
 
+    if config.verbosity >= 2:
+        t_m2 = time.time()
+        print(f'Time for MicroMiner search Part 1: {t_m2 - t_m1}')
 
 
     if background_insert_residues_process is not None:
@@ -1268,6 +1215,9 @@ def classification(proteins, config, background_insert_residues_process, custom_
     if config.compute_ppi:
         insert_interfaces(proteins, config)
 
+    if config.verbosity >= 2:
+        t_i1 = time.time()
+        print(f'Time for insert_interfaces: {t_i1 - t_m2}')
 
     if config.verbosity >= 2:
         t2 = time.time()

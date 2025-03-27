@@ -1,5 +1,4 @@
 import os
-import socket
 import sys
 import traceback
 import time
@@ -9,6 +8,7 @@ import urllib.request
 import requests
 import json
 
+import ray
 from Bio import Entrez
 
 from structman.lib.database.database_core_functions import select, update
@@ -19,26 +19,9 @@ from structman.lib.sdsc import gene as gene_package
 from structman.lib.pdbParser import standardParsePDB, parse_chaintype_map
 from structman.base_utils import base_utils
 from structman.settings import HUMAN_INFO_MAP
+from structman.base_utils.base_utils import calculate_chunksizes
 
 POLLING_INTERVAL = 3
-
-def is_connected():
-    try:
-        # connect to the host -- tells us if the host is actually
-        # reachable
-        socket.create_connection(("1.1.1.1", 53))
-        return True
-    except OSError:
-        pass
-    return False
-
-
-def connection_sleep_cycle(verbosity):
-    while not is_connected():
-        if verbosity >= 1:
-            print('No connection, sleeping a bit and then try again')
-        time.sleep(30)
-
 
 def getUniprotId(query, querytype, verbosity=0):
     url = 'https://rest.uniprot.org/idmapping/run'
@@ -48,7 +31,7 @@ def getUniprotId(query, querytype, verbosity=0):
         'format': 'tab',
         'query': '%s' % (query)
     }
-    connection_sleep_cycle(verbosity)
+    sdsc_utils.connection_sleep_cycle(verbosity, url)
     data = urllib.parse.urlencode(params).encode('utf-8')
     request = urllib.request.Request(url, data)
     contact = ""  # Please set your email address here to help us debug in case of problems.
@@ -263,10 +246,27 @@ def indel_insert(config, proteins, indel_map, indels, ac, proteins_is_object = F
         indel_map[ac][indel.get_notation()] = indel
     return
 
+@ray.remote(max_calls=1)
+def fetch_chains(package, config):
+    results = []
+    for pdb_id in package:
+        page, _ = standardParsePDB(pdb_id, config.pdb_path, only_first_model = True)
+        if page == '':
+            continue
+
+        chain_type_map = parse_chaintype_map(page)
+
+        chains = []
+        for chain_id in chain_type_map:
+            if chain_type_map[chain_id] == 'Protein':
+                chains.append(chain_id)
+        results.append((pdb_id, chains))
+
+    return results
+
+
 # called by serializedPipeline
-
-
-def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map):
+def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map, number_of_pdbs_to_expand: int):
 
     if config.verbosity >= 4:
         if len(prot_gene_map) < 100:
@@ -452,6 +452,8 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
                 if u_ac is not None and u_ac not in taken_u_acs:
                     ensembl_ac_map[ensembl_id] = u_ac
                     taken_u_acs.add(u_ac)
+        else:
+            ensembl_gene_map = {}
 
                     
 
@@ -558,40 +560,86 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
             ref = ac_np_map[u_ac]
             proteins[u_ac].ref_id = ref
 
-    expanded_pdbs = {}
-    for pdb_tuple in pdb_map:
-        if pdb_tuple in prot_gene_map:
-            gene_id = prot_gene_map[pdb_tuple]
-        else:
-            gene_id = None
-        if pdb_tuple[-1] == '-':
-            page, _ = standardParsePDB(pdb_tuple[:4], config.pdb_path, only_first_model = True)
-            if page == '':
-                continue
+    if number_of_pdbs_to_expand >= config.proc_n:
+        small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(config.proc_n, number_of_pdbs_to_expand)
+        package: list[str] = []
+        fetch_chain_processes = []
+        config_store = ray.put(config)
+        for pdb_tuple in pdb_map:
+            if pdb_tuple in prot_gene_map:
+                gene_id = prot_gene_map[pdb_tuple]
+            else:
+                gene_id = None
+            if pdb_tuple[-1] == '-':
+                package.append(pdb_tuple[:4])
+                if len(fetch_chain_processes) < n_of_big_chunks:
+                    if len(package) == big_chunksize:
+                        fetch_chain_processes.append(fetch_chains.remote(package, config_store))
+                        package = []
+                else:
+                    if len(package) == small_chunksize:
+                        fetch_chain_processes.append(fetch_chains.remote(package, config_store))
+                        package = []
+            else:
+                integrate_protein(config, proteins, genes, indel_map, pdb_tuple, pdb_tuple, pdb_map, is_pdb_input = True, pdb_id = pdb_tuple, gene_id = gene_id, protein_specific_tags = prot_tags_map[pdb_tuple])
+        if len(package) > 0:
+            fetch_chain_processes.append(fetch_chains.remote(package, config_store))
+            package = []
 
-            chain_type_map = parse_chaintype_map(page)
+        fetch_chains_results: list[list[tuple[str, list[str]]]]= ray.get(fetch_chain_processes)
 
-            if config.verbosity >= 5:
-                print(f'Chaintype map for {pdb_tuple}: {chain_type_map}')
-
-            chains = []
-            for chain_id in chain_type_map:
-                if chain_type_map[chain_id] == 'Protein':
-                    chains.append(chain_id)
-
-            if pdb_tuple in indel_map:
+        expanded_pdbs = {}
+        for fetch_chains_result in fetch_chains_results:
+            for pdb_id, chains in fetch_chains_result:
+                pdb_tuple = f'{pdb_id}:-'
+                if pdb_tuple in indel_map:
+                    for chain in chains:
+                        new_pdb_tuple = f'{pdb_tuple[:4]}:{chain}'
+                        indel_map[new_pdb_tuple] = indel_map[pdb_tuple]
+                    del indel_map[pdb_tuple]
                 for chain in chains:
-                    new_pdb_tuple = f'{pdb_tuple[:4]}:{chain}'
-                    indel_map[new_pdb_tuple] = indel_map[pdb_tuple]
-                del indel_map[pdb_tuple]
-            for chain in chains:
-                new_pdb_tuple = f'{pdb_tuple[:4]}:{chain}'   
-                expanded_pdbs[new_pdb_tuple] = pdb_map[pdb_tuple]
-        else:
-            integrate_protein(config, proteins, genes, indel_map, pdb_tuple, pdb_tuple, pdb_map, is_pdb_input = True, pdb_id = pdb_tuple, gene_id = gene_id, protein_specific_tags = prot_tags_map[pdb_tuple])
+                    new_pdb_tuple = f'{pdb_tuple[:4]}:{chain}'   
+                    expanded_pdbs[new_pdb_tuple] = pdb_map[pdb_tuple]
 
-    for new_pdb_tuple in expanded_pdbs:
-        integrate_protein(config, proteins, genes, indel_map, new_pdb_tuple, new_pdb_tuple, expanded_pdbs, is_pdb_input = True, pdb_id = new_pdb_tuple, protein_specific_tags = prot_tags_map[new_pdb_tuple[:4]])
+        for new_pdb_tuple in expanded_pdbs:
+            integrate_protein(config, proteins, genes, indel_map, new_pdb_tuple, new_pdb_tuple, expanded_pdbs, is_pdb_input = True, pdb_id = new_pdb_tuple, protein_specific_tags = prot_tags_map[new_pdb_tuple[:4]])
+
+        
+    else:
+        expanded_pdbs = {}
+        for pdb_tuple in pdb_map:
+            if pdb_tuple in prot_gene_map:
+                gene_id = prot_gene_map[pdb_tuple]
+            else:
+                gene_id = None
+            if pdb_tuple[-1] == '-':
+                page, _ = standardParsePDB(pdb_tuple[:4], config.pdb_path, only_first_model = True)
+                if page == '':
+                    continue
+
+                chain_type_map = parse_chaintype_map(page)
+
+                if config.verbosity >= 5:
+                    print(f'Chaintype map for {pdb_tuple}: {chain_type_map}')
+
+                chains = []
+                for chain_id in chain_type_map:
+                    if chain_type_map[chain_id] == 'Protein':
+                        chains.append(chain_id)
+
+                if pdb_tuple in indel_map:
+                    for chain in chains:
+                        new_pdb_tuple = f'{pdb_tuple[:4]}:{chain}'
+                        indel_map[new_pdb_tuple] = indel_map[pdb_tuple]
+                    del indel_map[pdb_tuple]
+                for chain in chains:
+                    new_pdb_tuple = f'{pdb_tuple[:4]}:{chain}'   
+                    expanded_pdbs[new_pdb_tuple] = pdb_map[pdb_tuple]
+            else:
+                integrate_protein(config, proteins, genes, indel_map, pdb_tuple, pdb_tuple, pdb_map, is_pdb_input = True, pdb_id = pdb_tuple, gene_id = gene_id, protein_specific_tags = prot_tags_map[pdb_tuple])
+
+            for new_pdb_tuple in expanded_pdbs:
+                integrate_protein(config, proteins, genes, indel_map, new_pdb_tuple, new_pdb_tuple, expanded_pdbs, is_pdb_input = True, pdb_id = new_pdb_tuple, protein_specific_tags = prot_tags_map[new_pdb_tuple[:4]])
 
     return proteins, indel_map, genes
 
@@ -612,7 +660,7 @@ def getUniprotIds(config, query_ids, querytype, target_type = "UniProtKB", targe
 
     query = ' '.join(query_ids)
     url = 'https://rest.uniprot.org/idmapping/run'
-    connection_sleep_cycle(config.verbosity)
+    sdsc_utils.connection_sleep_cycle(config.verbosity, url)
     params = {
         'from': '%s' % (querytype),
         'to': '%s' % (target_type),
@@ -853,7 +901,10 @@ def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
             continue
 
         if not r.ok:
-            print(f'Transcript Sequence Retrieval failed: {data}')
+            try:
+                r.raise_for_status()
+            except requests.exceptions.HTTPError as errh:
+                print(f'Transcript Sequence Retrieval failed: {data}\nError: {errh.response.status_code}\n{errh.response.text}')
             if recursed:
                 return {}, {transcript_ids[0]:None}
             for transcript_id in chunk:
@@ -970,17 +1021,28 @@ def get_ensembl_seqs(config, full_transcript_ids):
         if config.mapping_db_is_set:
             if config.verbosity >= 2:
                 print(f'Calling embl_database_lookup with {len(transcript_ids)} number of transcript ids')
+                t0 = time.time()
             sequence_map, missing_ids, gene_id_map, broken_ids = embl_database_lookup(config, transcript_ids)
             if config.verbosity >= 2:
+                t1 = time.time()
                 print(f'embl_database_lookup returned with {len(sequence_map)} number of sequences and {len(missing_ids)} number of still missing transcripts')
+                print(f'Time for embl_database_lookup: {t1-t0}')
         else:
             sequence_map = {}
             gene_id_map = {}
             missing_ids = transcript_ids
 
         if len(missing_ids) > 0:
+            if config.verbosity >= 2:
+                t2 = time.time()
             fasta_sequences, new_no_seqs = retrieve_transcript_sequences(config.ensembl_server, missing_ids)
+            if config.verbosity >= 2:
+                t3 = time.time()
+                print(f'Time for retrieve_transcript_sequences: {t3-t2}')
             transcript_id_gene_id_map = retrieve_transcript_metadata(config.ensembl_server, missing_ids)
+            if config.verbosity >= 2:
+                t4 = time.time()
+                print(f'Time for retrieve_transcript_metadata: {t4-t3}')
             if config.mapping_db_is_set:
                 try:
                     embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids, new_no_seqs)
@@ -989,6 +1051,9 @@ def get_ensembl_seqs(config, full_transcript_ids):
                     g = traceback.format_exc()
                     if config.verbosity >= 3:
                         print(f'Updating EMBL transcipt database failed:\n{e}\n{f}\n{g}')
+                if config.verbosity >= 2:
+                    t5 = time.time()
+                    print(f'Time for updating embl mapping db: {t5-t4}')
         else:
             fasta_sequences = {}
             transcript_id_gene_id_map = {}
@@ -1130,13 +1195,11 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
                 continue
             if row[1] is None:
                 config.errorlog.add_warning('Sequence field is None in Mapping DB, for: %s' % u_ac) 
-                #gene_sequence_map[u_ac] = None, None, None
                 continue
             try:
                 seq = base_utils.unpack(row[1])
             except:
                 config.errorlog.add_warning('Sequence field is defect in Mapping DB, for: %s' % u_ac)
-                #gene_sequence_map[u_ac] = None, None, None
                 continue
 
             if max_seq_len is not None:
@@ -1144,11 +1207,8 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
                     filtered_set.add(u_ac)
                     n += 1
                     continue
-            
-            disorder_scores = None
-            disorder_regions_datastruct = None
 
-            gene_sequence_map[u_ac] = seq, disorder_scores, disorder_regions_datastruct
+            gene_sequence_map[u_ac] = seq
 
         if n > 0 and config.verbosity >= 2:
             print('Filtered ', n, ' Sequences due to max length: ', max_seq_len)
@@ -1197,12 +1257,12 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
             seq_out = getSequence(u_ac, config)
             if seq_out is None and save_errors:
                 config.errorlog.add_warning('getSequence output is None for %s' % u_ac)
-                gene_sequence_map[u_ac] = 0, None, None
+                gene_sequence_map[u_ac] = 0
                 continue
             elif seq_out is None:
                 continue
             seq, refseqs, go_terms, pathways = seq_out
-            gene_sequence_map[u_ac] = seq, None, None
+            gene_sequence_map[u_ac] = seq
 
         if config.verbosity >= 2:
             t4 = time.time()
@@ -1237,9 +1297,7 @@ def getSequences(proteins, config):
     gene_sequence_map = getSequencesPlain(u_acs, config)
 
     for u_ac in u_acs:
-        protein_map[u_ac].sequence = gene_sequence_map[u_ac][0]
-        proteins.set_disorder_scores(u_ac, gene_sequence_map[u_ac][1])
-        proteins.set_disorder_regions(u_ac, gene_sequence_map[u_ac][2])
+        protein_map[u_ac].sequence = gene_sequence_map[u_ac]
 
     info_map_path = HUMAN_INFO_MAP
 
@@ -1276,7 +1334,7 @@ def getSequences(proteins, config):
 
 def get_last_version(u_ac):
     url = 'https://www.uniprot.org/uniprot/%s?version=*' % u_ac
-    #connection_sleep_cycle(config.verbosity)
+    #sdsc_utils.connection_sleep_cycle(config.verbosity, url)
     try:
         request = urllib.request.Request(url)
         response = urllib.request.urlopen(request)
@@ -1322,7 +1380,7 @@ def getSequence(uniprot_ac, config, tries=0, return_id=False, obsolete_try = Fal
         url = 'https://www.uniprot.org/uniprot/%s.fasta' % uniprot_ac
     else:
         url = 'https://www.uniprot.org/uniparc/%s.fasta' % uniprot_ac
-    connection_sleep_cycle(config.verbosity)
+    sdsc_utils.connection_sleep_cycle(config.verbosity, url)
     try:
         request = urllib.request.Request(url)
         response = urllib.request.urlopen(request, timeout=(tries + 1) * 10)

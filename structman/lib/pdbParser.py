@@ -1,6 +1,6 @@
 import gzip
 import os
-import socket
+
 import subprocess
 import time
 import urllib.error
@@ -11,24 +11,6 @@ from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.sdsc import sdsc_utils
 
 chain_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
-
-def is_connected():
-    try:
-        # connect to the host -- tells us if the host is actually
-        # reachable
-        socket.create_connection(("1.1.1.1", 53))
-        return True
-    except OSError:
-        pass
-    return False
-
-
-def connection_sleep_cycle(verbosity):
-    while not is_connected():
-        if verbosity >= 1:
-            print('No connection, sleeping a bit and then try again')
-        time.sleep(30)
-
 
 def getCurrentPDBID(pdb_id, pdb_path, debug=False):
     obsolete_path = '%s/data/structures/obsolete/pdb/%s/pdb%s.ent.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
@@ -66,7 +48,7 @@ def getStructureBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False, get_is_
     return buf
 
 
-def getPDBBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False, get_is_local=False, verbosity=0):
+def getPDBBuffer(pdb_id: str, pdb_path: str, AU: bool =False, obsolete_check: bool =False, get_is_local: bool =False, verbosity: int=0) -> None | gzip.GzipFile:
     if obsolete_check:
         pdb_id = getCurrentPDBID(pdb_id, pdb_path)
 
@@ -77,7 +59,7 @@ def getPDBBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False, get_is_local=
             path = '%s/data/structures/divided/pdb/%s/pdb%s.ent.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
             if not os.path.isfile(path):
                 url = 'https://files.rcsb.org/view/%s.pdb' % pdb_id
-                connection_sleep_cycle(verbosity)
+                sdsc_utils.connection_sleep_cycle(verbosity, url)
                 if pdb_path != '' and verbosity >= 2:
                     print("Did not find asymetric unit entry in local pdb, searching online: ", url)
                 try:
@@ -110,7 +92,7 @@ def getPDBBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False, get_is_local=
                     return getPDBBuffer(pdb_id, pdb_path, AU=True, obsolete_check=obsolete_check, get_is_local=get_is_local, verbosity=verbosity)
 
                 url = 'https://files.rcsb.org/view/%s.pdb1' % pdb_id
-                connection_sleep_cycle(verbosity)
+                sdsc_utils.connection_sleep_cycle(verbosity, url)
                 if pdb_path != '' and verbosity >= 2:
                     print("Did not find entry in local pdb, searching online: ", url)
                 try:
@@ -169,48 +151,6 @@ def getMMCIFBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False):
                 return None
         else:
             return gzip.open(path, 'rb')
-
-
-def parsePDBSequence(buf):
-    seq = ""
-    res_pos_map = {}
-    used_res = set()
-    i = 1
-    firstAltLoc = None
-    for line in buf:
-        if len(line) > 27:
-            record_name = line[0:6].strip()
-            if not record_name == b'ATOM' \
-                    and not record_name == b'HETATM':
-                continue
-
-            altLoc = chr(line[16])
-            if firstAltLoc is None and altLoc != ' ':
-                firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
-            if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
-                continue
-
-            res_name = line[17:20].strip().decode('ascii')
-            if record_name == b'HETATM':
-                if res_name not in residue_consts.THREE_TO_ONE:
-                    continue
-
-            chain_id = line[21].decode('ascii')
-            if chain_id != chain:  # BUG: undefined variable
-                continue
-
-            atom_nr = line[6:11].strip().decode('ascii')
-            res_nr = line[22:27].strip().decode('ascii')  # this includes the insertion code
-
-            if res_nr not in used_res:
-                aa = residue_consts.THREE_TO_ONE[res_name][0]
-                seq = seq + aa
-                used_res.add(res_nr)
-                res_pos_map[res_nr] = i
-                i += 1
-
-    buf.close()
-    return seq, res_pos_map
 
 
 # nucleic acid parser called by mmcif parser with only buf if chain is nuc acid
@@ -276,141 +216,52 @@ def parseMMCIFSequence(buf):
     return seq, res_pos_map
 
 
-def getSequenceAU(pdb_id, chain, pdb_path, verbosity=0):
-    isMMCIF_Flag = False
-    buf = getPDBBuffer(pdb_id, pdb_path, AU=True, obsolete_check=False, verbosity=verbosity)
+def getSequence(pdb_id: str, chains: set[str], pdb_path: str) -> dict[str, tuple[str, dict[str, int]]]:
+    AU: bool = test_for_AU(pdb_id, pdb_path)
+    obsolete_check: bool = not AU
+    buf: gzip.GzipFile = getPDBBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=obsolete_check)
+    
     if buf is None:
-        print('Trying MMCIF (AU)', pdb_id, chain, pdb_path)
-        buf = getMMCIFBuffer(pdb_id, pdb_path, AU=True)
-        if buf is not None:
-            isMMCIF_Flag = True
-        if buf is None:
-            return "", {}
-    if isMMCIF_Flag:
-        seq, res_pos_map = parseMMCIFSequence(buf, chain)
-        buf.close()
-    else:
-        seq, res_pos_map = parsePDBSequence(buf, chain)
-        buf.close()
-    return seq, res_pos_map
+        return None
 
-
-def getSequencePlain(pdb_id, chain, pdb_path, verbosity=0):
-    isMMCIF_Flag = False
-    buf = getPDBBuffer(pdb_id, pdb_path, AU=False, obsolete_check=True, verbosity=verbosity)
-    if buf is None:
-        print('Trying MMCIF', pdb_id, chain, pdb_path)
-        buf = getMMCIFBuffer(pdb_id, pdb_path, AU=False)
-        if buf is not None:
-            isMMCIF_Flag = True
-        if buf is None:
-            return "", {}
-    if isMMCIF_Flag:
-        seq, res_pos_map = parseMMCIFSequence(buf, chain)
-        buf.close()
-    else:
-        seq, res_pos_map = parsePDBSequence(buf, chain)
-        try:
-            buf.close()
-        except:
-            buf = None
-    return seq, res_pos_map
-
-
-'''
-##MMCIF duplicates of same codes - Looks like no need, could be deleted if code works well
-def getSequenceAU_MMCIF(pdb_id, chain, pdb_path):
-    buf = getMMCIFBuffer(pdb_id,pdb_path,AU=True)
-    if buf is None:
-        return "", {}
-    seq, res_pos_map = parseMMCIFSequence(buf,chain)
+    chain_seq_dict: dict[str, tuple[str, dict[str, int]]] = parsePDBSequence(buf, chains)
     buf.close()
-    return seq,res_pos_map
 
-def getSequencePlain(pdb_id,chain,pdb_path):
-    buf = getMMCIFBuffer(pdb_id,pdb_path,AU=False)
-    if buf is None:
-        return "", {}
-    seq,res_pos_map = parseMMCIFSequence(buf,chain)
-    buf.close()
-    return seq,res_pos_map
-'''
-
-# Start here
-
-
-def getSequence(pdb_id, chain, pdb_path, AU=False):
-    if AU:
-        seq, res_pos_map = getSequenceAU(pdb_id, chain, pdb_path)
-    else:
-        seq, res_pos_map = getSequencePlain(pdb_id, chain, pdb_path)
-
-    # Catch empty sequences and try to find the sequence in the asymetric unit
-    if not AU and seq == "":
-        return getSequenceAU(pdb_id, chain, pdb_path)
-
-    return seq, res_pos_map
-
-
-'''
-#MMCIF Version - Looks like no need, could be deleted if code works well
-def getMMCIFSequence(pdb_id,chain,pdb_path,AU=False):
-    if AU:
-        seq,res_pos_map = getSequenceAU_MMCIF(pdb_id,chain,pdb_path)
-    else:
-        seq,res_pos_map = getSequencePlain_MMCIF(pdb_id,chain,pdb_path)
-
-    #Catch empty sequences and try to find the sequence in the asymetric unit
-    if not AU and seq == "":
-        return getSequenceAU_MMCIF(pdb_id,chain,pdb_path)
-
-    return seq,res_pos_map
-'''
+    return chain_seq_dict
 
 # called by serializedPipeline
 
+def getSequences(pdb_id_tuples: list[str], pdb_path: str) -> list[tuple[str, str, dict]]:
+    pdb_sequences: list[tuple[str, str, dict]] = []
 
-def getSequences(pdb_dict, pdb_path, filtering_db=None):
-    pdb_sequence_map = {}
-    pdb_pos_map = {}
-    in_db = set()
-    for pdb_chain_tuple in pdb_dict:
+    pdb_chains_tuples: dict[str, set[str]] = {}
+    for pdb_chain_tuple in pdb_id_tuples:
         [pdb, chain] = pdb_chain_tuple.split(':')
-        AU = test_for_AU(pdb, pdb_path)
-        seq, res_pos_map = getSequence(pdb, chain, pdb_path, AU=AU)
-        pdb_sequence_map[pdb_chain_tuple] = seq, None, None
-        pdb_pos_map[pdb_chain_tuple] = res_pos_map
-        if filtering_db is not None:
-            folder_key = pdb_chain_tuple[1:3]
-            filename = '%s/%s/%s_ref50_gpw.fasta.gz' % (filtering_db, folder_key, pdb_chain_tuple)
-            if os.path.isfile(filename):
-                in_db.add(pdb_chain_tuple)
-                continue
+        if pdb not in pdb_chains_tuples:
+            pdb_chains_tuples[pdb] = set([chain])
+        else:
+            pdb_chains_tuples[pdb].add(chain)
+            
+    for pdb in pdb_chains_tuples:
+        chains: set[str] = pdb_chains_tuples[pdb]
+        chain_seq_dict: dict[str, tuple[str, dict[str, int]]] = getSequence(pdb, chains, pdb_path)
+        for chain in chain_seq_dict:
+            seq, res_pos_map = chain_seq_dict[chain]
+            pdb_chain_tuple = f'{pdb}:{chain}'
+            pdb_sequences.append((pdb_chain_tuple, seq, res_pos_map))
 
-    if filtering_db is not None:
-        return pdb_sequence_map, pdb_pos_map, in_db
-    return pdb_sequence_map, pdb_pos_map
+    return pdb_sequences
 
 def get_chains_from_pdb_id(pdb_id, pdb_path):
     AU = test_for_AU(pdb_id, pdb_path)
     buf = getPDBBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=True)
     return get_all_chains(buf)
 
-# called by serializedPipeline
-def getSequencesPlain(pdb_dict, pdb_path):
-    pdb_sequence_map = {}
-    for pdb_chain_tuple in pdb_dict:
-        [pdb, chain] = pdb_chain_tuple.split(':')
-        seq, res_pos_map = getSequencePlain(pdb, chain, pdb_path)
-        pdb_sequence_map[pdb_chain_tuple] = seq
-    return pdb_sequence_map
 
-
-def parsePDBSequence(buf, chain):
-    seq = ""
-    res_pos_map = {}
-    used_res = set()
-    i = 1
+def parsePDBSequence(buf: gzip.GzipFile, chains: set[str]) -> dict[str, tuple[str, dict[str, int]]]:
+    chain_seq_dict: dict[str, tuple[str | list[str], dict[str, int]]] = {}
+    used_res: dict[str, set[str]] = {}
+    
     firstAltLoc = None
     try:
         for line in buf:
@@ -434,23 +285,29 @@ def parsePDBSequence(buf, chain):
                         continue
 
                 chain_id = line[21]
-                if chain_id != chain:
+                if not chain_id in chains:
                     continue
+                if chain_id not in chain_seq_dict:
+                    chain_seq_dict[chain_id] = ([], {})
+                    used_res[chain_id] = set()
 
-                atom_nr = line[6:11].strip()
+                #atom_nr = line[6:11].strip()
                 res_nr = line[22:27].strip()  # this includes the insertion code
 
-                if res_nr not in used_res:
+                if res_nr not in used_res[chain_id]:
                     if res_name not in residue_consts.THREE_TO_ONE:
                         continue
                     aa = residue_consts.THREE_TO_ONE[res_name][0]
-                    seq = seq + aa
-                    used_res.add(res_nr)
-                    res_pos_map[res_nr] = i
-                    i += 1
+                    chain_seq_dict[chain_id][0].append(aa)
+                    used_res[chain_id].add(res_nr)
+                    chain_seq_dict[chain_id][1][res_nr] = len(chain_seq_dict[chain_id][1]) + 1
     except OSError:
         pass
-    return seq, res_pos_map
+
+    for chain_id in chain_seq_dict:
+        chain_seq_dict[chain_id] = (''.join(chain_seq_dict[chain_id][0]), chain_seq_dict[chain_id][1])
+
+    return chain_seq_dict
 
 
 
@@ -646,6 +503,7 @@ def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=Fal
     if pdb_id.count('_AU') == 1:
         pdb_id = pdb_id[0:4]
         AU = True
+        only_first_model = True
 
     buf = getStructureBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=obsolete_check, verbosity=verbosity, get_is_local=get_is_local, model_path = model_path)
 
@@ -675,7 +533,7 @@ def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=Fal
     chain_order_pos_marker = 0
     asymetric_chain_number = None
     current_model_id = 0
-    multi_model_chain_dict[current_model_id] = {}
+    multi_model_chain_dict = {current_model_id: {}}
 
     current_serial = 1
     firstAltLoc = None
@@ -946,9 +804,15 @@ def standardParseMMCIF(pdb_id, pdb_path, obsolete_check=False):
 
 
 # called by serializedPipeline
-def getStandardizedPdbFile(pdb_id, pdb_path, oligo=set(), verbosity=0, model_path=None, obsolete_check = False):
+def getStandardizedPdbFile(
+        pdb_id: str,
+        pdb_path: str,
+        oligo: set[str] = set(),
+        verbosity: int = 0,
+        model_path: str | None = None,
+        obsolete_check: bool = False) -> tuple[str, list, dict[str, str], set[str], int, list[str], set[str]]:
 
-    AU = False
+    AU: bool = False
 
     if pdb_id.count('_AU') == 1:
         pdb_id = pdb_id[0:4]
@@ -962,28 +826,28 @@ def getStandardizedPdbFile(pdb_id, pdb_path, oligo=set(), verbosity=0, model_pat
         # return getStandardizedMMCIFFile(pdb_id=pdb_id,pdb_path=pdb_path)
         return 'Buffer was None'
 
-    chain_type_map = {}
-    chain_list = []
+    chain_type_map: dict[str, str] = {}
+    chain_list: list[str] = []
     modres_map = {}
 
     lig_set = {}
 
     newlines = []
 
-    interaction_partners = []
+    interaction_partners: list = []
 
-    rare_residues = set()
-    chain_ids = set()
+    rare_residues: str[str] = set()
+    chain_ids: set[str] = set()
 
     not_crystal = False
     multi_model_mode = False
-    multi_model_chain_dict = {}
+    multi_model_chain_dict: dict[str, dict[str, str]] = {}
     chain_order_pos_marker = 0
     asymetric_chain_number = None
     current_model_id = 0
-    multi_model_chain_dict[current_model_id] = {}
+    multi_model_chain_dict = {current_model_id:{}}
 
-    current_serial = 1
+    current_serial: int = 1
     firstAltLoc = None
     for line in buf:
         try:
@@ -1016,6 +880,7 @@ def getStandardizedPdbFile(pdb_id, pdb_path, oligo=set(), verbosity=0, model_pat
             continue
 
         elif record_name == 'MODEL':
+            #print(multi_model_chain_dict)
             current_model_id = line[10:14]
             if not current_model_id in multi_model_chain_dict:
                 multi_model_chain_dict[current_model_id] = {}
@@ -1026,7 +891,7 @@ def getStandardizedPdbFile(pdb_id, pdb_path, oligo=set(), verbosity=0, model_pat
             continue
 
         elif record_name == 'ENDMDL':
-            if not_crystal:
+            if not_crystal or AU:
                 newlines.append(line)
                 break
             elif not multi_model_mode:
@@ -1060,7 +925,7 @@ def getStandardizedPdbFile(pdb_id, pdb_path, oligo=set(), verbosity=0, model_pat
             if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
                 continue
             res_name = line[17:20].strip()
-            chain_id = line[21:22]
+            chain_id: str = line[21:22]
 
             if chain_id not in chain_ids:
                 chain_ids.add(chain_id)
@@ -1100,6 +965,7 @@ def getStandardizedPdbFile(pdb_id, pdb_path, oligo=set(), verbosity=0, model_pat
                         chain_type = 'Peptide'
                         chain_type_map[chain_id] = chain_type
                         chain_list.append(chain_id)
+                #print(f'{chain_id} {chain_type_map}')
             elif record_name == 'ATOM' and chain_type_map[chain_id] == 'Peptide':
                 if len(res_name) == 1:
                     chain_type = "RNA"
@@ -1446,7 +1312,7 @@ def getPDBHeaderBuffer(pdb_id, pdb_path, tries=0, verbosity=0):
         url = 'https://files.rcsb.org/header/%s.pdb' % pdb_id
         # if pdb_path != '':
         #    print("Did not find asymetric unit entry in local pdb, searching online: ",url)
-        connection_sleep_cycle(verbosity)
+        sdsc_utils.connection_sleep_cycle(verbosity, url)
         try:
             request = urllib.request.Request(url)
             return urllib.request.urlopen(request, timeout=(tries + 1) * 10)

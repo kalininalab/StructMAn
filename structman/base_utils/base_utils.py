@@ -2,14 +2,16 @@ import math
 import os
 import time
 import traceback
-
+import numpy as np
 from zlib import adler32
 
 import zstd
 import msgpack
 import subprocess
 
-from structman.base_utils.custom_encoder import custom_encoder, custom_decoder, custom_encoder_complete
+from numba import njit
+
+from structman.base_utils.custom_encoder import custom_encoder, custom_decoder
 
 class Errorlog:
     def __init__(self, path=None, warn_path=None, print_all_errors=False, print_all_warns=False):
@@ -47,7 +49,7 @@ class Errorlog:
         f.write(error_text)
         f.close()
 
-    def stop(self):
+    def stop(self) -> int:
         if self.warn_path is not None:
             if self.warning_counter == 0:
                 errortext = "Finished without any warnings\n###############################################################################\n"
@@ -61,18 +63,20 @@ class Errorlog:
                 f.close()
                 print(f"\n\nAt least one warning occured, please check the warninglog:\n{self.warn_path}\n\n")
         if self.path is None:
-            return
+            return 0
         if self.error_counter == 0:
             errortext = "Finished without any error\n###############################################################################\n"
             f = open(self.path, 'a')
             f.write(errortext)
             f.close()
+            return 0
         else:
             errortext = "###############################################################################\n"
             f = open(self.path, 'a')
             f.write(errortext)
             f.close()
             print(f"\n\nAt least one error occured, please check the errorlog:\n{self.path}\n\n")
+            return 1
 
     def add_warning(self, warn_text, lock=None):
         self.warning_counter += 1
@@ -215,11 +219,13 @@ def median(l):
         med = l[(n - 1) // 2]
     return med
 
-
-def distance(coord1, coord2):
-    diff = [coord1[0] - coord2[0], coord1[1] - coord2[1], coord1[2] - coord2[2]]
-    return math.sqrt(diff[0]**2.0 + diff[1]**2.0 + diff[2]**2.0)
-
+@njit
+def distance(coord1: np.ndarray, coord2: np.ndarray) -> float:
+    diff_0 = coord1[0] - coord2[0]
+    diff_1 = coord1[1] - coord2[1]
+    diff_2 = coord1[2] - coord2[2]
+    dist = math.sqrt(diff_0**2.0 + diff_1**2.0 + diff_2**2.0)
+    return dist
 
 def calc_checksum(filename):
     try:
@@ -228,13 +234,13 @@ def calc_checksum(filename):
     except FileNotFoundError:
         return adler32(bytes(filename, 'utf-8'))
 
-def calculate_chunksizes(n_of_chunks, n_of_items):
+def calculate_chunksizes(n_of_chunks: int, n_of_items: int) -> tuple[int, int, int, int]:
     if n_of_chunks == 0:
         n_of_chunks = 1
-    small_chunksize = n_of_items // n_of_chunks
-    big_chunksize = small_chunksize + 1
-    n_of_small_chunks = n_of_chunks * big_chunksize - n_of_items
-    n_of_big_chunks = n_of_chunks - n_of_small_chunks
+    small_chunksize: int = n_of_items // n_of_chunks
+    big_chunksize: int = small_chunksize + 1
+    n_of_small_chunks: int = n_of_chunks * big_chunksize - n_of_items
+    n_of_big_chunks: int = n_of_chunks - n_of_small_chunks
     if n_of_big_chunks == 0:
         big_chunksize = 0
     return small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks
@@ -287,12 +293,9 @@ def decompress(compressed_value):
         return None
     return zstd.decompress(compressed_value)
 
-def pack(some_object, complete = False):
+def pack(some_object):
     #packed_object = compress(pickletools.optimize(pickle.dumps(some_object, protocol = pickle.HIGHEST_PROTOCOL)))
-    if complete:
-        packed_object = compress(msgpack.packb(some_object, default = custom_encoder_complete))
-    else:
-        packed_object = compress(msgpack.packb(some_object, default = custom_encoder))
+    packed_object = compress(msgpack.packb(some_object, default = custom_encoder))
     return packed_object
 
 def unpack(packed_object):

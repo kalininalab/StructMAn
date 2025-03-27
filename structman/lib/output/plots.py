@@ -12,7 +12,7 @@ def get_a_color():
     #TODO
     return
 
-def plot_class_distributions(outfile, value_maps, fuse_buried_core = False, fuse_misc_interaction = False, order = None, hide_small_numbers = False, center_small_sumbers = True, hide_legend = False, title = '', ignore_unmapped = True, ignore_disorder = False, fontsize = 18, small_fontsize = 14, custom_bbox = None, custom_class_order = None):
+def plot_class_distributions(outfile, value_maps, fuse_buried_core = False, fuse_misc_interaction = False, order = None, hide_small_numbers = False, center_small_sumbers = True, hide_legend = False, title = '', ignore_unmapped = True, fontsize = 18, small_fontsize = 14, custom_bbox = None, custom_class_order = None):
 
     color_map = {
         'Core':'red',
@@ -66,8 +66,6 @@ def plot_class_distributions(outfile, value_maps, fuse_buried_core = False, fuse
                 consistent_classification = classification
             if ignore_unmapped and classification == '-':
                 continue
-            if ignore_disorder and classification == 'Disorder':
-                continue
             consistent_value_map[name][consistent_classification] = value_maps[name][classification]
     value_maps = consistent_value_map
 
@@ -106,9 +104,6 @@ def plot_class_distributions(outfile, value_maps, fuse_buried_core = False, fuse
                     fused_value_maps[name][fused_class] = 0
                 fused_value_maps[name][fused_class] += value_maps[name][classification]
         value_maps = fused_value_maps
-
-    if ignore_disorder:
-        classes.remove('Disorder')
 
     x_labels = []
 

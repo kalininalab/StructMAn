@@ -1,0 +1,10 @@
+import structman.lib.sdsc.position
+import structman.lib.sdsc.residue
+import structman.lib.sdsc.indel
+import structman.lib.sdsc.mappings
+import structman.lib.sdsc.protein
+import structman.lib.sdsc.structure
+import structman.lib.sdsc.interface
+import structman.lib.sdsc.snv
+import structman.lib.sdsc.sdsc_utils
+import structman.lib.sdsc.complex

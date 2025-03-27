@@ -3,8 +3,8 @@ import statistics
 # sdsc: structman datastructures and classes
 
 from structman.lib import rin
-from structman.base_utils.base_utils import pack
-from structman.lib.sdsc.sdsc_utils import classify, triple_locate, doomsday_protocol, locate
+from structman import base_utils
+from structman.lib.sdsc.sdsc_utils import classify, triple_locate, doomsday_protocol, locate, Slotted_obj
 
 def median(l):
     n = len(l)
@@ -101,12 +101,21 @@ def weight_majority(value_map, qualities):
 
     return best_value
 
-class Feature_set:
+class Feature_set(Slotted_obj):
     def __init__(self):
-        for feature_name in self.__slots__:
-            setattr(self, feature_name, None)
+        #for feature_name in self.__slots__:
+        #    setattr(self, feature_name, None)
         return
     
+    """
+    def __serialize__(self) -> list[any]:
+        serialized_obj: list[any] = []
+        for attribute_name in self.__slots__:
+            serialized_obj.append(self.__getattribute__(attribute_name))
+
+        return serialized_obj
+    """
+
     def set_values(self, values):
         if values is None:
             return
@@ -115,12 +124,6 @@ class Feature_set:
 
     def set_value_by_name(self, feature_name, value):
         setattr(self, feature_name, value)
-
-    def get_raw_list(self):
-        values = []
-        for feature_name in self.__slots__:
-            values.append(getattr(self, feature_name))
-        return values
     
     def get_feature_names(self):
         return self.__slots__
@@ -159,12 +162,12 @@ class Microminer_features(Feature_set):
 
 class Structural_features(Feature_set):
     __slots__ = [
-        'b_factor', 'modres', 'ssa', 'phi', 'psi', 'intra_ssbond', 'inter_ssbond', 'ssbond_length', 'intra_link', 'inter_link', 'link_length',
+        'b_factor', 'pLDDT', 'modres', 'ssa', 'phi', 'psi', 'intra_ssbond', 'inter_ssbond', 'ssbond_length', 'intra_link', 'inter_link', 'link_length',
         'cis_conformation', 'cis_follower', 'inter_chain_median_kd', 'inter_chain_dist_weighted_kd',
         'inter_chain_median_rsa', 'inter_chain_dist_weighted_rsa', 'intra_chain_median_kd', 'intra_chain_dist_weighted_kd', 'intra_chain_median_rsa', 'intra_chain_dist_weighted_rsa',
         'inter_chain_interactions_median', 'inter_chain_interactions_dist_weighted', 'intra_chain_interactions_median', 'intra_chain_interactions_dist_weighted',
         'lig_dist', 'metal_dist', 'ion_dist', 'chain_dist', 'rna_dist', 'dna_dist', 'homo_dist', 'surface_value', 'mainchain_surface_value', 'sidechain_surface_value',
-        'rin_class', 'rin_simple_class',
+        'rin_class', 'rin_simple_class'
     ]
 
     distance_based_features = set([
@@ -172,7 +175,7 @@ class Structural_features(Feature_set):
     ])
 
     float_features = set([
-        'b_factor', 'phi', 'psi', 'ssbond_length', 'link_length', 'inter_chain_median_kd', 'inter_chain_dist_weighted_kd',
+        'b_factor', 'pLDDT', 'phi', 'psi', 'ssbond_length', 'link_length', 'inter_chain_median_kd', 'inter_chain_dist_weighted_kd',
         'inter_chain_median_rsa', 'inter_chain_dist_weighted_rsa', 'intra_chain_median_kd', 'intra_chain_dist_weighted_kd', 'intra_chain_median_rsa', 'intra_chain_dist_weighted_rsa',
         'inter_chain_interactions_median', 'inter_chain_interactions_dist_weighted', 'intra_chain_interactions_median', 'intra_chain_interactions_dist_weighted'
     ])
@@ -215,10 +218,10 @@ class Integrated_features(Feature_set):
         'rsa_change_score', 'mc_rsa_change_score', 'sc_rsa_change_score', 'sc_rsa_std'
     ]
 
-    def generate(self, structural_features, config, profile, disorder_score, disorder_region, surface_values, mc_surface_values, sc_surface_values):
+    def generate(self, structural_features, config, profile, surface_values, mc_surface_values, sc_surface_values):
         (self.location, self.mainchain_location, self.sidechain_location) = triple_locate(structural_features.surface_value, structural_features.mainchain_surface_value, structural_features.sidechain_surface_value, config)
         
-        self.structural_classification, self.simple_class = classify(config, profile, self.sidechain_location, disorder_score, disorder_region)
+        self.structural_classification, self.simple_class = classify(profile, self.sidechain_location)
 
         #analyse for conformational changes
         core_count = 0
@@ -314,51 +317,11 @@ class Integrated_features(Feature_set):
 
 class RIN_based_features(Feature_set):
     __slots__ = [
-        'profile', 'centralities', 'profile_str', 'centralities_str'
+        'profile', 'centralities'
     ]
-
-    def get_profile(self):
-        if self.profile is not None:
-            return self.profile
-        if self.profile_str is None:
-            return None
-        return rin.Interaction_profile(profile_str=self.profile_str)
-
-    def get_centralities(self):
-        if self.centralities is not None:
-            return self.centralities
-        if self.centralities_str is None:
-            return None
-        return rin.Centrality_scores(code_str=self.centralities_str)
-
-    def get_centralities_str(self):
-        if self.centralities_str is not None:
-            return self.centralities_str
-        if self.centralities is None:
-            return None
-        return self.centralities.str_encode()
-
-    def get_profile_str(self):
-        if self.profile_str is not None:
-            return self.profile_str
-        if self.profile is None:
-            return None
-        return self.profile.encode()
-
-    def get_raw_list(self):
-        raw_list = [self.get_profile_str(), self.get_centralities_str()]
-        return raw_list
     
-    def set_values(self, raw_rin_based_features):
-        if raw_rin_based_features is None:
-            return
-        self.profile_str, self.centrality_str = raw_rin_based_features
-        self.centralities = rin.Centrality_scores(code_str=self.centrality_str)
-        if self.profile_str is not None:
-            self.profile = rin.Interaction_profile(profile_str=self.profile_str)
-
     def add_to_output_object(self, output_object):
-        for feature_name in rin.Centrality_scores.feature_names:
+        for feature_name in rin.Centrality_scores.__slots__:
             try:
                 output_object.add_value(feature_name, getattr(self.centralities, feature_name))
             except:
@@ -392,7 +355,7 @@ class RIN_based_features(Feature_set):
         unweighted_profiles = unweighted_dicts['profile']
         self.centralities = None
 
-        total_qual = 0.0
+        total_qual: float = 0.0
 
         for mapping_id in unweighted_centralities:
             centrality_scores = unweighted_centralities[mapping_id]
@@ -400,42 +363,54 @@ class RIN_based_features(Feature_set):
                 continue
             qual = qualities[mapping_id]
             if self.centralities is None:
-                self.centralities = [0.] * len(centrality_scores.cent_list)
+                self.centralities = [0.] * len(centrality_scores.__slots__)
 
-            for pos, cent_score in enumerate(centrality_scores.cent_list):
+            for pos, feat_name in enumerate(centrality_scores.__slots__):
+                cent_score = centrality_scores.__getattribute__(feat_name)
                 if cent_score is None:
                     continue
                 self.centralities[pos] += cent_score * qual
 
             total_qual += qual
+            
         if self.centralities is None:
             return
 
         if total_qual > 0.0:
+            agg_cent_obj = rin.Centrality_scores()
             for pos, cent_score in enumerate(self.centralities):
                 self.centralities[pos] = self.centralities[pos] / total_qual
-            self.centralities = rin.Centrality_scores(cent_list=self.centralities)
+            #self.centralities = rin.Centrality_scores(cent_list=self.centralities)
+            for pos, feat_name in enumerate(agg_cent_obj.__slots__):
+                agg_cent_obj.__setattr__(feat_name, self.centralities[pos])
+            self.centralities = agg_cent_obj
+
 
         weight_profile_tuples = []
         for mapping_id in unweighted_profiles:
             weight_profile_tuples.append((qualities[mapping_id], unweighted_profiles[mapping_id]))
         self.profile = rin.calculateAverageProfile(weight_profile_tuples)
 
-class Mappings:
+class Mappings(Slotted_obj):
     __slots__ = [
-                    'qualities', 'covs', 'seq_ids',
-                    'aa_ids', 'max_seq_res', 'recommended_res', 'interaction_recommendations', 'recommendation_order',
-                    'resolutions', 'res_aas', 'amount_of_structures',
-                    'structural_features',
-                    'structural_unweighted_feature_dicts',
-                    'rin_based_features',
-                    'rin_based_unweighted_feature_dicts',
-                    'integrated_features',
-                    'microminer_features'
+                    'qualities',                            'covs',                 'seq_ids',
+                    'aa_ids',                               'max_seq_res',          'recommended_res',
+                    'interaction_recommendations',          'recommendation_order', 'resolutions',
+                    'res_aas',                              'amount_of_structures', 'structural_features',
+                    'structural_unweighted_feature_dicts',  'rin_based_features',   'rin_based_unweighted_feature_dicts',
+                    'integrated_features',                  'microminer_features'
                 ]
 
+    slot_mask = [
+        False, False, False,
+        False, True, True,
+        False, True, False,
+        False, True, True,
+        False, True, False,
+        True, True
+    ]
 
-    def __init__(self, raw_results=None):
+    def __init__(self):
         self.qualities = {}
         self.seq_ids = {}
         self.covs = {}
@@ -444,11 +419,8 @@ class Mappings:
         self.aa_ids = {}
         self.res_aas = {}
         self.resolutions = {}
-        self.recommended_res = None
-        self.recommendation_order = []
-        self.max_seq_res = None
 
-        self.interaction_recommendations = None
+        self.recommendation_order: list[tuple[str, str, int | str]] = []
 
         self.structural_features = Structural_features()
         self.structural_unweighted_feature_dicts = self.structural_features.create_unweighted_feature_dicts()
@@ -459,33 +431,6 @@ class Mappings:
         self.rin_based_unweighted_feature_dicts = self.rin_based_features.create_unweighted_feature_dicts()
 
         self.integrated_features = Integrated_features()
-
-        if raw_results is not None:
-            (self.recommendation_order, self.recommended_res, self.max_seq_res, self.interaction_recommendations, self.amount_of_structures,
-            raw_structural_features, raw_microminer_features, raw_rin_features, raw_integrated_features
-            ) = raw_results
-
-            if isinstance(raw_structural_features, Structural_features):
-                self.structural_features = raw_structural_features
-            else:
-                self.structural_features.set_values(raw_structural_features)
-
-            if isinstance(raw_microminer_features, Microminer_features):
-                self.microminer_features = raw_microminer_features
-            else:
-                self.microminer_features.set_values(raw_microminer_features)
-
-            if isinstance(raw_rin_features, RIN_based_features):
-                self.rin_based_features = raw_rin_features
-            else:
-                profile_str, centralities_str = raw_rin_features
-                self.rin_based_features.profile_str = profile_str
-                self.rin_based_features.centralities_str = centralities_str
-
-            if isinstance(raw_integrated_features, Integrated_features):
-                self.integrated_features = raw_integrated_features
-            else:
-                self.integrated_features.set_values(raw_integrated_features)
 
     def deconstruct(self):
         doomsday_protocol(self)
@@ -506,9 +451,7 @@ class Mappings:
         self.res_aas[mapping_id] = res_aa
         self.resolutions[mapping_id[0]] = resolution
 
-    def add_result(self, mapping_id, raw_results, quality, seq_id, cov):
-
-        (recommendation_order, recommended_res, max_seq_res, interaction_recommendations, amount_of_structures, structural_features, microminer_features, rin_based_features, integrated_features) = raw_results
+    def add_result(self, mapping_id: int | str, structural_features: Structural_features, rin_based_features: RIN_based_features, quality: float, seq_id: float, cov: float) -> None:
 
         if mapping_id not in self.qualities:
             self.amount_of_structures += 1
@@ -516,45 +459,49 @@ class Mappings:
         self.seq_ids[mapping_id] = seq_id
         self.covs[mapping_id] = cov
 
-        structural_feature_values = structural_features.get_raw_list()
-        for feat_pos, feat_name in enumerate(structural_features.get_feature_names()):
-            self.structural_unweighted_feature_dicts[feat_name][mapping_id] = structural_feature_values[feat_pos]
+        for feat_name in structural_features.get_feature_names():
+            try:
+                self.structural_unweighted_feature_dicts[feat_name][mapping_id] = structural_features.__getattribute__(feat_name)
+            except AttributeError:
+                self.structural_unweighted_feature_dicts[feat_name][mapping_id] = None
 
-        self.rin_based_unweighted_feature_dicts['profile'][mapping_id] = rin_based_features.get_profile()
-        self.rin_based_unweighted_feature_dicts['centralities'][mapping_id] = rin_based_features.get_centralities()
+        try:
+            self.rin_based_unweighted_feature_dicts['profile'][mapping_id] = rin_based_features.profile
+        except AttributeError:
+            self.rin_based_unweighted_feature_dicts['profile'][mapping_id] = None
+        try:
+            self.rin_based_unweighted_feature_dicts['centralities'][mapping_id] = rin_based_features.centralities
+        except AttributeError:
+            self.rin_based_unweighted_feature_dicts['centralities'][mapping_id] = None
 
         self.aa_ids[mapping_id] = True
         self.res_aas[mapping_id] = None
 
-    def pack_features(self):
-        packed_features = pack((
-            str(self.interaction_recommendations),
-            self.amount_of_structures,
-            self.structural_features.get_raw_list(),
-            self.rin_based_features.get_raw_list(),
-            self.microminer_features.get_raw_list(),
-            self.integrated_features.get_raw_list()
-        ))
-        return packed_features
 
+    def weight_all(self, config, for_indel_aggregation = False) -> None | str:
 
-    def get_raw_result(self):
-        return (self.recommendation_order, self.recommended_res, self.max_seq_res, self.interaction_recommendations, self.amount_of_structures, self.structural_features, self.microminer_features, self.rin_based_features, self.integrated_features)
-
- 
-    def weight_all(self, config, disorder_score, disorder_region, for_indel_aggregation = False):
-
+        error = None
         for feature_name in self.structural_unweighted_feature_dicts:
             weighted_value = self.structural_features.weight_function(feature_name, self.structural_unweighted_feature_dicts[feature_name], self.qualities, self.covs, config)
             self.structural_features.set_value_by_name(feature_name, weighted_value)
 
         self.rin_based_features.weight(self.rin_based_unweighted_feature_dicts, self.qualities)
-        self.integrated_features.generate(self.structural_features, config, self.rin_based_features.profile, disorder_score, disorder_region,
-                                          self.structural_unweighted_feature_dicts['surface_value'],  self.structural_unweighted_feature_dicts['mainchain_surface_value'],  self.structural_unweighted_feature_dicts['sidechain_surface_value'])
+        try:
+            profile = self.rin_based_features.profile
+        except AttributeError:
+            error = f'profile not set in weight_all'
+
+            profile = None
+            
+        self.integrated_features.generate(self.structural_features, config, profile,
+                                          self.structural_unweighted_feature_dicts['surface_value'],
+                                          self.structural_unweighted_feature_dicts['mainchain_surface_value'],
+                                          self.structural_unweighted_feature_dicts['sidechain_surface_value'])
 
         if not for_indel_aggregation:
             self.set_recommended_residues()  
 
+        return error
         
     def set_recommended_residues(self):
         max_seq_id = 0.
@@ -644,10 +591,10 @@ class Mappings:
                     elif qual > self.interaction_recommendations[residue_simple_class][0]:
                         self.interaction_recommendations[residue_simple_class] = (qual, mapping_id, seq_id, cov)
 
-        recommendation_order = sorted(identical_aa_identical_class_recs, key = lambda x:x[0], reverse = True)
-        recommendation_order += sorted(identical_class_recs, key = lambda x:x[0], reverse = True)
-        recommendation_order += sorted(identical_aa_recs, key = lambda x:x[0], reverse = True)
-        recommendation_order += sorted(other_recs, key = lambda x:x[0], reverse = True)
+        recommendation_order = [x[1] for x in sorted(identical_aa_identical_class_recs, key = lambda x:x[0], reverse = True)]
+        recommendation_order += [x[1] for x in sorted(identical_class_recs, key = lambda x:x[0], reverse = True)]
+        recommendation_order += [x[1] for x in sorted(identical_aa_recs, key = lambda x:x[0], reverse = True)]
+        recommendation_order += [x[1] for x in sorted(other_recs, key = lambda x:x[0], reverse = True)]
         #print(f'Recommendation order in mappings class: {recommendation_order}')
         self.recommendation_order = recommendation_order
 
@@ -687,5 +634,3 @@ class Mappings:
 
     def get_max_seq_structure_res_str(self):
         return self.max_seq_res
-
-

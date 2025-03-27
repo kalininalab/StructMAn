@@ -4,27 +4,38 @@ import traceback
 import random
 import math
 from structman.lib.sdsc.sdsc_utils import total_size
+#from structman.base_utils.config_class import Config
+from typing import TypeAlias
+#from jenkspy import JenksNaturalBreaks
 
-def binningSelect(keys, rows, table, config, binning_function='median_focus', density=0.5):
+Bin: TypeAlias = tuple[set[int], int, int]
+
+def binningSelect(
+        keys: set[int] | list[int],
+        rows: list[str],
+        table: str,
+        config: any,
+        density: float =0.5) -> list[list]:
+    
     # Use this for huge selects, the first entry of rows has to be the key by which the entries are selected
-    key_name = rows[0]
+    key_name: str = rows[0]
+
     t0 = time.time()
-    if binning_function == 'split_fusion':
-        singletons, bins = split_fusion_binning(keys, density=density, fusion=True)
-    elif binning_function == 'split':
-        singletons, bins = split_fusion_binning(keys, density=density, fusion=False)
-    elif binning_function == 'median_focus':
-        singletons, bins = median_focus_binning(keys)
-    else:
-        config.errorlog.add_error('Unknown binning function:', binning_function)
-        return []
+
+    singletons: list[int]
+    bins: list[Bin]
+
+    #singletons, bins = median_focus_binning(keys, density_thresh = density)
+    #singletons, bins = jnb_binning(keys, density_thresh = density)
+    singletons, bins = naive_neighbor_binning(keys, density_thresh = density)
+
 
     if config.verbosity >= 6:
         print('\nbinningSelect keys:\n', keys, 'and binning results:\n', singletons, '\n', bins)
 
     t1 = time.time()
     if config.verbosity >= 3:
-        print(f'Time for binning in binningSelect {table}: {t1 - t0}')
+        print(f'Time for binning in binningSelect {table}: {t1 - t0} {len(keys)=}')
 
     if len(singletons) > 0:
         if len(singletons) == 1:
@@ -44,6 +55,8 @@ def binningSelect(keys, rows, table, config, binning_function='median_focus', de
     t4 = 0.
     t5 = 0.
     for ids, min_id, max_id in bins:
+        if config.verbosity >= 3:
+            print(f'Binning select from {min_id} to {max_id}, {len(ids)=}')
         t3 += time.time()
         between_rows = {key_name: (min_id, max_id)}
 
@@ -59,13 +72,13 @@ def binningSelect(keys, rows, table, config, binning_function='median_focus', de
         t5 += time.time()
 
     if config.verbosity >= 3:
-        print('Time for between select in binningSelect:', t4 - t3, 'Amount of bins:', len(bins))
-        print('Time for id check in binningSelect:', t5 - t4)
+        print('Time for between selects in binningSelect:', t4 - t3, 'Amount of bins:', len(bins))
+        print('Time for id checks in binningSelect:', t5 - t4)
 
     return total_results
 
 
-def insert(table, columns, values, config, n_trials=3, mapping_db = False):
+def insert(table: str, columns: list[str], values: list | tuple, config: any, n_trials: int = 3, mapping_db: bool = False, db_name: str | None = None):
     if config.db_address != '-':
         wildcard_symbol = '%s'
         insert_statement = 'INSERT IGNORE'
@@ -88,7 +101,7 @@ def insert(table, columns, values, config, n_trials=3, mapping_db = False):
         return
 
     max_package_size = config.max_package_size
-    size_of_values = size_estimation(config, values)
+    size_of_values = size_estimation(values)
 
     number_of_packages = (size_of_values // max_package_size)
     if not size_of_values % max_package_size == 0:
@@ -124,14 +137,14 @@ def insert(table, columns, values, config, n_trials=3, mapping_db = False):
         statement = f'{insert_statement} INTO {table} ({columns_str}) VALUES {value_str}'
 
         if config.verbosity >= 2:
-            print('Insert with', len(params), 'parameters')
+            print(f'Insert with {len(params)} parameters, {db_name=}')
 
-        if config.verbosity >= 3:
-            print('Better size estimation of the package:', sys.getsizeof(str(params)) + sys.getsizeof(statement))
+        if config.verbosity >= 5:
+            print(f'Better size estimation of the package: {sys.getsizeof(str(params))} + {sys.getsizeof(statement)}')
 
         n = 0
         while n < n_trials:  # Repeat the querry if fails for n_trials times
-            db, cursor = config.getDB(mapping_db = mapping_db)
+            db, cursor = config.getDB(mapping_db = mapping_db, db_name = db_name)
             try:
                 cursor.execute(statement, params)
                 db.commit()
@@ -203,18 +216,18 @@ def remove(config, table, between_rows={}, in_rows={}, equals_rows={}, null_colu
         raise NameError('Invalid Delete: %s\nParam size:%s\n%s\n%s, %s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:50]), from_mapping_db, config.mapping_db, e, str(f), g))
     return results
 
-def size_estimation(config, values):
+def size_estimation(values: list[any], buffer_factor: float = 1.5, exact = False):
     # Select 100 random rows and calculate their str size
     n_of_r_values = 100
-    if len(values) <= n_of_r_values:
+    if len(values) <= n_of_r_values or exact:
         #size_of_values = sys.getsizeof(str(values))
         size_of_values = total_size(values)
     else:
         #size_of_values = (sys.getsizeof(str(random.sample(values,n_of_r_values)))*len(values))/n_of_r_values
         size_of_values = (total_size(random.sample(values, n_of_r_values)) * len(values)) / n_of_r_values
 
-    # Add X% too the size estimation, just to be sure
-    size_of_values = size_of_values * 2.5
+    # Add X% to the size estimation, just to be sure
+    size_of_values = size_of_values * buffer_factor
     return size_of_values
 
 
@@ -257,7 +270,7 @@ def update(config, table, columns, values, mapping_db = False):
     if config.db_address != '-':
 
         max_package_size = config.max_package_size
-        size_of_values = size_estimation(config, values)
+        size_of_values = size_estimation(values, buffer_factor=2)
 
         number_of_packages = (size_of_values // max_package_size)
         if not size_of_values % max_package_size == 0:
@@ -296,7 +309,9 @@ def update(config, table, columns, values, mapping_db = False):
             except:
                 [e, f, g] = sys.exc_info()
                 g = traceback.format_exc()
-                raise NameError('Invalid Update: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, f, g))
+                exact_size_of_values = size_estimation(values, buffer_factor=2, exact=True)
+                exact_size_of_params = size_estimation(params, buffer_factor=2, exact=True)
+                raise NameError(f'Invalid Update {mapping_db=} {size_of_values=} {exact_size_of_values=} {exact_size_of_params=} {max_package_size=} {len(parts)=}:\n{statement[:300]} ... {conflict_statement} {update_str}\nParam size:{len(params)}\n{e}\n{f}\n{g}')
             db.close()
     else:
         db, cursor = config.getDB(mapping_db = mapping_db)
@@ -321,111 +336,98 @@ def update(config, table, columns, values, mapping_db = False):
         db.close()
 
 
-def id_set_split(id_set, min_id, max_id):
-    if len(id_set) == 0:
-        return []
-    if len(id_set) == 1:
-        return [(id_set, min_id, max_id)]
-    if len(id_set) == 2:
-        return [(set([min_id]), min_id, min_id), (set([max_id]), max_id, max_id)]
-    split_id = (min_id + max_id) // 2
-    l = set()
-    min_l = min_id
-    max_l = min_id
-    r = set()
-    min_r = max_id
-    max_r = max_id
-    for i in id_set:
-        if i < split_id:
-            l.add(i)
-            if i > max_l:
-                max_l = i
-        else:
-            r.add(i)
-            if i < min_r:
-                min_r = i
-    return [(l, min_l, max_l), (r, min_r, max_r)]
+def calc_density(sorted_unique_ints: list[int]) -> float:
+    l : int = len(sorted_unique_ints)
+    if l == 0:
+        return 0.
+    if l == 1:
+        return 1.
+    
+    density: float = l / (1 + sorted_unique_ints[-1] - sorted_unique_ints[0])
+    return density
+"""
+def jnb_binning(id_set: set[int] | list[int], density_thresh: float =0.5) -> tuple[list[int], list[Bin]]:
+    if len(id_set) < 10:
+        return list(id_set), []
+    
+    sorted_ids = sorted(id_set)
 
+    # If the given set is dense enough, just return it as one interval
+    density: float = calc_density(sorted_ids)
+    if density > density_thresh:
+        return [], [(id_set, sorted_ids[0], sorted_ids[-1])]
 
-def split_fusion_binning(id_set, tablesize=None, binsize=500000, density=0.5, fusion=True):
-    if tablesize == 0:
-        return set(), []
+    print(f'{density=}')
 
-    if tablesize is not None:
-        if tablesize > 0:
-            factor = 1
-            density = float(len(id_set)) / (float(tablesize) * factor)
-        else:
-            density = 0.
-    else:
-        factor = 1
+    jnb = JenksNaturalBreaks(3)
 
-    bins = {}
-    for i in id_set:
-        bin_number = i // binsize
-        if bin_number not in bins:
-            bins[bin_number] = set()
-        bins[bin_number].add(i)
-    sorted_bins = []
-    for bin_number in sorted(bins.keys()):
-        id_set = bins[bin_number]
-        sorted_bins.append((id_set, min(id_set), max(id_set)))
-
-    dense_enough = False
-    while not dense_enough:
-        dense_enough = True
-        split_bins = []
-        for (id_set, min_id, max_id) in sorted_bins:
-            min_amount = ((1 + max_id - min_id) * density)
-            # split set if smaller than min_amount
-            if len(id_set) < min_amount:
-                for (iset, mi, ma) in id_set_split(id_set, min_id, max_id):
-                    if len(iset) > 0:
-                        split_bins.append((iset, mi, ma))
-                    dense_enough = False
-            else:
-                split_bins.append((id_set, min_id, max_id))
-
-        sorted_bins = split_bins
-
-    if fusion:
-
-        fusion_done = False
-        while not fusion_done:
-            fusion_done = True
-            fused_bins = []
-            last_bin_fused = False
-            for pos, (id_set, min_id, max_id) in enumerate(sorted_bins):
-                if pos == 0 or last_bin_fused:
-                    last_bin_fused = False
-                    if pos == (len(sorted_bins) - 1):
-                        fused_bins.append((id_set, min_id, max_id))
-                    continue
-                pre_id_set, pre_min_id, pre_max_id = sorted_bins[pos - 1]
-                if ((len(id_set) + len(pre_id_set))) > ((max_id - pre_min_id) * density * 2 * factor):
-
-                    fused_bins.append(((pre_id_set | id_set), pre_min_id, max_id))
-                    last_bin_fused = True
-                    fusion_done = False
-                else:
-                    fused_bins.append((pre_id_set, pre_min_id, pre_max_id))
-                    last_bin_fused = False
-                    if pos == (len(sorted_bins) - 1):
-                        fused_bins.append((id_set, min_id, max_id))
-
-            sorted_bins = fused_bins
+    jnb.fit(sorted_ids)
 
     singletons = []
-    non_singleton_bins = []
-    for (id_set, min_id, max_id) in sorted_bins:
-        if min_id == max_id:
-            singletons.append(min_id)
+    bins = []
+
+    for group in jnb.groups_:
+        #print(group)
+        d = calc_density(group)
+
+        if d < density_thresh:
+            if d < density:
+                singletons.extend(group)
+            else:
+                rec_singletons, rec_bins = jnb_binning(group)
+                singletons.extend(rec_singletons), bins.extend(rec_bins)
         else:
-            non_singleton_bins.append((id_set, min_id, max_id))
-    return singletons, non_singleton_bins
+            bins.append((group, group[0], group[-1]))
+
+    return singletons, bins
+"""
+
+def naive_neighbor_binning(id_set: set[int] | list[int], density_thresh: float =0.5) -> tuple[list[int], list[Bin]]:
+    # small sets are returned as a list of singletons
+    if len(id_set) < 10:
+        return list(id_set), []
+
+    sorted_ids = sorted(id_set)
+    density: float = calc_density(sorted_ids)
+    if density > density_thresh:
+        return [], [(id_set, sorted_ids[0], sorted_ids[-1])]
+
+    singletons = []
+    bins = []
+
+    current_bin = []
+    binning_active = False
+    minimal_bin_size = len(id_set) // 50
+
+    for pos, val in enumerate(sorted_ids[1:], start=1):
+        prev_val = sorted_ids[pos - 1]
+
+        d = val-prev_val
+        if d <= 2:
+            current_bin.append(prev_val)
+            binning_active = True
+        elif binning_active:
+            current_bin.append(prev_val)
+            binning_active = False
+            if len(current_bin) >= minimal_bin_size:
+                bins.append((current_bin, current_bin[0], current_bin[-1]))
+            else:
+                singletons.extend(current_bin)
+            current_bin = []
+        else:
+            singletons.append(prev_val)
+        
+
+    if d <= 2:
+        current_bin.append(val)
+        bins.append((current_bin, current_bin[0], current_bin[-1]))
+    else:
+        singletons.append(val)
+
+    return singletons, bins
 
 
-def median_focus_binning(id_set, density_thresh=0.5):
+def median_focus_binning(id_set: set[int] | list[int], density_thresh: float =0.5) -> tuple[list[int], list[Bin]]:
     # small sets are returned as a list of singletons
     if len(id_set) < 10:
         return list(id_set), []
@@ -433,23 +435,24 @@ def median_focus_binning(id_set, density_thresh=0.5):
     sorted_ids = sorted(id_set)
 
     # If the given set is dense enough, just return it as one interval
-    density = len(sorted_ids) / (1 + sorted_ids[-1] - sorted_ids[0])
+    density: float = len(sorted_ids) / (1 + sorted_ids[-1] - sorted_ids[0])
     if density > density_thresh:
         return [], [(id_set, sorted_ids[0], sorted_ids[-1])]
 
-    l_quartile_pos = len(id_set) // 4
-    r_quartile_pos = 3 * l_quartile_pos
+    l_quartile_pos: int = len(id_set) // 4
+    r_quartile_pos: int = 3 * l_quartile_pos
 
-    avg_quartile_dist = 1 + (2 * (1 + sorted_ids[r_quartile_pos] - sorted_ids[l_quartile_pos]) / len(sorted_ids))
+    avg_quartile_dist: int = 1 + (2 * (1 + sorted_ids[r_quartile_pos] - sorted_ids[l_quartile_pos]) // len(sorted_ids))
 
-    median_pos = len(id_set) // 2
-    median = sorted_ids[median_pos]
+    median_pos: int = len(id_set) // 2
+    median: int = sorted_ids[median_pos]
 
-    id_set = set([median])
-    singletons = []
+    id_set: set[int] = set([median])
+    singletons: list[int] = []
 
-    l_minus_1_value = median
-    r_plus_1_value = median  # needed for giving the boundaries of the set if only median is in the set
+    l_minus_1_value: int = median
+    r_plus_1_value: int = median  # needed for giving the boundaries of the set if only median is in the set
+    l_value: int
     for i in range(median_pos):
         l_value = sorted_ids[median_pos - i]
         l_minus_1_value = sorted_ids[median_pos - i - 1]
@@ -462,6 +465,8 @@ def median_focus_binning(id_set, density_thresh=0.5):
     for j in range(median_pos - i):
         singletons.append(sorted_ids[j])
 
+    r_value: int
+    r_plus_1_value: int
     for i in range(median_pos, len(sorted_ids) - 1):
         r_value = sorted_ids[i]
         r_plus_1_value = sorted_ids[i + 1]
@@ -480,7 +485,17 @@ def median_focus_binning(id_set, density_thresh=0.5):
 
     return singletons, [(id_set, l_minus_1_value, r_plus_1_value)]
 
-def select(config, rows, table, between_rows={}, in_rows={}, equals_rows={}, null_columns=set(), n_trials=3, from_mapping_db=False):
+def select(
+        config: any,
+        rows: list[str],
+        table: str,
+        between_rows: dict[str, tuple[int, int]] = {},
+        in_rows: dict[str, list] = {},
+        equals_rows: dict[str, any] = {},
+        null_columns: list[str] = [],
+        n_trials: int = 3,
+        from_mapping_db: bool = False) -> list[list]:
+    
     if len(rows) == 0:
         row_str = '*'
     else:
@@ -491,12 +506,12 @@ def select(config, rows, table, between_rows={}, in_rows={}, equals_rows={}, nul
     else:
         wildcard_symbol = '?'
 
-    params = []
+    params: list[any] = []
 
     if len(between_rows) == 0 and len(in_rows) == 0 and len(equals_rows) == 0:
         where_str = ''
     else:
-        where_parts = []
+        where_parts: list[str] = []
 
         for equals_row in equals_rows:
             params.append(equals_rows[equals_row])
@@ -521,7 +536,7 @@ def select(config, rows, table, between_rows={}, in_rows={}, equals_rows={}, nul
         if len(params) == 0:
             return []
 
-    statement = 'SELECT %s FROM %s%s' % (row_str, table, where_str)
+    statement = f'SELECT {row_str} FROM {table}{where_str}'
 
     n = 0
     while n < n_trials:  # Repeat the querry if fails for n_trials times

@@ -59,14 +59,15 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                 rows = ['Structure', 'Residue_Id', 'Number', 'Residue_Data']
             else:
                 rows = ['Structure', 'Residue_Id', 'Number']
+
             table = 'Residue'
             results = binningSelect(id_package, rows, table, config)
 
             if config.verbosity >= 2:
                 t11 = time.time()
-                print("Time for getstoredresidues 2.1: %s" % str(t11 - t10))
+                print(f"Time for getstoredresidues 2.1: {t11 - t10} {len(id_package)}")
 
-            stored_res_db_ids = {}
+            stored_res_db_ids: dict[int, tuple[str, str, str | int]] = {}
 
             for row in results:
                 try:
@@ -74,18 +75,7 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                         res_id = int(row[2])
                     except:
                         res_id = row[2]
-                    if not retrieve_only_db_ids:
-                        unpacked_res_data = unpack(row[3])
-                        #print(unpacked_res_data)
-                        (one_letter, lig_dist_str, chain_dist_str, rsa, relative_main_chain_acc, relative_side_chain_acc,
-                               ssa, homo_str, profile_str,
-                               centrality_score_str, b_factor, modres, phi, psi, intra_ssbond, inter_ssbond, ssbond_length, intra_link, inter_link, link_length,
-                               cis_conformation, cis_follower, inter_chain_median_kd, inter_chain_dist_weighted_kd,
-                               inter_chain_median_rsa, inter_chain_dist_weighted_rsa, intra_chain_median_kd,
-                               intra_chain_dist_weighted_kd, intra_chain_median_rsa, intra_chain_dist_weighted_rsa,
-                               inter_chain_interactions_median, inter_chain_interactions_dist_weighted,
-                               intra_chain_interactions_median, intra_chain_interactions_dist_weighted,
-                               interacting_chains_str, interacting_ligands_str) = unpacked_res_data
+                    
                 except:
                     config.errorlog.add_warning('Defective database entry in Residue table: %s %s' % (str(row[0]), str(row[1])))
                     continue
@@ -95,37 +85,30 @@ def getStoredResidues(proteins, config, custom_ids = None, retrieve_only_db_ids 
                 
                 # Those residue inits include decoding of interaction profile and centrality score strings and thus takes some resources. For that a para function
                 if not retrieve_only_db_ids:
-                    residue = residue_package.Residue(res_id, aa=one_letter, lig_dist_str=lig_dist_str, chain_dist_str=chain_dist_str, RSA=rsa,
-                                       relative_main_chain_acc=relative_main_chain_acc, relative_side_chain_acc=relative_side_chain_acc,
-                                       SSA=ssa, homo_dist_str=homo_str, interaction_profile_str=profile_str, centrality_score_str=centrality_score_str,
-                                       modres=modres, b_factor=b_factor, database_id=row[1], stored=True, phi=phi, psi=psi,
-                                       intra_ssbond=intra_ssbond, inter_ssbond= inter_ssbond, ssbond_length=ssbond_length, intra_link=intra_link, inter_link = inter_link, link_length=link_length,
-                                       cis_conformation=cis_conformation, cis_follower=cis_follower, inter_chain_median_kd=inter_chain_median_kd,
-                                       inter_chain_dist_weighted_kd=inter_chain_dist_weighted_kd, inter_chain_median_rsa=inter_chain_median_rsa,
-                                       inter_chain_dist_weighted_rsa=inter_chain_dist_weighted_rsa, intra_chain_median_kd=intra_chain_median_kd,
-                                       intra_chain_dist_weighted_kd=intra_chain_dist_weighted_kd, intra_chain_median_rsa=intra_chain_median_rsa,
-                                       intra_chain_dist_weighted_rsa=intra_chain_dist_weighted_rsa,
-                                       inter_chain_interactions_median=inter_chain_interactions_median, inter_chain_interactions_dist_weighted=inter_chain_interactions_dist_weighted,
-                                       intra_chain_interactions_median=intra_chain_interactions_median, intra_chain_interactions_dist_weighted=intra_chain_interactions_dist_weighted,
-                                       interacting_chains_str=interacting_chains_str, interacting_ligands_str=interacting_ligands_str)
-                    proteins.add_residue(pdb_id, chain, res_id, residue)
+                    
+                    residue = row[3]
+                    proteins.structures[pdb_id][chain].add_residue(res_id, (res_id, row[1], residue))
                     if config.verbosity >= 6:
-                        print(f'Calling proteins.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
+                        print(f'Calling structures.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
                 else:
                     if not proteins.structures[pdb_id][chain].residues.contains(res_id):
-                        residue = residue_package.Residue(res_id, database_id=row[1], stored=True)
-                        proteins.add_residue(pdb_id, chain, res_id, residue)
+                        residue = residue_package.Residue()
+                        residue.res_num = res_id
+                        residue.database_id=row[1]
+                        residue.stored=True
+                        proteins.structures[pdb_id][chain].add_residue(res_id, residue)
                     else:
                         proteins.structures[pdb_id][chain].residues.get_item(res_id).database_id =  row[1]
                         proteins.structures[pdb_id][chain].residues.get_item(res_id).stored = True
 
-                stored_res_db_ids[row[1]] = pdb_id, chain, res_id
+                if not retrieve_only_db_ids:
+                    stored_res_db_ids[row[1]] = pdb_id, chain, res_id
 
             if not retrieve_only_db_ids:
 
                 rows = ['Residue', 'Interacting_Residue']
                 table = 'RS_Residue_Interface'
-                results = binningSelect(stored_res_db_ids, rows, table, config)
+                results = binningSelect(stored_res_db_ids.keys(), rows, table, config)
 
                 if config.verbosity >= 4:
                     print(f'Get Interfaces: {len(stored_res_db_ids)} {len(results)}')

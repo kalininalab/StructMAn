@@ -253,7 +253,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
     else:
         template_page = compl_obj.getPage(config)
 
-    (_, _, res_contig_map, _, _, _, box_map, _, _, _, _, _, _, _, _) = templateFiltering.parsePDB(template_page)
+    (_, res_contig_map, _, _, _, box_map, _, _, _, _, _, _, _, _) = templateFiltering.parsePDB(template_page)
 
     chains = compl_obj.chainlist
     reduced_chains = []
@@ -271,10 +271,10 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
 
         if chain not in box_map:
             continue
-        neighbors, _ = templateFiltering.box_check(box_map[tchain], box_map[chain], distance_threshold=config.short_distance_threshold)
+        neighbors = templateFiltering.box_check(box_map[tchain], box_map[chain], distance_threshold=config.short_distance_threshold)
         homo_neighbor = False
         for homochain in compl_obj.homomers[tchain]:
-            _neighbors, _ = templateFiltering.box_check(box_map[homochain], box_map[chain], distance_threshold=config.short_distance_threshold)
+            _neighbors = templateFiltering.box_check(box_map[homochain], box_map[chain], distance_threshold=config.short_distance_threshold)
             if _neighbors:
                 homo_neighbor = True
         if neighbors or homo_neighbor:

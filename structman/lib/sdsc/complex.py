@@ -1,15 +1,26 @@
-from structman.lib import pdbParser
-from structman.base_utils.base_utils import is_alphafold_model, alphafold_model_id_to_file_path
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol
+from structman.lib import pdbParser 
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, is_alphafold_model, alphafold_model_id_to_file_path, Slotted_obj
 
-class Complex:
+class Complex(Slotted_obj):
     __slots__ = [
-        'pdb_id', 'resolution', 'interaction_partners', 'database_id', 'chains', 'chainlist', 'stored',
-        'lig_profile', 'metal_profile', 'ion_profile', 'chain_chain_profile', 'homomers',
-        'atom_count', 'page', 'IAmap', 'interfaces'
+        'pdb_id',       'resolution',           'interaction_partners',
+        'database_id',  'chains',               'chainlist',
+        'stored',       'lig_profile',          'metal_profile',
+        'ion_profile',  'chain_chain_profile',  'homomers',
+        'atom_count',   'page',                 'IAmap',
+        'interfaces'
     ]
 
-    def __init__(self, pdb_id, resolution=None, chains_str=None, lig_profile=None, lig_profile_str=None, metal_profile=None,
+    slot_mask = [
+        False,  True,   False,
+        False,  True,   False,
+        False,  False,  False,
+        False,  False,  False,
+        False,  False,  False,
+        True    
+    ]
+
+    def __init__(self, pdb_id = None, resolution=None, chains_str=None, lig_profile=None, lig_profile_str=None, metal_profile=None,
                  metal_profile_str=None, ion_profile=None, ion_profile_str=None, chain_chain_profile=None,
                  chain_chain_profile_str=None, stored=False, database_id=None, homomers=None, homomers_str=None, atom_count=None,
                  IAmap = None, interfaces = None):
@@ -57,6 +68,15 @@ class Complex:
         if chain_chain_profile_str is not None:
             self.chain_chain_profile = self.parseProfileStr(chain_chain_profile_str)
 
+    def __serialize__(self) -> list[any]:
+        serialized_complex: list[any] = []
+        for slot_number, attribute_name in enumerate(self.__slots__):
+            if self.slot_mask[slot_number]:
+                serialized_complex.append(self.__getattribute__(attribute_name))
+            else:
+                serialized_complex.append(None)
+        return serialized_complex
+
     def deconstruct(self):
         del self.chain_chain_profile
         del self.ion_profile
@@ -78,7 +98,7 @@ class Complex:
                     homomers[chain].append(chain2)
         self.homomers = homomers
 
-    def get_homomers(self, chain):
+    def get_homomers(self, chain: str) -> str:
         if chain not in self.homomers:
             return chain
         return self.homomers[chain]
@@ -136,16 +156,11 @@ class Complex:
         if profile is None:
             return ''
         profile_str_parts = []
-        for id_1, id_2 in profile:
-            deg, score = profile[(id_1, id_2)]
-            profile_str_parts.append('%s_%s:%s_%s' % (id_1, id_2, str(deg), str(score)))
+        for id_1 in profile:
+            for id_2 in profile[id_1].get_keys():
+                deg, score = profile[id_1].get_item(id_2)
+                profile_str_parts.append('%s_%s:%s_%s' % (id_1, id_2, str(deg), str(score)))
         return ','.join(profile_str_parts)
-
-    def set_lig_profile(self, value):
-        self.lig_profile = value
-
-    def get_lig_profile(self):
-        return self.lig_profile
 
     def getLigProfileStr(self):
         return self.getProfileStr(self.lig_profile)
@@ -171,20 +186,8 @@ class Complex:
     def getMetalProfileStr(self):
         return self.getProfileStr(self.metal_profile)
 
-    def set_ion_profile(self, value):
-        self.ion_profile = value
-
-    def get_ion_profile(self):
-        return self.ion_profile
-
     def getIonProfileStr(self):
         return self.getProfileStr(self.ion_profile)
-
-    def set_chain_chain_profile(self, value):
-        self.chain_chain_profile = value
-
-    def get_chain_chain_profile(self):
-        return self.chain_chain_profile
 
     def getChainChainProfileStr(self):
         return self.getProfileStr(self.chain_chain_profile)
@@ -236,9 +239,6 @@ class Complex:
                 chains[chain] = self.chains[chain]
             return chains
         return self.chains
-
-    def get_resolution(self):
-        return self.resolution
 
     def set_database_id(self, value):
         self.database_id = value

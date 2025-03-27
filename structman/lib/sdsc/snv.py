@@ -1,9 +1,9 @@
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
 
-class SNV:
+class SNV(Slotted_obj):
     __slots__ = ['new_aa', 'database_id', 'stored', 'tags']
 
-    def __init__(self, new_aa, tags=set(), database_id=None):
+    def __init__(self, new_aa = None, tags=set(), database_id=None):
         self.new_aa = new_aa
         self.tags = tags.copy()
         self.database_id = database_id

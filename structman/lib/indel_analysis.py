@@ -4,8 +4,8 @@ import ray
 import time
 
 from structman.lib import serializedPipeline
-from structman.lib.output import output
-from structman.lib.database import database
+from structman.lib.output.out_generator import OutputGenerator
+from structman.lib.database.insertion_lib import insert_indel_results
 try:
     from structman.lib import modelling
 except:
@@ -145,7 +145,7 @@ def indel_analysis(config, indel_obj, wt_structure_annotations, mut_structure_an
 
 def compare_classifications(proteins, config, prot_id, models, sub_infos, write_output=None):
     if write_output is not None:
-        dC_output = output.OutputGenerator()
+        dC_output = OutputGenerator()
         headers = ['Position', 'Original classification', 'Recommended structure', 'Model ID', 'Model chain', 'Model residue', 'Model classification']
         dC_output.add_headers(headers)
         outfile = '%s/%s_dC_output_%s.tsv' % (config.outfolder, prot_id, write_output)
@@ -419,7 +419,7 @@ def para_indel_analysis(proteins, config):
         t6 = time.time()
         print('Indel analysis, part 6:', t6 - t5, n_filtered, n_success)
 
-    database.insert_indel_results(proteins, config)
+    insert_indel_results(proteins, config)
 
     if config.verbosity >= 2:
         t7 = time.time()

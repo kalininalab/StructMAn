@@ -27,7 +27,6 @@ from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.database.retrieval import getStoredResidues
 from structman.lib.database.database_core_functions import binningSelect, select, insert, update
 
-
 # called by output.classification
 def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
     if len(prot_id_list) == 0:
@@ -503,6 +502,10 @@ def positionCheck(proteins, database_session, config):
                 recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(recommended_structure_tuple[0])
                 proteins.getByDbId(prot_id).positions[pos].recommended_structure = recommended_structure
 
+        if config.read_only_mode:
+            for prot_id in proteins.protein_map:
+                proteins.set_completely_stored(prot_id)
+
     # search for stored SNVs
     if len(stored_positions) > 0:
         columns = ['Position', 'New_AA', 'SNV_Id']
@@ -525,13 +528,17 @@ def positionCheck(proteins, database_session, config):
         values = []
         for prot_id in prot_ids:
             prot_database_id = proteins.get_protein_database_id(prot_id)
-            positions = proteins.get_position_ids(prot_id)
+            positions = proteins[prot_id].get_position_ids()
             all_stored = True
             for pos in positions:
                 if proteins.is_position_stored(prot_id, pos):
                     continue
                 all_stored = False
-                aac_base = proteins.get_aac_base(prot_id, pos)
+                try:
+                    aac_base = proteins[prot_id].get_aac_base(pos)
+                except AttributeError:
+                    print(f'AttributeError in positionCheck: {prot_id} {pos}')
+                    aac_base = proteins[prot_id].get_aac_base(pos)
 
                 res_id = proteins.get_res_id(prot_id, pos)
 
@@ -605,6 +612,7 @@ def positionCheck(proteins, database_session, config):
                 continue
             proteins[prot_id].positions[pos].mut_aas[new_aa].database_id = row[2]
 
+
     # insert the the SNV session connections
     values = []
     for prot_id in prot_ids:
@@ -624,7 +632,7 @@ def positionCheck(proteins, database_session, config):
     # insert the position session connections
     values = []
     for prot_id in prot_ids:
-        positions = proteins.get_position_ids(prot_id)
+        positions = proteins[prot_id].get_position_ids()
         for pos in positions:
             if proteins[prot_id].positions[pos].session_less:
                 continue
@@ -654,63 +662,6 @@ def positionCheck(proteins, database_session, config):
 def backgroundInsertMS(values, config):
     insert('RS_Position_Session', ['Session', 'Position', 'Tag'], values, config)
 
-
-# called by serializedPipeline
-def addIupred(proteins, config):
-    values = []
-    u_acs = proteins.get_protein_ids()
-    for u_ac in u_acs:
-        if proteins.is_protein_stored(u_ac):
-            continue
-        scores = proteins.get_disorder_scores(u_ac)
-        regions = proteins.get_disorder_regions(u_ac)
-        method = proteins.get_disorder_tool(u_ac)
-
-        positions = proteins.get_position_ids(u_ac)
-
-        for pos in positions:
-            pos_id = proteins.get_position_database_id(u_ac, pos)
-
-            if method == 'MobiDB3.0' or method == 'mobidb-lite':
-                pos_region_type = 'globular'
-            else:
-                pos_region_type = 'disorder'
-            if regions is None:
-                continue
-            for [a, b, region_type] in regions:
-                if int(pos) > int(a) and int(pos) < int(b):
-                    pos_region_type = region_type
-
-            if scores is None:
-                config.errorlog.add_warning('IUpred scores are None for: %s' % u_ac)
-                break
-
-            if pos not in scores:
-                continue
-            iupred_score = scores[pos]
-            values.append((pos_id, iupred_score, pos_region_type))
-
-    if config.verbosity >= 2:
-        print(f'Before background add disorder process: {len(values)}')
-
-    process = multiprocessing.Process(target=backgroundIU, args=(pack(values), config))
-    process.start()
-    #insert_IU(values, config)
-    #process = None
-    #process = None
-    #if not len(values) == 0:
-    #    update(config, 'Position', ['Position_Id', 'IUPRED', 'IUPRED_Glob'], values)
-    return process
-
-
-def backgroundIU(values, config):
-    values = unpack(values)
-    insert_IU(values, config)
-
-def insert_IU(values, config): 
-    if not len(values) == 0:
-        update(config, 'Position', ['Position_Id', 'IUPRED', 'IUPRED_Glob'], values)
-    return
 
 # called by babel
 def getPDB(template_id, db, cursor):
@@ -744,20 +695,19 @@ def checkMutationSession(mutation_id, session_id, db, cursor):
 
 
 # called by output.classification
-def getMutationDict(mutation_id_list, config):
+def getMutationDict(mutation_id_list: list[int], config: any) -> dict[int, tuple[int | None, int, str | None, str]]:
     if len(mutation_id_list) == 0:
         return {}
 
-    rows = ['Position_Id', 'Position_Number', 'Protein', 'IUPRED', 'IUPRED_Glob', 'Residue_Id', 'Wildtype_Residue']
+    rows = ['Position_Id', 'Position_Number', 'Protein', 'Residue_Id', 'Wildtype_Residue']
     table = 'Position'
-    results = binningSelect(mutation_id_list, rows, table, config)
+    results: list[list] = binningSelect(mutation_id_list, rows, table, config)
 
-    mutation_dict = {}
+    mutation_dict: dict[int, tuple[int | None, int, str | None, str]] = {}
 
     for row in results:
         mut_id = row[0]
-        if mut_id in mutation_id_list:
-            mutation_dict[mut_id] = (row[1], row[2], row[3], row[4], row[5], row[6])
+        mutation_dict[mut_id] = (row[1], row[2], row[3], row[4])
     return mutation_dict
 
 
@@ -1031,54 +981,42 @@ def draw_complexes(config, proteins, stored_complexes=[], draw_all=False):
 
 
 # called by serializedPipeline
-def insertStructures(structurelist, proteins, config, results=None, return_results=False):
+def insertStructures(structurelist: dict[str, set[str]], proteins, config):
 
     if len(structurelist) == 0:
-        return []
+        return
 
     table = 'Structure'
     rows = ['Structure_Id', 'PDB', 'Chain']
-    if results is None:
-        results = select(config, rows, table)
-        already_called = False
-    else:
-        already_called = True
+    results = select(config, rows, table, in_rows={'PDB': structurelist.keys()})
 
     stored_complexes = set()
-    del_list = []
 
-    for pos, row in enumerate(results):
+    for row in results:
         pdb_id = row[1]
         chain = row[2]
         if not proteins.contains_structure(pdb_id, chain):
-            if return_results:
-                del_list.append(pos)
             continue
-        if not already_called:
-            s_id = row[0]
-            proteins.set_structure_db_id(pdb_id, chain, s_id)
-            proteins.set_structure_stored(pdb_id, chain, True)  # all structures, mapped or not go into this dictionary, this is important for not reinserting residues from interacting structures
-            stored_complexes.add(pdb_id)
-        if (pdb_id, chain) in structurelist:
-            structurelist.remove((pdb_id, chain))
+        
+        s_id = row[0]
+        proteins.set_structure_db_id(pdb_id, chain, s_id)
+        proteins.set_structure_stored(pdb_id, chain, True)  # all structures, mapped or not go into this dictionary, this is important for not reinserting residues from interacting structures
+        stored_complexes.add(pdb_id)
 
-    if return_results:
-        results = list(results)
-        for pos in reversed(del_list):
-            del results[pos]
-        ret_results = results
-    else:
-        ret_results = None
+        if pdb_id in structurelist:
+            structurelist[pdb_id].remove(chain)
+            if len(structurelist[pdb_id]) == 0:
+                del structurelist[pdb_id]
 
-    if not already_called:
-        draw_complexes(config, proteins, stored_complexes=stored_complexes)
+    draw_complexes(config, proteins, stored_complexes=stored_complexes)
 
     values = []
 
-    for (pdb_id, chain) in structurelist:
-        oligos = proteins.get_oligo(pdb_id, chain)
-        oligos = ''.join(oligos)
-        values.append((pdb_id, chain, oligos))
+    for pdb_id in structurelist:
+        for chain in structurelist[pdb_id]:
+            oligos = proteins.get_oligo(pdb_id, chain)
+            oligos = ''.join(oligos)
+            values.append((pdb_id, chain, oligos))
 
     if len(values) > 0:
         insert('Structure', ['PDB', 'Chain', 'Homooligomer'], values, config)
@@ -1086,22 +1024,19 @@ def insertStructures(structurelist, proteins, config, results=None, return_resul
     if len(structurelist) > 0:
         table = 'Structure'
         rows = ['Structure_Id', 'PDB', 'Chain']
-        results = select(config, rows, table)
+        results = select(config, rows, table, in_rows={'PDB': structurelist.keys()})
 
         for row in results:
             s_id = row[0]
             pdb_id = row[1]
             chain = row[2]
 
-            if not (pdb_id, chain) in structurelist:
+            if not pdb_id in structurelist:
+                continue
+            if not chain in structurelist[pdb_id]:
                 continue
 
-            if return_results:
-                ret_results.append(row)
-
             proteins.set_structure_db_id(pdb_id, chain, s_id)
-
-    return ret_results
 
 
 # called by serializedPipeline
@@ -1427,45 +1362,6 @@ def getStructure_map(structure_ids, config):
             structure_map[pdb_id][chain] = (s_id, oligo)
             id_structure_map[s_id] = (pdb_id, chain)
     return structure_map, id_structure_map
-
-
-# called by indel_analysis
-def insert_indel_results(proteins, config):
-    table = 'Indel'
-    columns = ['Indel_Id', 'Wildtype_Protein', 'Mutant_Protein', 'Indel_Notation', 'Analysis_Results']
-
-    values = []
-    for prot_id in proteins.indels:
-        for indel_notation in proteins.indels[prot_id]:
-            indel_obj = proteins.indels[prot_id][indel_notation]
-            wt_prot_id = proteins.get_protein_database_id(proteins.indels[prot_id][indel_notation].wt_prot)
-            mut_prot_id = proteins.get_protein_database_id(proteins.indels[prot_id][indel_notation].mut_prot)
-            analysis_results = pack((indel_obj.size, indel_obj.delta_delta_classification, indel_obj.wt_aggregates, indel_obj.mut_aggregates,
-                                        indel_obj.left_flank_wt_aggregates, indel_obj.left_flank_mut_aggregates,
-                                        indel_obj.right_flank_wt_aggregates, indel_obj.right_flank_mut_aggregates))
-            values.append((indel_obj.database_id, wt_prot_id, mut_prot_id, indel_notation, analysis_results))
-    update(config, table, columns, values)
-    return
-
-
-
-def para_residue_init(rows):
-    t0 = time.time()
-    outs = []
-    for row in rows:
-        # Those residue inits include decoding of interaction profile and centrality score strings and thus takes some resources. For that a para function
-        residue = residue_package.Residue(row[2], aa=row[3], lig_dist_str=row[4], chain_dist_str=row[5], RSA=row[6],
-                               SSA=row[7], homo_dist_str=row[8], interaction_profile_str=row[9], centrality_score_str=row[10],
-                               modres=row[11], b_factor=row[12], database_id=row[1], stored=True, phi=row[13], psi=row[14],
-                               intra_ssbond=row[15], ssbond_length=row[16], intra_link=row[17], link_length=row[18],
-                               cis_conformation=row[19], cis_follower=row[20], inter_chain_median_kd=row[21],
-                               inter_chain_dist_weighted_kd=row[22], inter_chain_median_rsa=row[23],
-                               inter_chain_dist_weighted_rsa=row[24], intra_chain_median_kd=row[25],
-                               intra_chain_dist_weighted_kd=row[26], intra_chain_median_rsa=row[27],
-                               intra_chain_dist_weighted_rsa=row[28])
-        outs.append((row[0], row[2], residue))
-    t1 = time.time()
-    return outs, t1 - t0
 
 
 def checkLigand(name, db, cursor):
@@ -2098,7 +1994,7 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
     if not without_positions:
         if with_mappings:
-            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data', 'IUPRED', 'IUPRED_Glob', 'Position_Data']
+            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data', 'Position_Data']
         elif with_struct_recs:
             cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data']
         else:
@@ -2136,23 +2032,15 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
             if with_mappings:
 
-                if row[7] is None:
-                    mapping_results = None
+                if row[5] is None:
+                    mappings_obj = mappings_package.Mappings()
 
                 else:
                     try:
-                        (
-                            interaction_str,
-                            amount_of_structures,
-                            raw_structural_features,
-                            raw_rin_features,
-                            raw_microminer_features,
-                            raw_integrated_features
-                        ) = unpack(row[7])
-
-
-                        mapping_results = ([], recommended_structure, max_seq_structure, None, amount_of_structures, raw_structural_features, raw_microminer_features, raw_rin_features, raw_integrated_features)
-
+                        mappings_obj: mappings_package.Mappings = unpack(row[5])
+                        mappings_obj.recommended_res = recommended_structure_str
+                        mappings_obj.max_seq_res = max_seq_structure_str
+                        
                     except:
                         error_count += 1
                         if error_message is None:
@@ -2160,7 +2048,6 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
                             g = traceback.format_exc()
                             error_message = f'Error in retrieving position data, couldnt unpack: {m_id}\n{e}\n{f}\n{g}'
                         continue
-                mappings_obj = mappings_package.Mappings(raw_results = mapping_results)
 
             if with_struct_recs:
                 pos_obj = position_package.Position(pos=pos, checked=True, recommended_structure=recommended_structure, database_id=m_id, wt_aa = wt_aa)
@@ -2455,88 +2342,6 @@ def diffSurfs(mutation_surface_dict, g_u_dict, mutation_dict, outfile, config):
         conf_sc = (1.0 - 1.0 / (n + 1.0)) * abs(DSS - 2 * DSC) / (DSS + 2 * DSC)
 
 
-def createInterDict(mutation_inter_dict, chain_type='sc'):
-
-    inter_dict = {}
-
-    for m_id in mutation_inter_dict:
-        profiles = mutation_inter_dict[m_id]
-        total_qual = 0.0
-        ion_qual = 0.0
-        metal_qual = 0.0
-        lig_qual = 0.0
-        chain_qual = 0.0
-        average_profile = [0.0] * 14
-        for profile_str, qual in profiles:
-            if None in (profile_str, qual):
-                continue
-            profile = rin.Interaction_profile(profile_str=profile_str)
-            total_qual += qual
-
-            Ion_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'ion')
-            Ion_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'ion')
-            Metal_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'metal')
-            Metal_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'metal')
-            Ligand_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'ligand')
-            Ligand_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'ligand')
-            Chain_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'interchain')
-            Chain_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'interchain')
-            Short_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'neighbor')
-            Short_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'neighbor')
-            Medium_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'short')
-            Medium_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'short')
-            Long_Interaction_Degree = profile.getChainSpecificCombiDegree(chain_type, 'long')
-            Long_Interaction_Score = profile.getChainSpecificCombiScore(chain_type, 'long')
-
-            if Ligand_Interaction_Degree > 0:
-                lig_qual += qual
-            if Metal_Interaction_Degree > 0:
-                metal_qual += qual
-            if Ion_Interaction_Degree > 0:
-                ion_qual += qual
-            if Chain_Interaction_Degree > 0:
-                chain_qual += qual
-
-            average_profile[0] += Ion_Interaction_Degree * qual
-            average_profile[1] += Ion_Interaction_Score * qual
-            average_profile[2] += Metal_Interaction_Degree * qual
-            average_profile[3] += Metal_Interaction_Score * qual
-            average_profile[4] += Ligand_Interaction_Degree * qual
-            average_profile[5] += Ligand_Interaction_Score * qual
-            average_profile[6] += Chain_Interaction_Degree * qual
-            average_profile[7] += Chain_Interaction_Score * qual
-            average_profile[8] += Short_Interaction_Degree * qual
-            average_profile[9] += Short_Interaction_Score * qual
-            average_profile[10] += Medium_Interaction_Degree * qual
-            average_profile[11] += Medium_Interaction_Score * qual
-            average_profile[12] += Long_Interaction_Degree * qual
-            average_profile[13] += Long_Interaction_Score * qual
-
-        if total_qual > 0.0:
-            average_profile[8] = average_profile[8] / total_qual
-            average_profile[9] = average_profile[9] / total_qual
-            average_profile[10] = average_profile[10] / total_qual
-            average_profile[11] = average_profile[11] / total_qual
-            average_profile[12] = average_profile[12] / total_qual
-            average_profile[13] = average_profile[13] / total_qual
-
-        if ion_qual > 0.0:
-            average_profile[0] = average_profile[0] / ion_qual
-            average_profile[1] = average_profile[1] / ion_qual
-        if metal_qual > 0.0:
-            average_profile[2] = average_profile[2] / metal_qual
-            average_profile[3] = average_profile[3] / metal_qual
-        if lig_qual > 0.0:
-            average_profile[4] = average_profile[4] / lig_qual
-            average_profile[5] = average_profile[5] / lig_qual
-        if chain_qual > 0.0:
-            average_profile[6] = average_profile[6] / chain_qual
-            average_profile[7] = average_profile[7] / chain_qual
-        inter_dict[m_id] = average_profile
-
-    return inter_dict
-
-
 def excludeFarClasses(c, sc):
     if c == "Surface" or c == "Core" or c == 'Disorder' or c is None:
         return c
@@ -2559,136 +2364,6 @@ def excludeFarClasses(c, sc):
 
     return clas
 
-
-def writeInterFile(outfile, inter_dict, mutation_dict, protein_dict, new_aa_map, tag_map, class_dict, header=True):
-    startline = "Uniprot\tAAC\tSpecie\tTag\tLigand_Interaction_Degree\tLigand_Interaction_Score\tChain_Interaction_Degree\tChain_Interaction_Score\tShort_Interaction_Degree\tShort_Interaction_Score\tMedium_Interaction_Degree\tMedium_Interaction_Score\tLong_Interaction_Degree\tLong_Interaction_Score\tClass\tComplex class"
-    if header:
-        lines = [startline]
-    else:
-        lines = []
-    for m in inter_dict:
-        aac, Protein_Id = mutation_dict[m][0:2]
-
-        new_aa = new_aa_map[m]
-        aac = "%s%s" % (aac.split(',')[0], new_aa)
-        #(u_ac,u_id,species) = g_u_dict[mutation_dict[m][1]]
-        (u_ac, gpan, u_id, error_code, error, species, input_id) = protein_dict[Protein_Id]
-
-        (Class, conf, weighted_sc, conf_sc, best_res, max_seq_res, amount_of_structures,
-         weighted_c, conf_c,
-         weighted_d, conf_d,
-         weighted_r, conf_r,
-         weighted_l, conf_l,
-         weighted_m, conf_m,
-         weighted_i, conf_i,
-         weighted_h, conf_h,
-         max_seq_id,
-         weighted_raw, weighted_cent, weighted_norm,
-         weighted_lig_degree, weighted_lig_score,
-         weighted_metal_degree, weighted_metal_score,
-         weighted_ion_degree, weighted_ion_score,
-         weighted_prot_degree, weighted_prot_score,
-         weighted_rna_degree, weighted_rna_score,
-         weighted_dna_degree, weighted_dna_score,
-         weighted_modres, modres_prop, b_factor,
-         intra_ssbond_prop, inter_ssbond_prop,
-         intra_link_prop, inter_link_prop,
-         cis_prop, cis_follower_prop,
-         weighted_inter_chain_median_kd, weighted_inter_chain_dist_weighted_kd,
-         weighted_inter_chain_median_rsa, weighted_inter_chain_dist_weighted_rsa,
-         weighted_intra_chain_median_kd, weighted_intra_chain_dist_weighted_kd,
-         weighted_intra_chain_median_rsa, weighted_intra_chain_dist_weighted_rsa) = class_dict[m]
-        simple_class = simplifyClass(Class, weighted_sc)  # BUG: undefined variable
-
-        if m in inter_dict:
-            interstr = '\t'.join([str(x) for x in inter_dict[m]])
-        else:
-            interstr = '\t'.join(([''] * 14))
-
-        line = "%s\t%s\t%s\t%s\t%s\t%s\t%s" % (u_ac, aac, species, tag_map[m], interstr, simple_class, Class)
-        lines.append(line)
-
-    f = open(outfile, 'a')
-    f.write("\n".join(lines))
-    f.close()
-
-
-def writeClassFile(outfile, mutation_surface_dict, mutation_sec_dict, mutation_dict, protein_dict, class_dict, tag_map, header=True):
-    startline = "Uniprot-Ac\tUniprot Id\tRefseq\tPDB-ID (Input)\tResidue-Id\tAmino Acid\tPosition\tSpecies\tTag\tWeighted Surface/Core\tClass\tSimple Class\tIndividual Interactions\tConfidence Value\tSecondary Structure\tRecommended Structure\tSequence-ID\tCoverage\tResolution\tMax Seq Id Structure\tMax Sequence-ID\tMax Seq Id Coverage\tMax Seq Id Resolution\tAmount of mapped structures"
-
-    if header:
-        lines = [startline]
-    else:
-        lines = []
-    for m in class_dict:
-        if m in mutation_sec_dict:
-            mv_sec_ass = majority_vote(mutation_sec_dict[m])
-        else:
-            mv_sec_ass = None
-
-        (Class, conf, weighted_sc, conf_sc, best_res, max_seq_res, amount_of_structures,
-         weighted_c, conf_c,
-         weighted_d, conf_d,
-         weighted_r, conf_r,
-         weighted_l, conf_l,
-         weighted_m, conf_m,
-         weighted_i, conf_i,
-         weighted_h, conf_h,
-         max_seq_id,
-         weighted_raw, weighted_cent, weighted_norm,
-         weighted_lig_degree, weighted_lig_score,
-         weighted_metal_degree, weighted_metal_score,
-         weighted_ion_degree, weighted_ion_score,
-         weighted_prot_degree, weighted_prot_score,
-         weighted_rna_degree, weighted_rna_score,
-         weighted_dna_degree, weighted_dna_score,
-         weighted_modres, modres_prop, b_factor,
-         intra_ssbond_prop, inter_ssbond_prop,
-         intra_link_prop, inter_link_prop,
-         cis_prop, cis_follower_prop,
-         weighted_inter_chain_median_kd, weighted_inter_chain_dist_weighted_kd,
-         weighted_inter_chain_median_rsa, weighted_inter_chain_dist_weighted_rsa,
-         weighted_intra_chain_median_kd, weighted_intra_chain_dist_weighted_kd,
-         weighted_intra_chain_median_rsa, weighted_intra_chain_dist_weighted_rsa) = class_dict[m]
-        simple_class = simplifyClass(Class, weighted_sc)  # BUG: undefined variable
-
-        if best_res is not None:
-            [r_id, qual, res_aa, res_nr, pdb_id, chain, resolution, cov, seq_id, rsa, min_lig, min_metal, min_ion, iacs] = best_res
-
-            recommended_structure = '%s:%s %s:%s' % (pdb_id, chain, res_nr, res_aa)
-        else:
-            resolution = '-'
-            cov = '-'
-            seq_id = '-'
-            recommended_structure = '-'
-
-        if max_seq_res is not None:
-            [max_seq_r_id, max_seq_qual, max_seq_res_aa, max_seq_res_nr, max_seq_pdb_id, max_seq_chain, max_seq_resolution, max_seq_cov, max_seq_seq_id, max_seq_rsa, max_min_lig, max_min_metal, max_min_ion, max_iacs] = max_seq_res
-
-            max_seq_structure = '%s:%s %s:%s' % (max_seq_pdb_id, max_seq_chain, max_seq_res_nr, max_seq_res_aa)
-        else:
-            max_seq_resolution = '-'
-            max_seq_cov = '-'
-            max_seq_seq_id = '-'
-            max_seq_structure = '-'
-
-        aac, Protein_Id = mutation_dict[m][0:2]
-        input_res_id = mutation_dict[m][4]
-        if input_res_id is None:
-            input_res_id = ''
-
-        (u_ac, gpan, u_id, error_code, error, species, input_id) = protein_dict[Protein_Id]
-
-        input_pdb_id = ''
-        if len(u_ac) == 6 and u_ac[4] == ':':
-            input_pdb_id = u_ac
-            u_ac = ''
-        interaction_str = '-'  # TODO
-
-        lines.append("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (u_ac, u_id, gpan, input_pdb_id, input_res_id, aac[0], aac[1:], species, tag_map[m], weighted_sc, Class, simple_class, interaction_str, str(conf), mv_sec_ass, recommended_structure, str(seq_id), str(cov), str(resolution), max_seq_structure, str(max_seq_seq_id), str(max_seq_cov), str(max_seq_resolution), str(amount_of_structures)))
-    f = open(outfile, 'a')
-    f.write("\n".join(lines))
-    f.close()
 
 # called by output, needs update, currently no gene_score
 

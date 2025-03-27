@@ -1691,12 +1691,15 @@ def create_isoform_plot(obj, out_f, session_name, target):
             if char == '-':
                 all_classifications[isoform_id].append('gap')
             else:
-                original_classification = isoform_classifications[isoform_id][i]
-                if original_classification == "None":
-                    all_classifications[isoform_id].append("NA")
+                if i in isoform_classifications[isoform_id]:
+                    original_classification = isoform_classifications[isoform_id][i]
+                    if original_classification == "None":
+                        all_classifications[isoform_id].append("NA")
 
+                    else:
+                        all_classifications[isoform_id].append(original_classification)
                 else:
-                    all_classifications[isoform_id].append(original_classification)
+                    all_classifications[isoform_id].append("NA")
                 i += 1
 
     classification_color_dict = parse_classifications(all_classifications)

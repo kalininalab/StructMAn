@@ -1,8 +1,7 @@
 import math
 
-from structman.lib.sdsc.mappings import Mappings
-from structman.lib.sdsc import position as position_package
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol, translate
+from structman.lib import sdsc
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, translate, Slotted_obj
 from structman.lib.output.out_utils import function_factor
 
 def majority_vote(secs):
@@ -23,35 +22,24 @@ def majority_vote(secs):
     return max_sec
 
 def aggregate_positions(position_objects, config):
-    disorder_scores = []
-    disorder_regions = []
-    mappings = Mappings()
+
+    mappings: sdsc.mappings.Mappings = sdsc.mappings.Mappings()
     if position_objects is None:
         return mappings, None, None
     for pos_obj in position_objects:
-        result = pos_obj.mappings.get_raw_result()
-        mappings.add_result(pos_obj.pos, result, 1.0, 1.0, 1.0)
-        if pos_obj.disorder_score is None:
-            continue
-        disorder_scores.append(pos_obj.disorder_score)
-        disorder_regions.append(pos_obj.disorder_region)
-
-    if len(disorder_scores) > 0:
-        disorder_score = sum(disorder_scores)/float(len(disorder_scores))
-        disorder_region = majority_vote(disorder_regions)
-    else:
-        disorder_score = None
-        disorder_region = None
-
-    mappings.weight_all(config, disorder_score, disorder_region, for_indel_aggregation = True)
-    return mappings, disorder_score, disorder_region
+        pos_structural_features = pos_obj.mappings.structural_features
+        pos_rin_based_features = pos_obj.mappings.rin_based_features
+        mappings.add_result(pos_obj.pos, pos_structural_features, pos_rin_based_features, 1.0, 1.0, 1.0)
+   
+    mappings.weight_all(config, for_indel_aggregation = True)
+    return mappings
 
 super_slots = ['left_flank', 'right_flank', 'left_flank_pos', 'right_flank_pos', 'tags', 'stored', 'database_id', 'size',
                  'wt_prot', 'mut_prot', 'terminal', 'terminal_end', 'delta_delta_classification', 'wt_aggregates', 'mut_aggregates',
                  'left_flank_wt_aggregates', 'left_flank_mut_aggregates', 'right_flank_wt_aggregates', 'right_flank_mut_aggregates'
                 ]
 
-class Indel:
+class Indel(Slotted_obj):
     __slots__ = super_slots
 
     def __init__(self, left_flank=None, right_flank=None, tags=set(), database_id = None):
@@ -115,11 +103,8 @@ class Indel:
     def aggregate(self, proteins, config):
         wt_pos_objs, mut_pos_objs = self.get_positions(proteins, config)
 
-        wt_mappings, wt_disorder_score, wt_disorder_region = aggregate_positions(wt_pos_objs, config)
-        self.wt_aggregates = wt_mappings.get_raw_result(), wt_disorder_score, wt_disorder_region
-
-        mut_mappings, mut_disorder_score, mut_disorder_region = aggregate_positions(mut_pos_objs, config)
-        self.mut_aggregates = mut_mappings.get_raw_result(), mut_disorder_score, mut_disorder_region
+        self.wt_mappings = aggregate_positions(wt_pos_objs, config)
+        self.mut_aggregates = aggregate_positions(mut_pos_objs, config)
 
     def get_flank_positions(self, proteins, config):
         left_flank_wt_position_objs, left_flank_mut_position_objs = self.get_left_flank_positions(proteins, config)
@@ -129,17 +114,13 @@ class Indel:
     def flank_aggregates(self, proteins, config):
         left_flank_wt_position_objs, left_flank_mut_position_objs, right_flank_wt_position_objs, right_flank_mut_position_objs = self.get_flank_positions(proteins, config)
 
-        left_flank_wt_mappings, left_flank_wt_disorder_score, left_flank_wt_disorder_region = aggregate_positions(left_flank_wt_position_objs, config)
-        self.left_flank_wt_aggregates = left_flank_wt_mappings.get_raw_result(), left_flank_wt_disorder_score, left_flank_wt_disorder_region
+        self.left_flank_wt_aggregates = aggregate_positions(left_flank_wt_position_objs, config)
 
-        left_flank_mut_mappings, left_flank_mut_disorder_score, left_flank_mut_disorder_region = aggregate_positions(left_flank_mut_position_objs, config)
-        self.left_flank_mut_aggregates = left_flank_mut_mappings.get_raw_result(), left_flank_mut_disorder_score, left_flank_mut_disorder_region
+        self.left_flank_mut_aggregates = aggregate_positions(left_flank_mut_position_objs, config)
 
-        right_flank_wt_mappings, right_flank_wt_disorder_score, right_flank_wt_disorder_region = aggregate_positions(right_flank_wt_position_objs, config)
-        self.right_flank_wt_aggregates = right_flank_wt_mappings.get_raw_result(), right_flank_wt_disorder_score, right_flank_wt_disorder_region
+        self.right_flank_wt_aggregates = aggregate_positions(right_flank_wt_position_objs, config)
 
-        right_flank_mut_mappings, right_flank_mut_disorder_score, right_flank_mut_disorder_region = aggregate_positions(right_flank_mut_position_objs, config)
-        self.right_flank_mut_aggregates = right_flank_mut_mappings.get_raw_result(), right_flank_mut_disorder_score, right_flank_mut_disorder_region
+        self.right_flank_mut_aggregates = aggregate_positions(right_flank_mut_position_objs, config)
 
 class Insertion(Indel):
     __slots__ = super_slots + ['inserted_sequence']
@@ -157,7 +138,10 @@ class Insertion(Indel):
                 right_flank = None
         super().__init__(left_flank=left_flank, right_flank=right_flank, tags=tags)
         self.inserted_sequence = inserted_sequence
-        self.size = len(inserted_sequence)
+        if inserted_sequence is not None:
+            self.size = len(inserted_sequence)
+        else:
+            self.size = 0
         # if self.right_flank == None:
         #    self.right_flank_pos = 1
         #    self.left_flank_pos = 0
@@ -210,7 +194,7 @@ class Insertion(Indel):
         proteins[self.mut_prot].sequence = mutated_sequence
         for (pos, aa) in enumerate(mutated_sequence):
             seq_pos = pos + 1
-            position = position_package.Position(pos=seq_pos, wt_aa=aa, checked=True)
+            position = sdsc.position.Position(pos=seq_pos, wt_aa=aa, checked=True)
             proteins[self.mut_prot].positions[seq_pos] = position
 
     def get_positions(self, proteins, config):
@@ -430,7 +414,7 @@ class Deletion(Indel):
         proteins[self.mut_prot].sequence = mutated_sequence
         for (pos, aa) in enumerate(mutated_sequence):
             seq_pos = pos + 1
-            position = position_package.Position(pos=seq_pos, wt_aa=aa, checked=True)
+            position = sdsc.position.Position(pos=seq_pos, wt_aa=aa, checked=True)
             proteins[self.mut_prot].positions[seq_pos] = position
 
     def get_positions(self, proteins, config):
@@ -593,7 +577,10 @@ class Substitution(Indel):
             self.terminal = True
             self.terminal_end = 'left'
 
-        self.size = max([(self.right_flank_pos - self.left_flank_pos) + 1, len(inserted_sequence)])
+        if inserted_sequence is not None:
+            self.size = max([(self.right_flank_pos - self.left_flank_pos) + 1, len(inserted_sequence)])
+        else:
+            self.size = 0
 
     def get_type(self):
         return 'Substitution', self.terminal, self.terminal_end
@@ -630,7 +617,7 @@ class Substitution(Indel):
         proteins[self.mut_prot].sequence = mutated_sequence
         for (pos, aa) in enumerate(mutated_sequence):
             seq_pos = pos + 1
-            position = position_package.Position(pos=seq_pos, wt_aa=aa, checked=True)
+            position = sdsc.position.Position(pos=seq_pos, wt_aa=aa, checked=True)
             proteins[self.mut_prot].positions[seq_pos] = position
 
     def get_positions(self, proteins, config):

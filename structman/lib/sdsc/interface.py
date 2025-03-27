@@ -1,4 +1,4 @@
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
 
 #Called by serializedPipeline
 
@@ -9,6 +9,8 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
         print(f'Call of calculate_aggregated_interface_map: {protein_id} {len(annotations)} {len(interface_map)} {len(structure_backmaps)}')
     for structure_id, t_chain in annotations:
         interfaces = interface_map[structure_id]
+        if t_chain not in structure_backmaps[structure_id]:
+            continue
         if protein_id not in structure_backmaps[structure_id][t_chain]:
             continue
         backmap = structure_backmaps[structure_id][t_chain][protein_id]
@@ -97,7 +99,7 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                                             continue
 
                                         pos_pos_i = Position_Position_Interaction(protein_id, position, i_protein, i_res_mapped_pos)
-                                        new_pos_pos_i = aggregated_interfaces[known_interface_number].add_pos_pos_interaction(pos_pos_i)
+                                        new_pos_pos_i = aggregated_interfaces[known_interface_number].add_pos_pos_interaction(pos_pos_i, residue_interaction_score)
 
                                         if config.verbosity >= 7:
                                             print(new_pos_pos_i or (interface_annotation_score > aggregated_interfaces[known_interface_number].interface_annotation_score))
@@ -175,9 +177,12 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                             for i_res in interfaces[chain][i_chain].interactions[res]:
                                 residue_interaction_score = interfaces[chain][i_chain].interactions[res][i_res]
                                 if not structure_id in structure_backmaps:
-                                    #print(structure_id, i_chain, 'not in structures 2', protein_id, chain, res, i_res)
+                                    if config.verbosity >= 7:
+                                        print(f'{structure_id} not in structure_back_maps, {protein_id}, {chain}, {res}, {i_res}')
                                     continue
                                 if not i_chain in structure_backmaps[structure_id]:
+                                    if config.verbosity >= 7:
+                                        print(f'{i_chain} not in structure_back_maps[{structure_id}], {protein_id}, {chain}, {res}, {i_res}')
                                     continue
                                 if config.verbosity >= 6:
                                     print(f'In residue aggregation of {res} - {i_res}')
@@ -185,9 +190,11 @@ def calculate_aggregated_interface_map(config, protein_id, annotations, interfac
                                 for i_protein in structure_backmaps[structure_id][i_chain]:
                                     i_protein_pos = structure_backmaps[structure_id][i_chain][i_protein].get_item(i_res)
                                     if i_protein_pos is None: #Unmapped residues
+                                        if config.verbosity >= 7:
+                                            print(f'Unmapped residue: {structure_id} {i_chain} {i_protein} {i_res}')
                                         continue
                                     pos_pos_i = Position_Position_Interaction(protein_id, position, i_protein, i_protein_pos)
-                                    new_pos_pos_i = aggregated_interfaces[-1].add_pos_pos_interaction(pos_pos_i)
+                                    new_pos_pos_i = aggregated_interfaces[-1].add_pos_pos_interaction(pos_pos_i, residue_interaction_score)
                                     aggregated_interfaces[-1].pos_pos_interactions[position][i_protein][i_protein_pos].set_recommended_complex(structure_id, (chain, res, i_chain, i_res), residue_interaction_score)
 
 
@@ -200,9 +207,9 @@ def calc_interface_annotation_score(seq_id, coverage, interactions):
             total_score += interactions[res_a][res_b]
     return total_score * seq_id * coverage
 
-class Aggregated_interface:
+class Aggregated_interface(Slotted_obj):
     __slots__ = ['protein',  'recommended_complex', 'chain', 'interacting_chain', 'positions', 'interface_annotation_score', 'pos_pos_interactions', 'database_id']
-    def __init__(self, protein_id, recommended_complex = None, chain = None, interacting_chain = None, positions = None, interface_annotation_score = None, database_id = None):
+    def __init__(self, protein_id = None, recommended_complex = None, chain = None, interacting_chain = None, positions = None, interface_annotation_score = None, database_id = None):
         self.protein = protein_id
         self.recommended_complex = recommended_complex
         self.chain = chain
@@ -227,7 +234,7 @@ class Aggregated_interface:
     def add_position(self, position, recommended_residue):
         self.positions[position] = recommended_residue
 
-    def add_pos_pos_interaction(self, pos_pos_interaction):
+    def add_pos_pos_interaction(self, pos_pos_interaction, score):
         if pos_pos_interaction.position_a not in self.pos_pos_interactions:
             self.pos_pos_interactions[pos_pos_interaction.position_a] = {}
 
@@ -237,7 +244,10 @@ class Aggregated_interface:
         if pos_pos_interaction.position_b not in self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b]:
             self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b][pos_pos_interaction.position_b] = pos_pos_interaction
             return True
-        
+        elif score > self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b][pos_pos_interaction.position_b].interaction_score:
+            self.pos_pos_interactions[pos_pos_interaction.position_a][pos_pos_interaction.protein_b][pos_pos_interaction.position_b] = pos_pos_interaction
+            return True
+
         return False
 
     def set_recommended_complex(self, recommended_complex, chain, interacting_chain, interface_annotation_score):
@@ -294,15 +304,16 @@ class Aggregated_interface:
                     break
         print('==============================================')
 
-class Position_Position_Interaction:
+class Position_Position_Interaction(Slotted_obj):
     __slots__ = ['protein_a', 'position_a', 'protein_b', 'position_b', 
                  'recommended_complex', 'recommended_interaction', 'interaction_score', 'database_id']
-    def __init__(self, protein_a, position_a, protein_b, position_b, database_id = None):
+    def __init__(self, protein_a = None, position_a = None, protein_b = None, position_b = None, database_id = None):
         self.protein_a = protein_a
         self.position_a = position_a
         self.protein_b = protein_b
         self.position_b = position_b
         self.database_id = database_id
+        self.interaction_score = 0.
 
     def deconstruct(self):
         del self.protein_a
@@ -318,10 +329,10 @@ class Position_Position_Interaction:
 
 
 
-class Interface:
+class Interface(Slotted_obj):
     __slots__ = ['chain', 'interacting_chain', 'residues', 'support_residues', 'interactions', 'stored']
 
-    def __init__(self, chain, interacting_chain, stored = False):
+    def __init__(self, chain = None, interacting_chain = None, stored = False):
         self.chain = chain
         self.interacting_chain = interacting_chain
         self.interactions = {}

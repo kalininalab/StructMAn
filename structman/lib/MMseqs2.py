@@ -128,6 +128,7 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
     temp_outfile = '%s/tmp_outfile_%s.fasta' % (mmseqs_tmp_folder, randomString())
 
     if verbosity >= 2:
+        t0 = time.time()
         print(f'\nApply MMseqs2: {mmseqs2_path}, easy-search, {temp_fasta}, {search_db}, {temp_outfile}, {mmseqs_tmp_folder}\n')
 
     out_format_str = 'query,target,fident,alnlen,tlen,qcov'
@@ -163,6 +164,10 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
             p = subprocess.Popen(cmds)
 
 
+    if verbosity >= 2:
+        t1 = time.time()
+        print(f'apply_mmseqs part 1: {t1-t0}')
+
     if verbosity >= 3:
         print(f'MMseqs2 returned: {temp_outfile}')
 
@@ -172,6 +177,10 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
         f.close()
 
     hits, pdb_ids = parseHits(temp_outfile, option_seq_thresh, small_proteins)
+
+    if verbosity >= 2:
+        t2 = time.time()
+        print(f'apply_mmseqs part 1: {t2-t1}')
 
     if verbosity >= 3:
         print(f'MMseqs2 results parsed: size of hit map: {len(hits)}')
@@ -309,7 +318,7 @@ def search(proteins, config):
         if config.verbosity >= 2:
             print(f'MMseqs2 {search_db} Part 2.4: {t14 - t13}')    
 
-    if not debug_store:
+    if (not debug_store) and not (config.verbosity >= 6):
         os.remove(temp_fasta)
 
     t2 = time.time()

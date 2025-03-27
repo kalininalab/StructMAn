@@ -2,7 +2,7 @@
 import gzip
 import os
 import resource
-
+import subprocess
 import sys
 import time
 import traceback
@@ -14,6 +14,7 @@ from structman import settings
 from structman.lib import centrality
 from structman.lib.rinerator import get_chains
 from structman.lib.sdsc.consts import residues
+from structman.base_utils.config_class import Config
 
 #lowercase_order = {y:x for x,y in lowercase_map.iteritems()}
 
@@ -199,19 +200,34 @@ def changeBackChains(changed_chains,n_sif_file,n_intsc_file,n_nrint_file,n_res_f
     return
 '''
 
+def callRINmaker(
+        infile_path: str,
+        outfile_path: str,
+        rinmaker_executable: str
+        ) -> None:
+    p: subprocess.Popen = subprocess.Popen([rinmaker_executable, '-i', infile_path, '-o', outfile_path, 'rin'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p.communicate()
+    return
 
-def calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files, structure_path=None):
+
+def calcRIN(
+        config: Config,
+        page: bytes,
+        out_path: str,
+        path_stem: str,
+        structure_id: str,
+        rinerator_path: str,
+        remove_tmp_files: bool,
+        structure_path: str | None = None):
 
     if config.verbosity >= 4:
-        print(f'Call of calcRIN: {pdb_id}, {out_path}, {structure_path}')
+        print(f'Call of calcRIN: {structure_id=}, {out_path=}, {structure_path=} {remove_tmp_files=}')
 
     parse_out = parsePDB(page)
     if parse_out is None:
         return
     original_chains, ligands, page = parse_out
 
-    pdb_id = pdb_id.split('.')[0]
-    
     if config.custom_db_path != '':
         custom_db_mode = True
         #custom_path_list = os.listdir(config.custom_db_path)
@@ -221,15 +237,15 @@ def calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files, st
     if len(original_chains) == 0:
         return
     if structure_path is None:
-        tmp_pdb = "%s/%s.pdb" % (out_path, pdb_id)
+        tmp_pdb = f"{path_stem}.pdb"
         f = open(tmp_pdb, 'w')
         f.write(page)
         f.close()
     else:
         tmp_pdb = structure_path
 
-    tmp_chain = "%s/chains_%s.txt" % (out_path, pdb_id)
-    tmp_ligands = "%s/ligands_%s.txt" % (out_path, pdb_id)
+    tmp_chain = f"{out_path}/chains_{structure_id}.txt"
+    tmp_ligands = f"{out_path}/ligands_{structure_id}.txt"
 
     f = open(tmp_chain, 'w')
     f.write(",".join(original_chains))
@@ -243,20 +259,20 @@ def calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files, st
     reduce_cmd = '%s/reduce' % rinerator_base_path
     probe_cmd = '%s/probe' % rinerator_base_path
 
-    reduce_file = "%s/%s_h.ent" % (out_path, pdb_id)
-    probe_file = "%s/%s_h.probe" % (out_path, pdb_id)
+    reduce_file = f"{path_stem}_h.ent"
+    probe_file = f"{path_stem}_h.probe"
 
     try:
         if config.verbosity >= 4:
-            get_chains.main(tmp_pdb, out_path, tmp_chain, tmp_ligands, True, reduce_cmd, probe_cmd, pdb_id, custom_db_mode)
+            get_chains.main(tmp_pdb, out_path, tmp_chain, tmp_ligands, True, reduce_cmd, probe_cmd, structure_id, custom_db_mode)
 
         else:
             with contextlib.redirect_stdout(None), contextlib.redirect_stderr(None):
-                get_chains.main(tmp_pdb, out_path, tmp_chain, tmp_ligands, True, reduce_cmd, probe_cmd, pdb_id, custom_db_mode)
+                get_chains.main(tmp_pdb, out_path, tmp_chain, tmp_ligands, True, reduce_cmd, probe_cmd, structure_id, custom_db_mode)
     except:
         [e, f, g] = sys.exc_info()
         g = traceback.format_exc()
-        print(f"\nRIN calc Error:\n{pdb_id} {original_chains}\n{structure_path}\n{tmp_pdb}\n{out_path}\n{e}\n{f}\n{g}")
+        print(f"\nRIN calc Error:\n{structure_id} {original_chains}\n{structure_path}\n{tmp_pdb}\n{out_path}\n{e}\n{f}\n{g}")
         if config.verbosity >= 5:
             print(page)
         if os.path.exists(reduce_file):
@@ -294,15 +310,15 @@ def calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files, st
         print(tmp_ligands)
 
 
-    sif_file = "%s/%s_h.sif" % (out_path, pdb_id)
-    n_sif_file = "%s/%s.sif" % (out_path, pdb_id)
+    sif_file = f"{path_stem}_h.sif"
+    n_sif_file = f"{path_stem}.sif"
 
-    intsc_file = "%s/%s_h_intsc.ea" % (out_path, pdb_id)
-    n_intsc_file = "%s/%s_intsc.ea" % (out_path, pdb_id)
-    nrint_file = "%s/%s_h_nrint.ea" % (out_path, pdb_id)
-    n_nrint_file = "%s/%s_nrint.ea" % (out_path, pdb_id)
-    res_file = "%s/%s_h_res.txt" % (out_path, pdb_id)
-    n_res_file = "%s/%s_res.txt" % (out_path, pdb_id)
+    intsc_file = f"{path_stem}_h_intsc.ea"
+    n_intsc_file = f"{path_stem}_intsc.ea"
+    nrint_file = f"{path_stem}_h_nrint.ea"
+    n_nrint_file = f"{path_stem}_nrint.ea"
+    res_file = f"{path_stem}_h_res.txt"
+    n_res_file = f"{path_stem}_res.txt"
 
     '''
     if p.returncode != 0:
@@ -340,7 +356,7 @@ def calcRIN(config, page, out_path, pdb_id, rinerator_path, remove_tmp_files, st
     if os.path.isfile("%s.gz" % n_res_file):
         os.remove("%s.gz" % n_res_file)
 
-    centrality.main(n_sif_file, pdb_id=pdb_id)
+    centrality.main(n_sif_file, pdb_id=structure_id)
 
     os.system("gzip %s" % n_sif_file)
     os.system("gzip %s" % n_intsc_file)
@@ -359,19 +375,18 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, ri
                 return
             (pdbgz_path, structure_id) = in_t
         try:
-            out_path = get_entry_path(structure_id, path_to_model_db, path_to_rindb)
+            out_path, path_stem = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
             
             if not os.path.exists(out_path):
                 os.mkdir(out_path)
 
-            n_sif_file = "%s/%s.sif" % (out_path, structure_id)
+            #n_sif_file = f"{path_stem}.sif"
 
             f = gzip.open(pdbgz_path, 'rb')
             page = f.read()
             f.close()
-            #original_chains,ligands,page,changed_chains = parsePDB(page)
 
-            calcRIN(config, page, out_path, structure_id, rinerator_path, remove_tmp_files)
+            calcRIN(config, page, out_path, path_stem, structure_id, rinerator_path, remove_tmp_files)
 
         except:
             [e, f, g] = sys.exc_info()
@@ -386,27 +401,45 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, ri
                 f.close()
 
 
-def get_entry_path(structure_id, path_to_model_db, path_to_rindb):
-    if (structure_id[:3] == 'AF-'): #Not a pdb structure, but an alphafold model
+def get_entry_path(structure_id: str, path_to_rindb: str, path_to_model_db: str | None = None, custom_db_path: str | None = None, model_path: str | None = None, temp_folder: str | None = None) -> tuple[str, str]:
+
+    if model_path is not None: #First check, if this refering to a RIN of a custom model (structural analysis of models)
+        folder_path = temp_folder
+        if model_path[-4:] == '.pdb':
+            path_stem = model_path[:-4] # remove .pdb from the end of the model path
+        else:
+            path_stem = model_path[:-7] # .pdb.gz
+        #structure_id = path_stem.split('/')[-1].split('.')[0]
+    elif custom_db_path is not None: #This is for custom structure DBs
+        folder_path = temp_folder
+        #custom_files_list = os.listdir(config.temp_folder)     
+        path_stem = f"{folder_path}/{structure_id}"
+       
+    elif (structure_id[:3] == 'AF-'): #Not a pdb structure, but an alphafold model
         uniprot_ac = structure_id.split('-')[1]
         topfolder_id = uniprot_ac[-2:]
         subfolder_id = uniprot_ac[-4:]
-        out_path = f'{path_to_model_db}/{topfolder_id}/{subfolder_id}'
+        folder_path = f'{path_to_model_db}/{topfolder_id}/{subfolder_id}'
+        path_stem = f"{folder_path}/{structure_id}"
     else:
-        out_path = "%s/%s/%s" % (path_to_rindb, structure_id[1:-1], structure_id)
-    return out_path
+        pdb_id: str = structure_id.replace('_AU', '').lower().split('.')[0]
+        pdb_id_middle_key = pdb_id[1:-1]
+        folder_path = f"{path_to_rindb}/{pdb_id_middle_key}/{structure_id}"
+        path_stem = f"{folder_path}/{structure_id}"
+
+    return folder_path, path_stem
 
 
 def check_entry(structure_id, path_to_model_db, path_to_rindb):
-    out_path = get_entry_path(structure_id, path_to_model_db, path_to_rindb)
+    out_path, path_stem = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
     
     if not os.path.exists(out_path):
         return False
 
-    n_sif_file = "%s/%s.sif.gz" % (out_path, structure_id)
+    n_sif_file = f"{path_stem}.sif.gz"
     return os.path.isfile(n_sif_file)
 
-
+""" Outdated
 def test_single_file(config, pdb_id):
     calculateRINsFromPdbList(config, [pdb_id], remove_tmp_files=False)
 
@@ -487,7 +520,7 @@ def calculateRINsFromPdbList(config, pdbs, fromScratch=True, forceCentrality=Tru
         p.start()
     for i in processes:
         processes[i].join()
-
+"""
 
 
 def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_path='', process_model_db = False, config = None):
@@ -500,7 +533,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
 
     base_path = rin_db_path
 
-    errorlog = "createRINdb_errorlog.txt"
+    errorlog = f"{rin_db_path}/createRINdb_errorlog.txt"
 
     lim = 100 * 1024 * 1024 * 1024
 
@@ -611,7 +644,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                         in_queue.put((pdbgz_path, model_id))
                         N += 1
 
-    print('Creating RINs for', N, 'structures.')
+    print(f'Creating RINs for {N} structures. {errorlog=}')
 
     processes = {}
     for i in range(1, min([num_of_proc, N]) + 1):

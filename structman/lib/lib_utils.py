@@ -90,6 +90,58 @@ def processAAChange(aachange, pdb_style=False):
     return aachange, aa1, aa2, pos
 
 
+
+def process_variants(config, variants):
+    
+    multi_mutations = []
+    positions = []
+    
+    skipped_aachanges = 0
+    pos_set = set()
+
+    for variant in variants:
+        if variant == '':
+            skipped_aachanges += 1
+            continue
+        if variant.count('delins') == 1:
+            indel = indel_package.Substitution(raw_str=variant)
+            multi_mutations.append(indel)
+
+        elif variant.count('del') == 1:
+            indel = indel_package.Deletion(raw_str=variant)
+            multi_mutations.append(indel)
+
+        elif variant.count('ins') == 1:
+            indel = indel_package.Insertion(raw_str=variant)
+            multi_mutations.append(indel)
+
+        else:
+            indel = None
+            try:
+                aachange, aa1, aa2, pos = processAAChange(variant) 
+            except:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+                config.errorlog.add_warning("Position/Mutation String Format Error: %s\n%s\n%s\n%s" % (variant, str(e), str(f), str(g)))
+                return None
+
+            if aa2 is None:
+                if aachange not in pos_set:
+                    position = position_package.Position(pos=pos, wt_aa=aa1)
+                    positions.append(position)
+                    pos_set.add(aachange)
+            else:
+                if aachange not in pos_set:
+                    position = position_package.Position(pos=pos, wt_aa=aa1, mut_aas=set(aa2))
+                    positions.append(position)
+                    pos_set.add(aachange)
+                else:
+                    position = pos
+                multi_mutations.append((position, aa2))
+
+    return positions, multi_mutations
+
+
 def process_mutations_str(config, mutation_str, tags, pos_set = None, pdb_style=False):
     if isinstance(tags, str):
         tags = set(tags.split(','))
@@ -387,21 +439,24 @@ def fuse_multi_mutations(list_of_multi_mutations):
 
     return fused_mm_obj
 
-def generate_multi_mutation_str(wt_seq, mut_seq, aligner_class = None):
-    try:    
+def generate_multi_mutation_list(wt_seq, mut_seq, aligner_class = None):
+    try:
         (aligned_wt_seq, aligned_mut_seq) = call_biopython_alignment(wt_seq, mut_seq, aligner_class = aligner_class)
     except:
-        return None, f'Alignment failed:\n{wt_seq}\n{mut_seq}\n'
+        [e, f, g] = sys.exc_info()
+        g = traceback.format_exc()
+
+        return None, f'Alignment failed:\n{list(wt_seq)}\n{list(mut_seq)}\n{e}\n{f}\n{g}'
     variants = extract_variants(aligned_wt_seq, aligned_mut_seq)
-    return 0, ','.join(variants)
+    return 0, variants
 
 def generate_multi_mutation(wt_seq, mut_seq, config, aligner_class = None):
     
-    mutation_str_results = generate_multi_mutation_str(wt_seq, mut_seq, aligner_class = aligner_class)
+    mutation_str_results = generate_multi_mutation_list(wt_seq, mut_seq, aligner_class = aligner_class)
     if mutation_str_results[0] is None:
         return mutation_str_results[1]
 
-    positions, multi_mutation, _, _, _, _ = process_mutations_str(config, mutation_str_results[1], None)
+    positions, multi_mutation = process_variants(config, mutation_str_results[1])
 
     return positions, multi_mutation
 

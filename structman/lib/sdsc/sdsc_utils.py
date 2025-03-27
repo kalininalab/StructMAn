@@ -1,5 +1,14 @@
 import itertools
+import sys
+import os
+import traceback
 import numpy as np
+import socket
+import time
+from numba.experimental import jitclass
+from numba.typed import List as NumbaList
+from numba.types import ListType, int64
+#from numba import typeof
 
 from collections import deque
 from sys import getsizeof, stderr
@@ -10,7 +19,195 @@ except ImportError:
     pass
 
 from structman.lib.sdsc.consts import ligands, residues
+from structman.base_utils.base_utils import identify_structure_id_type_key
 
+class Slotted_obj:
+    def __serialize__(self) -> dict[str, any]:
+        serialized_object = []
+        try:
+            slot_mask: list[bool] = self.slot_mask
+            for slot_number, attribute_name in enumerate(self.__slots__):
+                try:
+                    if slot_mask[slot_number]:
+                        try:
+                            serialized_object.append(self.__getattribute__(attribute_name))
+                        except AttributeError:
+                            serialized_object.append(None)
+
+                except IndexError as e:
+                    raise IndexError(f'{e}\n{type(self)} {slot_number=} {attribute_name=}')
+        except AttributeError:
+            for attribute_name in self.__slots__:
+                try:
+                    serialized_object.append(self.__getattribute__(attribute_name))
+                except AttributeError:
+                    serialized_object.append(None)
+        return serialized_object
+
+class SparseArray(Slotted_obj):
+    __slots__ = ['ranged_lists']
+
+    def __init__(self):
+        self.ranged_lists: list[tuple[int, int, list[any]]] = []
+
+    def insert(self, key: int, value: any) -> None:
+        for ranged_list_id, (min_key, max_key, value_list) in enumerate(self.ranged_lists):
+            if key >= min_key:
+                if key <= max_key: #New element inside one of the ranged lists
+                    value_list[key-min_key] = value
+                    return
+            elif key == (min_key-1): #New element just one index to the left of current ranged list
+                if ranged_list_id == 0: #And it is the most left ranged list -> fuse with current ranged list
+                    new_list: list[any] = [value]
+                    new_list.extend(value_list)
+                    self.ranged_lists[0] = (min_key-1, max_key, new_list)
+                    return
+                elif key == self.ranged_lists[ranged_list_id -1][1]+1: #It is also just one index to the right of the previous ranged list -> fuse lists
+                    self.ranged_lists[ranged_list_id -1][2].append(value)
+                    self.ranged_lists[ranged_list_id -1][2].extend(value_list)
+                    self.ranged_lists[ranged_list_id -1] = (self.ranged_lists[ranged_list_id -1][0], max_key, self.ranged_lists[ranged_list_id - 1][2])
+                    self.ranged_lists.pop(ranged_list_id)
+                    return
+                else: #fuse with current ranged list
+                    new_list: list[any] = [value]
+                    new_list.extend(value_list)
+                    self.ranged_lists[0] = (min_key-1, max_key, new_list)
+                    return
+            elif ranged_list_id == 0: #New element outside boundarys of current ranged lists to the left side -> spawn new ranged list
+                new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
+                new_ranged_lists: list[tuple[int, int, list[any]]] = [new_ranged_list]
+                new_ranged_lists.extend(self.ranged_lists)
+                self.ranged_lists = new_ranged_lists
+                return
+            elif key == self.ranged_lists[ranged_list_id -1][1]+1:#New element just one index to the right of previous ranged list -> append it there
+                self.ranged_lists[ranged_list_id -1][2].append(value)
+                self.ranged_lists[ranged_list_id -1] = (self.ranged_lists[ranged_list_id -1][0], self.ranged_lists[ranged_list_id -1][1] + 1, self.ranged_lists[ranged_list_id - 1][2])
+                return
+            else: #New element in the middle ground between two ranged lists -> spawn new ranged list
+                new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
+                new_ranged_lists: list[tuple[int, int, list[any]]] = self.ranged_lists[:ranged_list_id]
+                new_ranged_lists.append(new_ranged_list)
+                new_ranged_lists.extend(self.ranged_lists[ranged_list_id:])
+                self.ranged_lists = new_ranged_lists
+                return
+        #If not returned yet, the new element lies to right of current ranged lists
+        if len(self.ranged_lists) == 0:
+            self.ranged_lists.append((key, key, [value]))
+        elif key == self.ranged_lists[-1][1]+1:
+            self.ranged_lists[-1][2].append(value)
+            self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, self.ranged_lists[-1][2])
+        else:
+            new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
+            self.ranged_lists.append(new_ranged_list)
+
+    def get(self, key: int) -> any:
+        for min_key, max_key, value_list in self.ranged_lists:
+            if key >= min_key:
+                if key <= max_key:
+                    return value_list[key-min_key]
+        return None
+
+    def get_keys(self) -> list[int]:
+        keys: list[int] = []
+        for min_key, max_key, _ in self.ranged_lists:
+            keys.extend(range(min_key, max_key+1))
+        return keys
+
+    def get_first_item(self) -> any:
+        return self.ranged_lists[0][2][0]
+
+    def __len__(self) -> int:
+        n: int = 0
+        for min_key, max_key, _ in self.ranged_lists:
+            n += ((max_key + 1) - min_key)
+        return n
+
+"""
+spec = [
+    ('ranged_lists', ListType((int64, int64, ListType((str, int64)))))
+]
+@jitclass()
+class NBSparseArray(object):
+
+    def __init__(self):
+        a = NumbaList.empty_list((str, int64))
+
+        self.ranged_lists = NumbaList([(0,5,a)])
+        #self.ranged_lists = NumbaList.empty_list((int32, int32, ListType((str, int32))))
+
+    def insert(self, key: int, value: any) -> None:
+        for ranged_list_id, (min_key, max_key, value_list) in enumerate(self.ranged_lists):
+            if key >= min_key:
+                if key <= max_key: #New element inside one of the ranged lists
+                    value_list[key-min_key] = value
+                    return
+            elif key == (min_key-1): #New element just one index to the left of current ranged list
+                if ranged_list_id == 0: #And it is the most left ranged list -> fuse with current ranged list
+                    new_list: list[any] = [value]
+                    new_list.extend(value_list)
+                    self.ranged_lists[0] = (min_key-1, max_key, new_list)
+                    return
+                elif key == self.ranged_lists[ranged_list_id -1][1]+1: #It is also just one index to the right of the previous ranged list -> fuse lists
+                    self.ranged_lists[ranged_list_id -1][2].append(value)
+                    self.ranged_lists[ranged_list_id -1][2].extend(value_list)
+                    self.ranged_lists[ranged_list_id -1] = (self.ranged_lists[ranged_list_id -1][0], max_key, self.ranged_lists[ranged_list_id - 1][2])
+                    self.ranged_lists.pop(ranged_list_id)
+                    return
+                else: #fuse with current ranged list
+                    new_list: list[any] = [value]
+                    new_list.extend(value_list)
+                    self.ranged_lists[0] = (min_key-1, max_key, new_list)
+                    return
+            elif ranged_list_id == 0: #New element outside boundarys of current ranged lists to the left side -> spawn new ranged list
+                new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
+                new_ranged_lists: list[tuple[int, int, list[any]]] = [new_ranged_list]
+                new_ranged_lists.extend(self.ranged_lists)
+                self.ranged_lists = new_ranged_lists
+                return
+            elif key == self.ranged_lists[ranged_list_id -1][1]+1:#New element just one index to the right of previous ranged list -> append it there
+                self.ranged_lists[ranged_list_id -1][2].append(value)
+                self.ranged_lists[ranged_list_id -1] = (self.ranged_lists[ranged_list_id -1][0], self.ranged_lists[ranged_list_id -1][1] + 1, self.ranged_lists[ranged_list_id - 1][2])
+                return
+            else: #New element in the middle ground between two ranged lists -> spawn new ranged list
+                new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
+                new_ranged_lists: list[tuple[int, int, list[any]]] = self.ranged_lists[:ranged_list_id]
+                new_ranged_lists.append(new_ranged_list)
+                new_ranged_lists.extend(self.ranged_lists[ranged_list_id:])
+                self.ranged_lists = new_ranged_lists
+                return
+        #If not returned yet, the new element lies to right of current ranged lists
+        if len(self.ranged_lists) == 0:
+            self.ranged_lists.append((key, key, [value]))
+        elif key == self.ranged_lists[-1][1]+1:
+            self.ranged_lists[-1][2].append(value)
+            self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, self.ranged_lists[-1][2])
+        else:
+            new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
+            self.ranged_lists.append(new_ranged_list)
+
+    def get(self, key: int) -> any:
+        for min_key, max_key, value_list in self.ranged_lists:
+            if key >= min_key:
+                if key <= max_key:
+                    return value_list[key-min_key]
+        return None
+
+    def get_keys(self) -> list[int]:
+        keys: list[int] = []
+        for min_key, max_key, _ in self.ranged_lists:
+            keys.extend(range(min_key, max_key+1))
+        return keys
+
+    def get_first_item(self) -> any:
+        return self.ranged_lists[0][2][0]
+
+    def __len__(self) -> int:
+        n: int = 0
+        for min_key, max_key, _ in self.ranged_lists:
+            n += ((max_key + 1) - min_key)
+        return n
+"""
+        
 def invert_deletion_flanks(del_flanks):
     wt_inserts = []
     for lf, rf in del_flanks:
@@ -150,7 +347,7 @@ def process_recommend_structure_str(recommended_structure_str):
     return recommended_structure, seq_id, cov, resolution
 
 
-def rin_classify(interaction_profile, location):
+def classify(interaction_profile, location):
     if interaction_profile is None:
         return None, None
     raw_rin_class, raw_rin_simple_class = interaction_profile.getClass()
@@ -164,32 +361,6 @@ def rin_classify(interaction_profile, location):
         rin_simple_class = raw_rin_simple_class
     return rin_class, rin_simple_class
 
-def classify(config, profile, sidechain_location, disorder_score, disorder_region):
-    structural_classification, simple_class = rin_classify(profile, sidechain_location)
-    if structural_classification is None:
-        structural_classification, _ = disorderCheck(config, disorder_score, disorder_region)
-        simple_class = structural_classification
-
-    return structural_classification, simple_class
-
-
-MobiDB_map = {'D_PA': 'Polyampholite', 'D_WC': 'Weak polyampholie', 'D_NPE': 'D_NPE', 'D_PPE': 'D_PPE'}
-def disorderCheck(config, disorder_score, region):
-    if region is None or disorder_score is None:
-        return None, None
-    glob = True
-    if region == 'disorder':
-        glob = False
-    elif region == 'globular':
-        glob = True
-    elif region in MobiDB_map:
-        glob = False
-    elif config.verbosity >= 3:
-        print('Unknown disorder region: ', region)
-    if not glob:
-        return 'Disorder', disorder_score
-    else:
-        return None, None
 
 def process_alignment_data(alignment):
     if alignment is None:
@@ -383,3 +554,57 @@ def total_size(o, handlers={}, verbose=False):
         return s
 
     return sizeof(o)
+
+
+def is_connected(url):
+    if url.count('//') == 0:
+        return False, 'Invalid url'
+    
+    domain = url.split('//')[1].split('/')[0]
+
+    if domain.count(':') == 1:
+        domain, port = domain.split(':')
+    else:
+        if url[:5] == 'https':
+            port = 443
+        else:
+            port = 80
+    
+    try:
+        # connect to the host -- tells us if the host is actually
+        # reachable
+        socket.create_connection((domain, port))
+        return True, None
+    except:
+        [e, f, g] = sys.exc_info()
+        g = traceback.format_exc()
+        return False, f'{e}\n{f}\n{g}'
+
+
+def connection_sleep_cycle(verbosity, url):
+    connected, error = is_connected(url)
+    if connected:
+        return
+    while not connected:
+        connected, error = is_connected(url)
+        if verbosity >= 1:
+            print(f'No connection: {error}\n Sleeping a bit and then try again')
+        time.sleep(30)
+
+def is_alphafold_model(structure_id):
+    structe_id_type_key = identify_structure_id_type_key(structure_id)
+    return (structe_id_type_key == 2)
+
+def alphafold_model_id_to_file_path(model_id, config):
+    uniprot_ac = model_id.split('-')[1]
+    topfolder_id = uniprot_ac[-2:]
+    subfolder_id = uniprot_ac[-4:]
+
+    folder_path = f'{config.path_to_model_db}/{topfolder_id}/{subfolder_id}'
+
+    for fn in os.listdir(folder_path):
+        if fn.count(model_id) == 1 and fn.count('.pdb.gz') == 1:
+            return f'{config.path_to_model_db}/{topfolder_id}/{subfolder_id}/{fn}'
+
+    config.errorlog.add_warning(f'Did not find file {model_id} in alphafold model db: {config.path_to_model_db}')
+    return None

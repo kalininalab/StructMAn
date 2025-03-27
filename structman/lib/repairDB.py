@@ -6,10 +6,38 @@ import subprocess
 import sys
 import traceback
 import sqlite3
+import time
 
-import structman
-from structman.lib.database.database_core_functions import binningSelect, select, remove
+from structman.lib.database.database_core_functions import binningSelect, select, remove, insert
+#from structman.base_utils.config_class import Config
+
 from structman import _version
+
+table_names =    [
+            'Protein', 'Gene', 'Position', 'Interface', 'SNV', 'Multi_Mutation',
+            'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session', 'Alignment',
+            'Position_Position_Interaction', 'Protein_Protein_Interaction', 
+            'RS_Protein_Session', 'RS_Protein_GO_Term', 'RS_Position_Session',
+            'RS_Position_Interface', 'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
+            'RS_Indel_Session', 'RS_Protein_Pathway'
+            ]
+
+structure_table_names = [
+        'Ligand', 'Structure', 'Residue', 'Complex', 'RS_Ligand_Structure',
+        'RS_Residue_Residue', 'RS_Residue_Interface'
+    ]
+
+table_names_in_order = [
+            'Protein', 'Gene', 'Position', 'Interface', 'SNV', 'Multi_Mutation',
+            'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session',
+            'Complex', 'Structure', 'Alignment', 'Ligand', 'Residue',
+            'RS_Ligand_Structure', 'RS_Residue_Residue', 'RS_Residue_Interface',
+            'Position_Position_Interaction', 'Protein_Protein_Interaction', 
+            'RS_Protein_Session', 'RS_Protein_GO_Term', 'RS_Position_Session',
+            'RS_Position_Interface', 'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
+            'RS_Indel_Session', 'RS_Protein_Pathway'
+            ]
+
 
 # Tries to reclassify all positions with no classification in the database
 # Usefull when,
@@ -90,20 +118,10 @@ def reset(config, keep_structures=False):
         sql_commands =  ['SET FOREIGN_KEY_CHECKS=0;']
         truncate_command = "TRUNCATE"
 
-    tables =    [
-                'Protein', 'Gene', 'Position', 'Interface', 'SNV', 'Multi_Mutation',
-                'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session', 'Alignment',
-                'Position_Position_Interaction', 'Protein_Protein_Interaction', 
-                'RS_Protein_Session', 'RS_Protein_GO_Term', 'RS_Position_Session',
-                'RS_Position_Interface', 'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
-                'RS_Indel_Session', 'RS_Protein_Pathway'
-                ]
+    tables = table_names
 
     if not keep_structures:
-        tables += [
-            'Ligand', 'Structure', 'Residue', 'Complex', 'RS_Ligand_Structure',
-            'RS_Residue_Residue', 'RS_Residue_Interface'
-        ]
+        tables += structure_table_names
 
     for table in tables:
         if sqlite:
@@ -417,7 +435,6 @@ def fix_database(config):
     remove_empty_structures(config)
 
 
-
 def reroll(config):
     results = select(config, ['Session_Id'], 'Session')
 
@@ -429,8 +446,52 @@ def reroll(config):
             last_session = row[0]
 
     
+def clone_table(config: any, table_name: str, target_db: str) -> None:
+    t0 = time.time()
+    print(f'Cloning {table_name}')
 
-        
+    sql_cmd: str = f"SHOW COLUMNS FROM {table_name};"
+
+    db, cursor = config.getDB()
+   
+    try:
+        cursor.execute(sql_cmd)
+        results: tuple[tuple] = cursor.fetchall()
+        db.commit()
+    except:
+        [e, f, g] = sys.exc_info()
+        g = traceback.format_exc()
+        print('\n'.join([str(e), str(f), str(g)]))
+        db.close()
+    db.close()
+
+    column_names: list[str] = []
+    for row in results:
+        column_names.append(row[0])
+
+    results: tuple[tuple] = select(config, column_names, table_name)
+
+    t1 = time.time()
+    print(f'  Time for select: {t1-t0} {len(results)}')
+
+    insert(table_name, column_names, results, config, db_name = target_db)
+
+    t2 = time.time()
+    print(f'  Time for insert: {t2-t1}')
+
+
+def clone_db(config: any, target_db_name: str) -> None:
+    t0 = time.time()
+    tables: list[str] = table_names_in_order
+
+    print('============ Database clone ===============')
+    print(f'From {config.db_name} to {target_db_name}\n')
+
+    for table_name in tables:
+        clone_table(config, table_name, target_db_name)
+
+    t1 = time.time()
+    print(f'Total time for cloning: {t1-t0}')
 
 def main(config, reclassify_null=False):
     # called with --rcn
@@ -455,6 +516,7 @@ if __name__ == "__main__":
         elif opt == '--rcn':
             reclassify_null = True
 
-    config = structman.Config(config_path, None, None, None, None, False)
+    #Circular import, no direct calling!
+    #config = Config(config_path, None, None, None, None, False)
 
     main(config, reclassify_null=reclassify_null)

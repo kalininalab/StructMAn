@@ -188,10 +188,8 @@ CREATE TABLE `Position` (
   `Residue_Id` varchar(8) DEFAULT NULL,
   `Wildtype_Residue` char(1) DEFAULT NULL,
   `Protein` int(10) UNSIGNED DEFAULT NULL,
-  `IUPRED` float DEFAULT NULL,
-  `IUPRED_Glob` varchar(16) DEFAULT NULL,
   `Recommended_Structure_Data` varbinary(512) DEFAULT NULL,
-  `Position_Data` varbinary(2048) DEFAULT NULL
+  `Position_Data` BLOB(65535) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- --------------------------------------------------------

@@ -1,12 +1,26 @@
 from structman.lib import globalAlignment, pdbParser
-from structman.lib.sdsc.sdsc_utils import process_alignment_data, doomsday_protocol
+from structman.lib.sdsc.sdsc_utils import process_alignment_data, doomsday_protocol, Slotted_obj
 from structman.lib.sdsc.residue import Residue_Map
 
 
-class Structure:
-    __slots__ = ['pdb_id', 'chain', 'oligo', 'database_id', 'stored', 'mapped_proteins', 'residues', 'last_residue', 'first_residue', 'sequence', 'seq_len', 'new_interacting_chain', 'interacting_structure', 'backmaps']
+class Structure(Slotted_obj):
+    __slots__ = [
+        'pdb_id',       'chain',        'oligo',
+        'database_id',  'stored',       'mapped_proteins',
+        'residues',     'last_residue', 'first_residue',
+        'sequence',     'seq_len',      'new_interacting_chain',
+        'interacting_structure', 'backmaps'
+        ]
+    
+    slot_mask = [
+        True, True, True,
+        True, True, True,
+        True, True, True,
+        False, True, True,
+        True, True
+    ]
 
-    def __init__(self, pdb_id, chain, oligo=set(), mapped_proteins = None, database_id=None, last_residue=None, first_residue=None, sequence=None, seq_len = None, new_interacting_chain = False):
+    def __init__(self, pdb_id = None, chain = None, oligo=set(), mapped_proteins = None, database_id=None, last_residue=None, first_residue=None, sequence=None, seq_len = None, new_interacting_chain = False):
         self.pdb_id = pdb_id
         self.chain = chain
         self.database_id = database_id
@@ -86,64 +100,6 @@ class Structure:
     def contains_residue(self, res_nr):
         return self.residues.contains(res_nr)
 
-    def get_residue_db_id(self, res_nr):
-        return self.residues.get_item(res_nr).get_database_id()
-
-    def get_residue_aa(self, res_nr):
-        try:
-            return self.residues.get_item(res_nr).get_aa()
-        except:
-            #print(f'Length of self.residues in get_residue_aa({res_nr}): {len(self.residues)}')
-            return None
-
-    def get_residue_sld(self, res_nr):
-        return self.residues.get_item(res_nr).get_ligand_distances()
-
-    def get_residue_scd(self, res_nr):
-        return self.residues.get_item(res_nr).get_chain_distances()
-
-    def get_residue_homomer_dists(self, res_nr):
-        return self.residues.get_item(res_nr).get_homomer_dists()
-
-    def get_residue_centralities(self, res_nr, get_whats_there=False):
-        return self.residues.get_item(res_nr).get_centralities(get_whats_there=get_whats_there)
-
-    def get_residue_modres(self, res_nr):
-        return self.residues.get_item(res_nr).get_modres()
-
-    def get_residue_b_factor(self, res_nr):
-        return self.residues.get_item(res_nr).get_b_factor()
-
-    def get_residue_rsa(self, res_nr):
-        return self.residues.get_item(res_nr).get_rsa()
-
-    def get_residue_rsa_triple(self, res_nr):
-        return self.residues.get_item(res_nr).get_rsa(splitted=True)
-
-    def get_residue_ssa(self, res_nr):
-        return self.residues.get_item(res_nr).get_ssa()
-
-    def get_residue_phi(self, res_nr):
-        return self.residues.get_item(res_nr).get_phi()
-
-    def get_residue_psi(self, res_nr):
-        return self.residues.get_item(res_nr).get_psi()
-
-    def get_residue_link_information(self, res_nr):
-        return self.residues.get_item(res_nr).get_residue_link_information()
-
-    def get_residue_interaction_profile(self, res_nr, get_whats_there=False):
-        return self.residues.get_item(res_nr).get_interaction_profile(get_whats_there=get_whats_there)
-
-    def get_residue_interaction_profile_str(self, res_nr):
-        return self.residues.get_item(res_nr).get_interaction_profile_str()
-
-    def get_residue_milieu(self, res_nr):
-        return self.residues.get_item(res_nr).get_milieu()
-
-    def add_residue_classification(self, res_nr, Class, simpleClass):
-        self.residues.get_item(res_nr).set_classification(Class, simpleClass)
-
     def getSequence(self, config, complex_obj=None, for_modeller=False):
         if self.sequence is not None and not for_modeller:
             return self.sequence
@@ -166,10 +122,22 @@ class Structure:
             return None
 
 
-class StructureAnnotation:
-    __slots__ = ['u_ac', 'pdb_id', 'chain', 'alignment', 'coverage', 'sequence_identity', 'sub_infos', 'stored', 'database_id', 'backmap']
+class StructureAnnotation(Slotted_obj):
+    __slots__ = [
+        'u_ac',         'pdb_id',   'chain',
+        'alignment',    'coverage', 'sequence_identity',
+        'sub_infos',    'stored',   'database_id',
+        'backmap'
+        ]
 
-    def __init__(self, u_ac, pdb_id, chain, alignment=None, stored=False, backmap = {}):
+    slot_mask = [
+        True, True, True,
+        False, True, True,
+        True, True, True,
+        True
+        ]
+
+    def __init__(self, u_ac = None, pdb_id = None, chain = None, alignment=None, stored=False, backmap = None):
         self.u_ac = u_ac
         self.pdb_id = pdb_id
         self.chain = chain
@@ -179,6 +147,8 @@ class StructureAnnotation:
         self.sub_infos = []  # {pos:(res_nr,res_aa,structure_sequence_number)}
         self.stored = stored
         self.database_id = None
+        if backmap is None:
+            backmap = {}
         self.backmap = backmap
 
     def deconstruct(self):

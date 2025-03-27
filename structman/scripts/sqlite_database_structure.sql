@@ -103,8 +103,6 @@ CREATE TABLE `Position` (
   `Residue_Id` varchar(8) DEFAULT NULL,
   `Wildtype_Residue` char(1) DEFAULT NULL,
   `Protein` integer  DEFAULT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `IUPRED` float DEFAULT NULL,
-  `IUPRED_Glob` varchar(16) DEFAULT NULL,
   `Recommended_Structure_Data` BLOB DEFAULT NULL,
   `Position_Data` BLOB DEFAULT NULL
 );

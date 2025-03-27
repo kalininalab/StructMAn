@@ -2,18 +2,38 @@ import sys
 from structman.lib.sdsc.consts import codons
 from structman.lib.sdsc.indel import Indel
 from structman.lib.sdsc.mutations import MultiMutation
-from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol
+from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol, Slotted_obj
 from structman.lib.sdsc.position import Position
 
 
-class Protein:
-    __slots__ = ['primary_protein_id', 'u_ac', 'u_id', 'ref_id', 'ref_nt_id', 'other_ids', 'pdb_id', 'positions', 'res_id_map',
-                 'sequence', 'nucleotide_sequence', 'stored', 'completely_stored', 'wildtype_protein', 'gene', 'tags',
-                 'go_terms', 'pathways', 'disorder_regions', 'disorder_tool', 'database_id', 'structure_annotations', 'mapped_complexes', 'input_id', 'multi_mutations',
-                 'aggregated_contact_matrix', 'aggregated_interface_map', 'mutant_type', 'sav_positions', 'insertion_positions', 'deletion_flanks', 'number_of_mappings'
-                ]
+class Protein(Slotted_obj):
+    __slots__ = [
+        'primary_protein_id',       'u_ac',                         'u_id',
+        'ref_id',                   'ref_nt_id',                    'other_ids',
+        'pdb_id',                   'positions',                    'res_id_map',
+        'sequence',                 'nucleotide_sequence',          'stored',
+        'completely_stored',        'wildtype_protein',             'gene',
+        'tags',                     'go_terms',                     'pathways',
+        'database_id',              'structure_annotations',        'mapped_complexes',    
+        'input_id',                 'multi_mutations',              'aggregated_contact_matrix',
+        'aggregated_interface_map', 'mutant_type',                  'sav_positions',
+        'insertion_positions',      'deletion_flanks',              'number_of_mappings'
+        ]
 
-    def __init__(self, errorlog, primary_protein_id=None, u_ac=None, u_id=None, ref_id=None, ref_nt_id = None, wildtype_protein=None, gene = None,
+    slot_mask = [
+        True, True, True,
+        True, True, True,
+        True, True, True,
+        False, True, True,
+        True, True, True,
+        True, True, True,
+        True, True, True,
+        True, True, True,
+        True, True, True,
+        True, True, True      
+    ]
+
+    def __init__(self, errorlog = None, primary_protein_id=None, u_ac=None, u_id=None, ref_id=None, ref_nt_id = None, wildtype_protein=None, gene = None,
                  pdb_id=None, positions=[], database_id=None, other_ids=[], input_id=None, sequence=None, aggregated_contact_matrix = {},
                  aggregated_interface_map = {}, mutant_type = None, sav_positions = None, insertion_positions = None, deletion_flanks = None,
                  tags = None
@@ -35,8 +55,6 @@ class Protein:
         self.stored = (database_id is not None)
         self.go_terms = {}
         self.pathways = {}
-        self.disorder_regions = None
-        self.disorder_tool = None
         self.structure_annotations = {}
         self.mapped_complexes = set()
         self.multi_mutations = []
@@ -65,7 +83,8 @@ class Protein:
             warns = self.add_residues(positions)
         if warns is not None:
             for warn in warns:
-                errorlog.add_warning(warn)
+                if errorlog is not None:
+                    errorlog.add_warning(warn)
         self.other_ids = {}
         for id_id, other_id in other_ids:
             self.other_ids[id_id] = other_id
@@ -88,10 +107,11 @@ class Protein:
         doomsday_protocol(self)
 
     def print_state(self):
-        print('----State of %s----' % self.u_ac)
+        print(f'----State of {self.primary_protein_id} ({len(self.positions)})----')
         print('Uniprot Id:', self.u_id)
         for pos_obj in self.positions:
             if pos_obj is None:
+                print('None pos_obj')
                 continue
             pos_obj.print_state()
 
@@ -375,50 +395,6 @@ class Protein:
 
     def get_pathways(self):
         return self.pathways
-
-    def set_disorder_scores(self, disorder_scores):
-        if disorder_scores is None:
-            return
-        for pos in disorder_scores:
-            if not self.contains_position(pos):
-                continue
-            self.positions[pos].set_disorder_score(disorder_scores[pos])
-
-    def get_disorder_scores(self):
-        disorder_scores = {}
-        for pos_obj in self.positions:
-            if pos_obj is None:
-                continue
-            pos_dis = pos_obj.get_disorder_score()
-            if pos_dis is None: #If the disordered regions annotation did not happen yet, then all scores of the positions are None, then return the whole dict as None 
-                return None
-            disorder_scores[pos_obj.pos] = pos_dis
-        return disorder_scores
-
-    def get_disorder_score(self, pos):
-        return self.positions[pos].get_disorder_score()
-
-    def set_disorder_regions(self, regions):
-        self.disorder_regions = regions
-        if regions is None:
-            return
-        for [a, b, region_type] in regions:
-            for pos in range(int(a), int(b + 1)):
-                if not self.contains_position(pos):
-                    continue
-                self.positions[pos].set_disorder_region(region_type)
-
-    def get_disorder_regions(self):
-        return self.disorder_regions
-
-    def get_disorder_region(self, pos):
-        return self.positions[pos].get_disorder_region()
-
-    def set_disorder_tool(self, value):
-        self.disorder_tool = value
-
-    def get_disorder_tool(self):
-        return self.disorder_tool
 
     def is_position_stored(self, pos):
         if not self.contains_position(pos):
@@ -730,7 +706,7 @@ class Protein:
         return mutation_position_map
 
 
-class Proteins:
+class Proteins(Slotted_obj):
     __slots__ = ['protein_map', 'stored_ids', 'stored_ids_mutant_excluded', 'completely_stored_ids',
                  'not_stored_ids', 'id_map', 'structures', 'complexes', 'indels', 'multi_mutations', 'multi_mutation_back_map']
 
@@ -851,15 +827,6 @@ class Proteins:
     def get_complex_chains(self, pdb_id, only_protein=False):
         return self.complexes[pdb_id].get_chains(only_protein=only_protein)
 
-    def set_lig_profile(self, pdb_id, value):
-        self.complexes[pdb_id].set_lig_profile(value)
-
-    def get_lig_profile(self, pdb_id):
-        return self.complexes[pdb_id].get_lig_profile()
-
-    def get_lig_str(self, pdb_id):
-        return self.complexes[pdb_id].getLigProfileStr()
-
     def set_IAmap(self, structure_id, IAmap):
         self.complexes[structure_id].set_IAmap(IAmap)
 
@@ -890,32 +857,6 @@ class Proteins:
     def set_aggregated_interface_map(self, protein_id, aggregated_interface_map):
         self.protein_map[protein_id].set_aggregated_interface_map(aggregated_interface_map)
 
-    def set_ion_profile(self, pdb_id, value):
-        self.complexes[pdb_id].set_ion_profile(value)
-
-    def get_ion_profile(self, pdb_id):
-        return self.complexes[pdb_id].get_ion_profile()
-
-    def get_ion_str(self, pdb_id):
-        return self.complexes[pdb_id].getIonProfileStr()
-
-    def set_metal_profile(self, pdb_id, value):
-        self.complexes[pdb_id].set_metal_profile(value)
-
-    def get_metal_profile(self, pdb_id):
-        return self.complexes[pdb_id].get_metal_profile()
-
-    def get_metal_str(self, pdb_id):
-        return self.complexes[pdb_id].getMetalProfileStr()
-
-    def set_chain_chain_profile(self, pdb_id, value):
-        self.complexes[pdb_id].set_chain_chain_profile(value)
-
-    def get_chain_chain_profile(self, pdb_id):
-        return self.complexes[pdb_id].get_chain_chain_profile()
-
-    def get_chain_chain_str(self, pdb_id):
-        return self.complexes[pdb_id].getChainChainProfileStr()
 
     def set_interaction_partners(self, pdb_id, value):
         self.complexes[pdb_id].set_interaction_partners(value)
@@ -925,20 +866,6 @@ class Proteins:
 
     def set_chain_type_map(self, pdb_id, value, chainlist):
         self.complexes[pdb_id].set_chain_type_map(value, chainlist)
-
-    def get_chains_str(self, pdb_id):
-        return self.complexes[pdb_id].getChainStr()
-
-    def get_homomers_str(self, pdb_id):
-        return self.complexes[pdb_id].getHomomersStr()
-
-    def get_complex_homomers(self, pdb_id, chain):
-        return self.complexes[pdb_id].get_homomers(chain)
-
-    def get_resolution(self, pdb_id):
-        if pdb_id not in self.complexes:
-            return None
-        return self.complexes[pdb_id].get_resolution()
 
     def set_atom_count(self, pdb_id, atom_count):
         self.complexes[pdb_id].set_atom_count(atom_count)
@@ -998,74 +925,12 @@ class Proteins:
     def is_structure_stored(self, pdb_id, chain):
         return self.structures[pdb_id][chain].get_stored()
 
-    def add_residue(self, pdb_id, chain, res_nr, residue_obj):
-        self.structures[pdb_id][chain].add_residue(res_nr, residue_obj)
-
-    def set_residue_db_id(self, pdb_id, chain, res_nr, value):
-        self.structures[pdb_id][chain].set_residue_db_id(res_nr, value)
-
     def contains_residue(self, pdb_id, chain, res_nr):
         if not pdb_id in self.structures:
             return False
         if not chain in self.structures[pdb_id]:
             return False
         return self.structures[pdb_id][chain].contains_residue(res_nr)
-
-    def get_residue_db_id(self, pdb_id, chain, res_nr):
-        if not self.contains_residue(pdb_id, chain, res_nr):
-            return None
-        return self.structures[pdb_id][chain].get_residue_db_id(res_nr)
-
-    def get_residue_aa(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_aa(res_nr)
-
-    def get_residue_sld(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_sld(res_nr)
-
-    def get_residue_scd(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_scd(res_nr)
-
-    def get_residue_homomer_dists(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_homomer_dists(res_nr)
-
-    def get_residue_centralities(self, pdb_id, chain, res_nr, get_whats_there=False):
-        return self.structures[pdb_id][chain].get_residue_centralities(res_nr, get_whats_there=get_whats_there)
-
-    def get_residue_modres(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_modres(res_nr)
-
-    def get_residue_b_factor(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_b_factor(res_nr)
-
-    def get_residue_rsa(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_rsa(res_nr)
-
-    def get_residue_rsa_triple(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_rsa_triple(res_nr)
-
-    def get_residue_ssa(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_ssa(res_nr)
-
-    def get_residue_phi(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_phi(res_nr)
-
-    def get_residue_psi(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_psi(res_nr)
-
-    def get_residue_link_information(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_link_information(res_nr)
-
-    def get_residue_interaction_profile(self, pdb_id, chain, res_nr, get_whats_there=False):
-        return self.structures[pdb_id][chain].get_residue_interaction_profile(res_nr, get_whats_there=get_whats_there)
-
-    def get_residue_interaction_profile_str(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_interaction_profile_str(res_nr)
-
-    def get_residue_milieu(self, pdb_id, chain, res_nr):
-        return self.structures[pdb_id][chain].get_residue_milieu(res_nr)
-
-    def add_residue_classification(self, pdb_id, chain, res_nr, Class, simpleClass):
-        self.structures[pdb_id][chain].add_residue_classification(res_nr, Class, simpleClass)
 
     def get_protein_annotation_list(self, u_ac):
         return self.protein_map[u_ac].get_annotation_list()
@@ -1209,32 +1074,6 @@ class Proteins:
     def get_pathways(self, prot_id):
         return self.protein_map[prot_id].get_pathways()
 
-    def set_disorder_scores(self, u_ac, value):
-        if value is None:
-            return
-        self.protein_map[u_ac].set_disorder_scores(value)
-
-    def get_disorder_scores(self, u_ac):
-        return self.protein_map[u_ac].get_disorder_scores()
-
-    def get_disorder_score(self, u_ac, pos):
-        return self.protein_map[u_ac].get_disorder_score(pos)
-
-    def set_disorder_regions(self, u_ac, value):
-        self.protein_map[u_ac].set_disorder_regions(value)
-
-    def get_disorder_regions(self, u_ac):
-        return self.protein_map[u_ac].get_disorder_regions()
-
-    def get_disorder_region(self, u_ac, pos):
-        return self.protein_map[u_ac].get_disorder_region(pos)
-
-    def set_disorder_tool(self, u_ac, value):
-        self.protein_map[u_ac].set_disorder_tool(value)
-
-    def get_disorder_tool(self, u_ac):
-        return self.protein_map[u_ac].get_disorder_tool()
-
     def position_in_protein_by_db_id(self, database_id, pos):
         return self.getByDbId(database_id).contains_position(pos)
 
@@ -1284,14 +1123,8 @@ class Proteins:
         except:
             return None
 
-    def get_position_ids(self, u_ac):
-        return self.protein_map[u_ac].get_position_ids()
-
     def is_position_stored(self, u_ac, pos):
         return self.protein_map[u_ac].is_position_stored(pos)
-
-    def get_aac_base(self, u_ac, pos):
-        return self.protein_map[u_ac].get_aac_base(pos)
 
     def getAACList(self, u_ac):
         return self.protein_map[u_ac].getAACList()

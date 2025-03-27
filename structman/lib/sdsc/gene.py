@@ -1,4 +1,6 @@
-class Gene:
+from structman.lib.sdsc.sdsc_utils import Slotted_obj
+
+class Gene(Slotted_obj):
     __slots__ = [
                     'gene_id', 'proteins', 'database_id', 'gene_name'
                 ]

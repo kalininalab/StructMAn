@@ -44,7 +44,7 @@ setup(
         "numpy>=1.22.3",
         "psutil>=5.8.0",
         "pymysql>=1.0.2",
-        "ray==2.42.0",
+        "ray==2.44.0",
         "msgpack>=1.0.3",
         "zstd>=1.5.2.5",
         "pandas>=2.2.2",
@@ -57,7 +57,8 @@ setup(
         "biotite>=1.0.1",
         "markdown>=2.6.9",
         "pdfkit==1.0.0",
-        "pybind11>=2.13.6"
+        "pybind11>=2.13.6",
+        "numba==0.61.0"
     ],
 
     package_data = {

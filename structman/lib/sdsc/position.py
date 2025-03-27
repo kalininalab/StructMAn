@@ -1,12 +1,22 @@
-from structman.lib.sdsc.mappings import Mappings
-from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol
+from structman.lib import sdsc
+from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol, Slotted_obj
 from structman.lib.sdsc import snv as snv_package
 from structman.lib.output.out_utils import calculatePositionScore
 
-class Position:
-    __slots__ = ['pos', 'wt_aa', 'mut_aas', 'pos_tags', 'stored', 'database_id', 'pdb_res_nr', 'checked', 'mappings',
-                 'disorder_score', 'disorder_region', 'recommended_structure', 'session_less',
-                 ]
+class Position(Slotted_obj):
+    __slots__ = [
+        'pos',                      'wt_aa',    'mut_aas',
+        'pos_tags',                 'stored',   'database_id',
+        'pdb_res_nr',               'checked',  'mappings',
+        'recommended_structure',    'session_less'
+        ]
+
+    slot_mask = [
+        True, True, True,
+        True, True, True,
+        True, True, False,
+        True, True
+    ]
 
     def __init__(self, pos=0, wt_aa='X', mut_aas=set(), tags = None, mut_tags_map={}, pdb_res_nr=None,
                  checked=False, database_id=None, recommended_structure=None, session_less = False):
@@ -29,9 +39,7 @@ class Position:
         self.database_id = database_id
         self.stored = (database_id is not None)
         self.checked = checked  # Flag for sanity checks
-        self.mappings = Mappings()
-        self.disorder_score = None
-        self.disorder_region = None
+        self.mappings = sdsc.mappings.Mappings()
         self.recommended_structure = recommended_structure
         self.session_less = session_less
 
@@ -132,20 +140,8 @@ class Position:
     def get_mut_tags(self, aa):
         return self.mut_aas[aa].tags
 
-    def set_disorder_score(self, disorder_score):
-        self.disorder_score = disorder_score
-
-    def get_disorder_score(self):
-        return self.disorder_score
-
-    def set_disorder_region(self, region):
-        self.disorder_region = region
-
-    def get_disorder_region(self):
-        return self.disorder_region
-
     def classify(self, config):
-        self.mappings.weight_all(config, self.disorder_score, self.disorder_region)
+        self.mappings.weight_all(config)
 
     def get_classification(self):
         return self.mappings.integrated_features.simple_class

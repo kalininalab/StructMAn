@@ -401,7 +401,10 @@ def parse_processed_mmdb_entry(mmdb_aggregated_entry):
     for line in lines[1:]:
         words = line[:-1].split('\t')
         chain_id = words[0]
-        res_id = words[1]
+        try:
+            res_id = int(words[1])
+        except:
+            res_id = words[1]
         feature_values = words[2:]
 
         feature_dict[(chain_id, res_id)] = []

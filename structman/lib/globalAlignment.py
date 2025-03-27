@@ -274,12 +274,14 @@ def init_bp_aligner_class(open_gap_score = -10.0, extend_gap_score = -0.5, penal
 def call_biopython_alignment(target_seq, template_seq, aligner_class = None):
     if aligner_class is None:
         aligner_class = init_bp_aligner_class()
+    target_seq = target_seq.replace('U', 'C').replace('O', 'K').replace('J', 'I')
+    template_seq = template_seq.replace('U', 'C').replace('O', 'K').replace('J', 'I')
     alignments = aligner_class.align(target_seq, template_seq)
     target_aligned_sequence, template_aligned_sequence = alignments[0][0:2]
     return target_aligned_sequence, template_aligned_sequence
 
 def BPalign(config, u_ac, target_seq, template_seq, aaclist, seq_res_map, ignore_gaps=False, lock=None, aligner_class = None):
-    target_seq = target_seq.replace('U', 'C').replace('O', 'K').replace('J', 'I')
+    #target_seq = target_seq.replace('U', 'C').replace('O', 'K').replace('J', 'I')
     if config.verbosity >= 6:
         print('Aligning:')
         print(target_seq)

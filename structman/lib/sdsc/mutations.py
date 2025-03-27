@@ -2,10 +2,10 @@ import math
 
 from structman.lib.sdsc import position as position_package
 from structman.lib.sdsc.indel import Indel
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
 
 
-class MultiMutation:
+class MultiMutation(Slotted_obj):
     __slots__ = ['wt_prot', 'mut_prot', 'snvs', 'indels', 'database_id', 'stored', 'tags']
 
     def __init__(self, wt_prot, mut_prot, mutation_list, tags=None):
