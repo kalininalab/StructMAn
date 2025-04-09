@@ -64,7 +64,7 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
 
         for pos, mappings in classification_inp:
 
-            mappings_obj = mappings_package.Mappings()
+            mappings_obj: mappings_package.Mappings = mappings_package.Mappings()
             if config.verbosity >= 6:
                 print(f"In para_classify: {protein_id} {pos} {len(mappings)}")
 
@@ -156,7 +156,17 @@ def para_classify(cld_1, cld_2, package, para=False, cld_is_packed = False):
             if err is not None and config.verbosity >= 7:
                 print(f'{protein_id} {pos}: {err}')
 
-            pos_outs.append((pos, mappings_obj))
+            recommendation_order = mappings_obj.recommendation_order
+            mappings_obj.recommendation_order = None
+
+            try:
+                rec_res = mappings_obj.recommended_res
+                max_res = mappings_obj.max_seq_res
+            except AttributeError:
+                rec_res = None
+                max_res = None
+
+            pos_outs.append((pos, pack(mappings_obj), recommendation_order, pack((rec_res, max_res))))
 
         if fresh_prot:
             if config.compute_ppi:
@@ -657,11 +667,12 @@ def process_classification_outputs(config, outs, proteins, recommended_complexes
                 print(f'Not Setting Agg Interfaces: {protein_id} {aggregated_interfaces}')
         if protein_id not in recommended_complexes:
             recommended_complexes[protein_id] = {}
-        for pos, mappings_obj in pos_outs:
+        for pos, packed_mappings_obj, recommendation_order, packed_res_recommends in pos_outs:
             if config.verbosity >= 7:
-                print(f'In process_classification_outputs: {protein_id} {pos} {mappings_obj}')
-            proteins.protein_map[protein_id].positions[pos].mappings = mappings_obj
-            recommended_complexes[protein_id][pos] = proteins.protein_map[protein_id].positions[pos].mappings.recommendation_order
+                print(f'In process_classification_outputs: {protein_id} {pos}')
+            proteins.protein_map[protein_id].positions[pos].mappings = packed_mappings_obj
+            proteins.protein_map[protein_id].positions[pos].packed_res_recommends = packed_res_recommends
+            recommended_complexes[protein_id][pos] = recommendation_order
 
 @ray.remote(max_calls = 1)
 def para_mm_lookup(package, store):
@@ -669,7 +680,16 @@ def para_mm_lookup(package, store):
     complex_feature_dict_dict = {}
     for complex_id in package:
         feature_dict, _ = mm_lookup(complex_id, config, n_sub_procs = n_sub_procs)
-        complex_feature_dict_dict[complex_id] = feature_dict
+        complex_feature_dict_dict[complex_id] = {}
+        for chain in feature_dict:
+            if chain not in complex_feature_dict_dict[complex_id]:
+                complex_feature_dict_dict[complex_id][chain] = {}
+            for res_id in feature_dict[chain]:
+                microminer_features = mappings_package.Microminer_features()
+                microminer_features.set_values(feature_dict[chain][res_id])
+                if not res_id in complex_feature_dict_dict[complex_id][chain]:
+                    complex_feature_dict_dict[complex_id][chain][res_id] = pack(microminer_features)
+
     return complex_feature_dict_dict
 
 
@@ -1059,6 +1079,10 @@ def classification(proteins, config, background_insert_residues_process, custom_
                 break
                 
 
+    if config.verbosity >= 2:
+        t2 = time.time()
+        print('Time for classification part 2:', t2 - t1)
+
     try:
         del config_store
         del classification_dump
@@ -1157,9 +1181,15 @@ def classification(proteins, config, background_insert_residues_process, custom_
                         for (prot_id, pos, current_try) in rec_complex_pos_dict[complex_id]:
                             recommended_structure_triple = recommended_complexes[prot_id][pos][current_try]
                             complex_id, chain_id, res = recommended_structure_triple
-                            if (chain_id, res) in feature_dict:
-                                successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
+                            if chain_id in feature_dict:
+                                if res in feature_dict[chain_id]:
+                                    successful_mm_annotations[(prot_id, pos)] = complex_id, chain_id, res
+                                    success = True
+                                else:
+                                    success = False
                             else:
+                                success = False
+                            if not success:
                                 next_try = current_try + 1
                                 stay_in_loop = True
                                 while len(recommended_complexes[prot_id][pos]) > next_try and stay_in_loop:
@@ -1197,10 +1227,10 @@ def classification(proteins, config, background_insert_residues_process, custom_
                 #print([chain_id, res])
                 #print(mm_db_dict[complex_id])
                 if (chain_id, res) in mm_db_dict[complex_id]:
-                    mm_feat_vec = mm_db_dict[complex_id][(chain_id, res)]
+                    packed_mm_feats = mm_db_dict[complex_id][chain_id][reversed]
                     if config.verbosity >= 6:
-                        print(f'Setting mm_feat_vec ({len(mm_feat_vec)}) {prot_id} {pos} {complex_id} {chain_id} {res}')
-                    proteins.protein_map[prot_id].positions[pos].mappings.microminer_features.set_values(mm_feat_vec)
+                        print(f'Setting mm_feat_vec {prot_id} {pos} {complex_id} {chain_id} {res}')
+                    proteins.protein_map[prot_id].positions[pos].microminer_features = packed_mm_feats
 
     if config.verbosity >= 2:
         t_m2 = time.time()
@@ -1220,7 +1250,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
         print(f'Time for insert_interfaces: {t_i1 - t_m2}')
 
     if config.verbosity >= 2:
-        t2 = time.time()
-        print('Time for classification part 2:', t2 - t1)
+        t3 = time.time()
+        print('Time for classification part 3:', t3 - t2)
         if para and not nested_para:
             print('Longest computation for:', max_comp_time_pos, 'with:', max_comp_time, 'In total', amount_of_positions, 'proteins', 'Accumulated time:', total_comp_time)

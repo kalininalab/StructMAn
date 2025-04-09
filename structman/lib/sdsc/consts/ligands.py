@@ -1,6 +1,9 @@
-NON_BORING_SHORT_LIGANDS = set(['PC', 'NO', 'VX', 'VR'])
+NON_BORING_SHORT_LIGANDS: set[str] = set(['PC', 'NO', 'VX', 'VR'])
+BIN_NON_BORING_SHORT_LIGANDS: set[bytes] = set()
+for tlc in NON_BORING_SHORT_LIGANDS:
+    BIN_NON_BORING_SHORT_LIGANDS.add(tlc.encode('ascii'))
 
-BORING_LIGANDS = set([
+BORING_LIGANDS: set[str] = set([
     "HOH",
     "MPT",
     "IPA",
@@ -575,3 +578,7 @@ BORING_LIGANDS = set([
     'SAC',
     '5UA',
 ])
+
+BIN_BORING_LIGANDS: set[bytes] = set()
+for tlc in BORING_LIGANDS:
+    BIN_BORING_LIGANDS.add(tlc.encode('ascii'))

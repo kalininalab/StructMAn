@@ -67,12 +67,12 @@ conda_bash_path="$conda_base_path"/etc/profile.d/conda.sh
 {
     echo "Activating environment inside shell ..."
     source "$conda_bash_path"
-    current_env=$(conda info | grep 'active environment' | awk '{sub(/active environment.:./,""); print}')
+    #current_env=$(conda info | grep 'active environment' | awk '{sub(/active environment.:./,""); print}')
 
-    if ! [ "$current_env" = "base" ]
-    then
-        conda deactivate
-    fi
+    #if ! [ "$current_env" = "base" ]
+    #then
+    #    conda deactivate
+    #fi
 
     new_env_path=$(conda env list | awk -v name="$env_name" '/^[^#]/{ if ($1 == name) {print $2} }')
     conda activate "$env_name"
@@ -101,6 +101,7 @@ mamba update pip -y -c conda-forge >&$verbose_stdout
     mamba install -y harfbuzz==8.2.1 -c conda-forge
     echo "Installing package cairo ..."
     mamba install -y cairo==1.18.0 -c conda-forge
+    
     export PKG_CONFIG_PATH="$new_env_path"/envs/"$env_name"/lib/pkgconfig:"$PKG_CONFIG_PATH"
     echo "Installing package pycairo ..."
     mamba install -y pycairo==1.23.0
@@ -117,7 +118,7 @@ mamba update pip -y -c conda-forge >&$verbose_stdout
     echo "Installing package gawk ..."    
     mamba install -y gawk
     echo "Installing package sqlite ..."
-    mamba install -y sqlite==3.45.3 -c conda-forge
+    mamba install -y sqlite>=3.45.3 -c conda-forge
 } >&$verbose_stdout
 
 

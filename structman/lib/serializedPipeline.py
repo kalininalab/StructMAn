@@ -24,9 +24,10 @@ from structman.lib.sdsc import structure as structure_package
 from structman.lib.sdsc import complex as complex_package
 from structman.lib.sdsc import protein as protein_package
 from structman.lib.sdsc import gene as gene_package
+from structman.lib.sdsc import indel as indel_package
 
 from structman.lib.database import database
-from structman.base_utils.base_utils import calculate_chunksizes, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path
+from structman.base_utils.base_utils import calculate_chunksizes, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path, aggregate_times, print_times, add_to_times
 from structman.base_utils.ray_utils import ray_init, ray_hack
 from structman.lib.lib_utils import process_mutations_str, generate_multi_mutation, extract_dedicated_tags
 
@@ -149,7 +150,12 @@ def para_parse_pdb(package: list[str], pdb_path: str) -> list[tuple[str, str, di
     pdb_sequence_list: list[tuple[str, str, dict]] = pdbParser.getSequences(package, pdb_path)
     return pdb_sequence_list
 
-def sequenceScan(config, proteins, indels, genes = None, skip_mm_calc: bool = False):
+def sequenceScan(
+        config,
+        proteins: dict[str, protein_package.Protein],
+        indels:  dict[str, indel_package.Indel],
+        genes: dict[str, gene_package.Gene] | None = None,
+        skip_mm_calc: bool = False):
     def promote_uac_to_primary_id(u_ac, np_ref):
         primary_protein_id = u_ac
         proteins[primary_protein_id] = proteins[np_ref]
@@ -384,22 +390,26 @@ def sequenceScan(config, proteins, indels, genes = None, skip_mm_calc: bool = Fa
             if transcript_id in gene_sequence_map:
                 seq = gene_sequence_map[transcript_id]
 
-                proteins[primary_protein_id].sequence = seq
+                prot_obj = proteins[primary_protein_id]
+
+                prot_obj.sequence = seq
                 n += 1
                 mean_seq_len += len(seq)
 
                 for (pos, aa) in enumerate(seq):
                     seq_pos = pos + 1
-                    if proteins[primary_protein_id].contains_position(seq_pos):
-                        proteins[primary_protein_id].positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
-                        proteins[primary_protein_id].positions[seq_pos].add_tags(tags)
+                    seq_pos_there = prot_obj.contains_position(seq_pos)
+                    if seq_pos_there:
+                        prot_obj.positions[seq_pos].check(aa, overwrite=config.overwrite_incorrect_wt_aa)
+                        prot_obj.positions[seq_pos].add_tags(tags)
                     elif uni_pos:
-                        if not proteins[primary_protein_id].contains_position(seq_pos):
+                        if not seq_pos_there:
                             position = position_package.Position(pos=seq_pos, wt_aa=aa, tags=tags, checked=True, session_less = session_less)
-                            proteins[primary_protein_id].add_positions([position])
+                            prot_obj.add_positions([position])
 
             # sanity check filter
             remove_sanity_filtered(config, proteins, indels, primary_protein_id)
+            
         if genes is not None:
             try:
                 del genes['to_fetch']
@@ -706,14 +716,19 @@ def parseFasta(config, nfname):
             t_1 = time.time()
             print(f'Time for integrate_protein: {t_1-t_0}')
 
-    gene_isoform_check(proteins, genes, indel_map, config)
+    genes = gene_isoform_check(proteins, genes, indel_map, config)
 
-    outlist = input_chunking(config, proteins, indel_map)
+    outlist: list[tuple[dict[str, protein_package.Protein], dict[str, indel_package.Indel]]] = input_chunking(config, proteins, indel_map)
 
     return outlist, genes
 
 
-def add_to_prot_map(prot_map, sp_id, positions, multi_mutations, config):
+def add_to_prot_map(
+        prot_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        sp_id: str,
+        positions: list[position_package.Position],
+        multi_mutations: list[tuple | indel_package.Indel],
+        config):
     if sp_id not in prot_map:
         prot_map[sp_id] = [], [], []
     for multi_mutation, _ in multi_mutations:
@@ -732,8 +747,13 @@ def add_to_prot_map(prot_map, sp_id, positions, multi_mutations, config):
     return prot_map
 
 
-def input_chunking(config, proteins, indels):
-    outlist = []
+def input_chunking(
+        config,
+        proteins: dict[str, protein_package.Protein],
+        indels:dict[str, indel_package.Indel]
+        ):
+    
+    outlist: list[tuple[dict[str, protein_package.Protein], dict[str, indel_package.Indel]]] = []
 
     s = len(proteins)
     if config.verbosity >= 1:
@@ -802,13 +822,13 @@ def buildQueue(config, filename, already_split=False):
     u_ids = set()
     u_acs = set()
     id_map = {}
-    ac_map = {}
-    np_map = {}
-    nm_map = {}
-    hgnc_map = {}
-    ensembl_map = {}
+    ac_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]] = {}
+    np_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]] = {}
+    nm_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]] = {}
+    hgnc_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]] = {}
+    ensembl_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]] = {}
 
-    pdb_map = {}
+    pdb_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]] = {}
 
     if isinstance(filename, str):
         f = open(filename, "r")
@@ -913,7 +933,7 @@ def buildQueue(config, filename, already_split=False):
                 position = position_package.Position(tags=tags)
                 indel = None
                 multi_mutations = []
-                positions = [position]
+                positions: list[position_package.Position] = [position]
 
                 tags, gene_id = extract_dedicated_tags(tags)
                 if gene_id is not None:
@@ -923,7 +943,7 @@ def buildQueue(config, filename, already_split=False):
             else:
                 mutation_str = words[1].replace("\n", "")
                 multi_mutations = []
-                positions = []
+                positions: list[position_package.Position] = []
                 if sp_id in pos_sets:
                     pos_set = pos_sets[sp_id]
                 else:
@@ -987,8 +1007,10 @@ def buildQueue(config, filename, already_split=False):
     if config.verbosity >= 2:
         print("buildQueue Part 1: ", str(t1 - t0), len(ac_map), len(prot_tags_map))
 
+    proteins: dict[str, protein_package.Protein]
+    indel_map: dict[str, indel_package.Indel]
+    genes: dict[str, gene_package.Gene]
     proteins, indel_map, genes = uniprot.IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map, pdbs_to_expand)
-
 
     t2 = time.time()
     if config.verbosity >= 2:
@@ -1007,7 +1029,7 @@ def buildQueue(config, filename, already_split=False):
     if config.verbosity >= 2:
         print("buildQueue Part 3: ", str(t3 - t2))
 
-    outlist = input_chunking(config, proteins, indel_map)
+    outlist: list[tuple[dict[str, protein_package.Protein], dict[str, indel_package.Indel]]] = input_chunking(config, proteins, indel_map)
 
     t4 = time.time()
     if config.verbosity >= 2:
@@ -1016,7 +1038,11 @@ def buildQueue(config, filename, already_split=False):
     return outlist, [None], genes
 
 
-def gene_isoform_check(proteins, genes, indel_map, config):
+def gene_isoform_check(
+        proteins: dict[str, protein_package.Protein],
+        genes: dict[str, gene_package.Gene],
+        indel_map,
+        config) -> dict[str, gene_package.Gene]:
     if config.verbosity >= 2:
         t0 = time.time()
 
@@ -1095,7 +1121,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
 
     config_dump = ray.put(config)
     pieces = []
-    total_cost = 0
+    total_cost: int = 0
 
     for gene_id in genes:
         if len(genes[gene_id].proteins) < 2:
@@ -1105,7 +1131,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
         sequence_map = {}
         iso_pairs = []
 
-        cost = 0
+        cost: int = 0
 
         for iso1 in isoform_list:
             if iso1 not in proteins:
@@ -1130,14 +1156,14 @@ def gene_isoform_check(proteins, genes, indel_map, config):
                 iso_pairs.append((iso1, iso2))
                 cost += len(sequence_map[iso1]) * len(sequence_map[iso2])
 
-        total_cost += cost
-
         if len(iso_pairs) == 0:
             continue
 
+        total_cost += cost
+
         pieces.append((sequence_map, iso_pairs, cost))
 
-    package_cost = total_cost / config.proc_n
+    package_cost: int = total_cost // config.proc_n
 
     if config.verbosity >= 2:
         t5 = time.time()
@@ -1148,9 +1174,21 @@ def gene_isoform_check(proteins, genes, indel_map, config):
 
     mm_generation_remote_ids = []
     for (sequence_map, iso_pairs, cost) in pieces:
+        if cost > package_cost*2:
+            splits = cost // package_cost
+            split_size = (len(iso_pairs) // splits) + 1
+            for i in range(splits):
+                iso_pair_split = iso_pairs[i*split_size : i*(split_size+1)]
+                if config.verbosity >= 3:
+                    print(f'Starting new para_mm_generatio process {cost=}')
+                mm_generation_remote_ids.append(para_mm_generation.remote(config_dump, pack([(sequence_map, iso_pair_split)])))
+            continue
+
         package.append((sequence_map, iso_pairs))
         current_package_cost += cost
         if current_package_cost >= package_cost:
+            if config.verbosity >= 3:
+                print(f'Starting new para_mm_generatio process {current_package_cost=}')
             mm_generation_remote_ids.append(para_mm_generation.remote(config_dump, pack(package)))
             package = []
             current_package_cost = 0
@@ -1160,7 +1198,7 @@ def gene_isoform_check(proteins, genes, indel_map, config):
 
     if config.verbosity >= 2:
         t6 = time.time()
-        print(f'gene_isoform_check - Part 6: {t6-t5}')
+        print(f'gene_isoform_check - Part 6: {t6-t5} {len(mm_generation_remote_ids)=}')
 
     mm_generation_remote_results = ray.get(mm_generation_remote_ids)
 
@@ -1269,6 +1307,7 @@ def autoTemplateSelection(config, proteins):
     t0 = time.time()
 
     # MMseqs search function takes one more argument now: custom_db
+    search_results: list[tuple[dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]], set[str], bool]]
     search_results = MMseqs2.search(proteins, config)
 
     t1 = time.time()
@@ -1277,15 +1316,17 @@ def autoTemplateSelection(config, proteins):
         for search_result in search_results:
             if len(search_result) == 0:
                 continue
+            raw_structure_map: dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]]
+            pdb_ids = set[str]
             raw_structure_map, pdb_ids, is_model_db = search_result
 
-            info_map = {}
+            info_map: dict[str, tuple[float, dict[str, set[str]]]] = {}
             filtering_results = []
 
             # if it is custom db, it creates fake oligo map
             if config.custom_db_path:
                 for custom_id in pdb_ids:
-                    fake_oligo_map = {'A' : ['A']}
+                    fake_oligo_map = {'A' : set(['A'])}
                     info_map[custom_id] = (2.0, fake_oligo_map)
 
             elif not is_model_db:
@@ -1349,49 +1390,50 @@ def autoTemplateSelection(config, proteins):
 
             else:
                 for model_id in pdb_ids:
-                    fake_oligo_map = {'A' : ['A']}
+                    fake_oligo_map = {'A' : set(['A'])}
                     info_map[model_id] = (2.0, fake_oligo_map)
 
-            for u_ac in raw_structure_map:
-                for pdb_id, chain in raw_structure_map[u_ac]:
-
+            for prot_id in raw_structure_map:
+                for pdb_id in raw_structure_map[prot_id]:
                     if config.fast_pdb_annotation:
                         #This filters every hit that is not identical to the input (pdb maps to pdb)
-                        if u_ac[:4] != pdb_id[0:4]:
+                        if prot_id[:4] != pdb_id[0:4]:
                             continue
 
-                    if pdb_id not in info_map:
-                        continue
-                    resolution, homomer_dict = info_map[pdb_id]
-                    if resolution is None:
-                        continue
-                    if resolution > config.option_res_thresh:
-                        continue
-                    
-                    try:
-                        oligo = homomer_dict[chain]
-                    except:
-                        oligo = raw_structure_map[u_ac][(pdb_id, chain)][2]
-
-                    struct_anno = structure_package.StructureAnnotation(u_ac, pdb_id, chain)
-                    proteins.add_annotation(u_ac, pdb_id, chain, struct_anno)
-
-                    if config.verbosity >= 6:
-                        print(f'Adding structural annotation: {u_ac} -> {pdb_id}:{chain}')
-
-                    if not pdb_id in proteins.structures:
-                        struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[u_ac], seq_len = raw_structure_map[u_ac][(pdb_id, chain)][4])
-                        proteins.add_structure(pdb_id, chain, struct)
+                    for chain in raw_structure_map[prot_id][pdb_id]:
                         
-                    elif chain not in proteins.structures[pdb_id]:
-                        struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[u_ac], seq_len = raw_structure_map[u_ac][(pdb_id, chain)][4])
-                        proteins.add_structure(pdb_id, chain, struct) 
-                    else:
-                        proteins.add_mapping_to_structure(pdb_id, chain, u_ac)
+                        if pdb_id not in info_map:
+                            continue
+                        resolution, homomer_dict = info_map[pdb_id]
+                        if resolution is None:
+                            continue
+                        if resolution > config.option_res_thresh:
+                            continue
+                        
+                        try:
+                            oligo = homomer_dict[chain]
+                        except:
+                            oligo = raw_structure_map[prot_id][pdb_id][chain][2]
 
-                    if pdb_id not in proteins.complexes:
-                        compl = complex_package.Complex(pdb_id, resolution, homomers=homomer_dict)
-                        proteins.add_complex(pdb_id, compl)
+                        struct_anno = structure_package.StructureAnnotation(prot_id, pdb_id, chain)
+                        proteins.add_annotation(prot_id, pdb_id, chain, struct_anno)
+
+                        if config.verbosity >= 6:
+                            print(f'Adding structural annotation: {prot_id} -> {pdb_id}:{chain}')
+
+                        if not pdb_id in proteins.structures:
+                            struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[prot_id], seq_len = raw_structure_map[prot_id][pdb_id][chain][4])
+                            proteins.add_structure(pdb_id, chain, struct)
+                            
+                        elif chain not in proteins.structures[pdb_id]:
+                            struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[prot_id], seq_len = raw_structure_map[prot_id][pdb_id][chain][4])
+                            proteins.add_structure(pdb_id, chain, struct) 
+                        else:
+                            proteins.add_mapping_to_structure(pdb_id, chain, prot_id)
+
+                        if pdb_id not in proteins.complexes:
+                            compl = complex_package.Complex(pdb_id, resolution, homomers=homomer_dict)
+                            proteins.add_complex(pdb_id, compl)
 
     t2 = time.time()
     if config.verbosity >= 2:
@@ -1402,7 +1444,7 @@ def autoTemplateSelection(config, proteins):
 
 @ray.remote(max_calls = 1)
 def filter_structures_wrapper(chunk, filtering_dump):
-    ray_hack()
+
     pdb_path = filtering_dump
     return filter_structures(chunk, pdb_path)
 
@@ -1426,7 +1468,7 @@ def package_alignment_processes(prots_todo, cost_map, optimal_chunk_cost, protei
     if config.verbosity >= 5:
         print(f'Call of package_alignment_processes: Number of proteins: {len(prots_todo)}, optimal chunk cost: {optimal_chunk_cost}, chunk cost: {chunk_cost}')
 
-    for prot_id in prots_todo:
+    for pos, prot_id in enumerate(prots_todo):
         package_cost = cost_map[prot_id]
         if package_cost > optimal_chunk_cost:  #packages that are greater than the optimal_chunk_cost get split
             structure_infos_split_a = []
@@ -1462,10 +1504,10 @@ def package_alignment_processes(prots_todo, cost_map, optimal_chunk_cost, protei
                 protein_packages[prot_id] = (prot_specific_mapping_dump, structure_infos_split_b)
                 cost_map[prot_id] = package_cost - split_cost
             else:
-                done.append(prot_id)
+                done.append(pos)
         elif chunk_cost + package_cost <= optimal_chunk_cost:
             chunk.append(protein_packages[prot_id])
-            done.append(prot_id)
+            done.append(pos)
             chunk_cost += package_cost
             if chunk_cost >= optimal_chunk_cost:
                 if config.proc_n > 1:
@@ -1481,8 +1523,9 @@ def package_alignment_processes(prots_todo, cost_map, optimal_chunk_cost, protei
         if started_processes >= config.proc_n:
             break
 
-    for prot_id in done:
-        prots_todo.remove(prot_id)
+    done.reverse()
+    for pos in done:
+        del prots_todo[pos]
 
     if (len(chunk) > 0) and len(prots_todo) == 0:
         if config.proc_n > 1:
@@ -1509,42 +1552,26 @@ def package_alignment_processes(prots_todo, cost_map, optimal_chunk_cost, protei
 
     return alignment_results, started_processes, protein_packages, cost_map, chunk, chunk_cost, prots_todo
 
-def process_align_outs(proteins, config, align_outs, max_runtime, warn_map, alignment_insertion_list, structure_insertion_list,
-                        package_runtimes, max_runtime_package, min_runtime_package, record_package, indel_analysis_follow_up,
+def process_align_outs(proteins, config, align_outs, warn_map, alignment_insertion_list, structure_insertion_list, indel_analysis_follow_up,
                         safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes, skip_inserts):
 
 
-    record_min_package = False
-    if config.verbosity >= 4:
-        record_min_package = True
+    total_integration_times = []
+    total_package_runtimes = []
 
-    t_i_0 = 0.
-    t_i_1 = 0.
-    t_i_2 = 0.
-    t_i_3 = 0.
-    t_i_4 = 0.
-    t_i_5 = 0.
-    t_i_6 = 0.
-    t_i_7 = 0.
-    t_i_8 = 0.
-    t_i_9 = 0.
     for out_chunks in align_outs:
         if config.proc_n > 1:
-            out_chunks, package_runtime = unpack(out_chunks)
+            out_chunks, package_runtimes = unpack(out_chunks)
         else:
-            out_chunks, package_runtime = out_chunks
-        if config.verbosity >= 4:
-            package_runtimes.append(package_runtime)
-            if package_runtime > max_runtime:
-                max_runtime = package_runtime
-                record_package = True
-                max_runtime_package = []
+            out_chunks, package_runtimes = out_chunks
+
+        total_package_runtimes = aggregate_times(total_package_runtimes, package_runtimes)
 
         for out in out_chunks:
-            t_i_0 += time.time()
+            times = []
+            t_init = time.time()
             if len(out) == 3:
                 config.errorlog.add_error('Illegal alignment output: %s' % (str(out)))
-                t_i_1 += time.time()
                 continue
 
             if len(out) == 4:
@@ -1552,13 +1579,15 @@ def process_align_outs(proteins, config, align_outs, max_runtime, warn_map, alig
                 proteins.remove_annotation(prot_id, pdb_id, chain)
                 if not skip_inserts:
                     sus_complexes.add(pdb_id)
-                    sus_structures.add((pdb_id, chain))
+                    if pdb_id not in sus_structures:
+                        sus_structures[pdb_id] = set([chain])
+                    else:
+                        sus_structures[pdb_id].add(chain)
                 if prot_id not in warn_map:
                     config.errorlog.add_warning(warn_text)
                 elif config.verbosity >= 4:
                     print('Alignment failed:', prot_id, pdb_id, chain, warn_text)
                 warn_map.add(prot_id)
-                t_i_1 += time.time()
                 continue
 
             if len(out) == 5:
@@ -1566,14 +1595,14 @@ def process_align_outs(proteins, config, align_outs, max_runtime, warn_map, alig
                 proteins.remove_annotation(prot_id, pdb_id, chain)
                 if not skip_inserts:
                     sus_complexes.add(pdb_id)
-                    sus_structures.add((pdb_id, chain))
+                    if pdb_id not in sus_structures:
+                        sus_structures[pdb_id] = set([chain])
+                    else:
+                        sus_structures[pdb_id].add(chain)
                 if config.verbosity >= 6:
                     seq_id, alignment_text = align_info
                     print('Alignment got filtered:', prot_id, pdb_id, chain, len(sub_infos), seq_id, alignment_text)
-                t_i_1 += time.time()
                 continue
-            t_i_1 += time.time()
-            t_i_2 += time.time()
 
             (prot_id, pdb_id, chain, alignment, seq_id, coverage, interaction_partners, chain_type_map,
              oligo, sub_infos, backmap, atom_count, last_residue, first_residue, chainlist, rare_residues) = out
@@ -1581,11 +1610,7 @@ def process_align_outs(proteins, config, align_outs, max_runtime, warn_map, alig
             if config.verbosity >= 6:
                 print(f'Receiving alignment results from {prot_id} {pdb_id} {chain}: {seq_id} {coverage}')
 
-            if record_package:
-                max_runtime_package.append((prot_id, pdb_id, chain, seq_id, coverage, len(alignment)))
-
-            if record_min_package:
-                min_runtime_package.append((prot_id, pdb_id, chain, seq_id, coverage, len(alignment)))
+            t_now = add_to_times(times, t_init)
 
             proteins.set_coverage(prot_id, pdb_id, chain, coverage)
             proteins.set_sequence_id(prot_id, pdb_id, chain, seq_id)
@@ -1597,18 +1622,19 @@ def process_align_outs(proteins, config, align_outs, max_runtime, warn_map, alig
             if indel_analysis_follow_up:
                 proteins.set_alignment(prot_id, pdb_id, chain, alignment)
 
-            t_i_3 += time.time()
+            t_now = add_to_times(times, t_now)
 
             proteins.set_interaction_partners(pdb_id, interaction_partners)
             proteins.set_chain_type_map(pdb_id, chain_type_map, chainlist)
 
-            t_i_4 += time.time()
+            t_now = add_to_times(times, t_now)
 
-            proteins.set_oligo(pdb_id, chain, oligo)
+            proteins.structures[pdb_id][chain].oligo = oligo
+
             proteins.set_last_residue(pdb_id, chain, last_residue)
             proteins.set_first_residue(pdb_id, chain, first_residue)
 
-            t_i_5 += time.time()
+            t_now = add_to_times(times, t_now)
 
             if pdb_id not in structure_insertion_list:
                 structure_insertion_list[pdb_id] = set([chain])
@@ -1622,37 +1648,40 @@ def process_align_outs(proteins, config, align_outs, max_runtime, warn_map, alig
                 chain_type: str = chain_type_map[chain_id]
                 if chain_type == 'Protein':
                     structure_insertion_list[pdb_id].add(chain_id)
-                    safe_structures.add((pdb_id, chain_id))
+                    if pdb_id not in safe_structures:
+                        safe_structures[pdb_id] = set([chain_id])
+                    else:
+                        safe_structures[pdb_id].add(chain_id)
                     if chain_id not in proteins.structures[pdb_id]:
                         homomers = proteins.complexes[pdb_id].get_homomers(chain_id)
                         struct = structure_package.Structure(pdb_id, chain_id, oligo=homomers, new_interacting_chain = True)
                         proteins.add_structure(pdb_id, chain_id, struct)
 
-            t_i_6 += time.time()
+            t_now = add_to_times(times, t_now)
 
             safe_complexes.add(pdb_id)
-            safe_structures.add((pdb_id, chain))
+            if pdb_id not in safe_structures:
+                safe_structures[pdb_id] = set([chain])
+            else:
+                safe_structures[pdb_id].add(chain)
 
-            t_i_7 += time.time()
+            t_now = add_to_times(times, t_now)
 
             prot_db_id = proteins.get_protein_db_id(prot_id)
             alignment_insertion_list.append((prot_id, prot_db_id, pdb_id, chain, alignment))
 
-            t_i_8 += time.time()
+            t_now = add_to_times(times, t_now)
 
             config.rare_residues.update(rare_residues)
 
-            t_i_9 += time.time()
+            t_now = add_to_times(times, t_now)
+
+            total_integration_times = aggregate_times(total_integration_times, times)
 
         started_processes -= 1
 
-        record_package = False
-
-    if config.verbosity >= 5:
-        print('Times for data integration:', (t_i_1 - t_i_0), (t_i_3 - t_i_2), (t_i_4 - t_i_3), (t_i_5 - t_i_4), (t_i_6 - t_i_5), (t_i_7 - t_i_6), (t_i_8 - t_i_7), (t_i_9 - t_i_8))
-
-    return (max_runtime, warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes, max_runtime_package,
-            min_runtime_package, record_package, safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes)
+    return (warn_map, alignment_insertion_list, structure_insertion_list, total_package_runtimes, total_integration_times,
+            safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes)
 
 
 def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up=False, get_all_alignments=False):
@@ -1675,12 +1704,14 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
     mapping_results = []
 
     sus_complexes = set()
-    sus_structures = set()
+    sus_structures: dict[str, set[str]] = {}
 
-    safe_structures = set()
+    safe_structures: dict[str, set[str]] = {}
     safe_complexes = set()
 
-    task_list = []
+    task_list: list[tuple[str, dict, int, list]] = []
+
+    total_times = []
 
     for prot_id in prot_ids:
         if not proteins.is_protein_stored(prot_id):
@@ -1689,13 +1720,25 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
             if proteins.is_completely_stored(prot_id) and not get_all_alignments:
                 continue
 
+        times = []
+        ti = time.time()
         annotation_list = proteins.get_protein_annotation_list(prot_id)
+        ti = add_to_times(times, ti)
 
+        aaclist = proteins.getAACList(prot_id)
+        prot_db_id = proteins.get_protein_db_id(prot_id)
+
+        total_subtimes = []
+        struct_tasks: list[tuple[str, str, str, str, str]] = []
         for (pdb_id, chain) in annotation_list:
             if not proteins.is_annotation_stored(pdb_id, chain, prot_id):
                 continue
 
+            sub_times = []
+            ts = time.time()
+
             structure_id = proteins.get_structure_db_id(pdb_id, chain)
+            ts = add_to_times(sub_times, ts)
             if indel_analysis_follow_up:
                 get_alignment_out = proteins.get_alignment(prot_id, pdb_id, chain)
                 if isinstance(get_alignment_out, str):
@@ -1705,15 +1748,30 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
                     target_seq, template_seq = get_alignment_out
             else:
                 target_seq, template_seq = proteins.pop_alignment(prot_id, pdb_id, chain)
-            aaclist = proteins.getAACList(prot_id)
-            prot_db_id = proteins.get_protein_db_id(prot_id)
-
-            task_list.append((prot_id, pdb_id, chain, structure_id, target_seq, template_seq, aaclist, prot_db_id))
-            safe_structures.add((pdb_id, chain))
+            ts = add_to_times(sub_times, ts)
+            struct_tasks.append((pdb_id, chain, structure_id, target_seq, template_seq))
+            
+            ts = add_to_times(sub_times, ts)
+            if pdb_id not in safe_structures:
+                safe_structures[pdb_id] = set([chain])
+            else:
+                safe_structures[pdb_id].add(chain)
+            ts = add_to_times(sub_times, ts)
             safe_complexes.add(pdb_id)
+            ts = add_to_times(sub_times, ts)
+
+            aggregate_times(total_subtimes, sub_times)
+        
+        task_list.append((prot_id, aaclist, prot_db_id, struct_tasks))
+
+        times.append(total_subtimes)
+        ti = add_to_times(times, ti)
+
+        aggregate_times(total_times, times)
 
     t11 = time.time()
     if config.verbosity >= 2:
+        print_times(total_times, label='process getAlignment prot_ids')
         print("Alignment Part 1.1: %s" % (str(t11 - t1)))
 
     if len(task_list) <= config.proc_n:
@@ -1752,12 +1810,17 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
                 mapping_results.append(paraMap_wrapper.remote(mapping_dump, pack(chunk)))
             else:
                 mapping_results.append(paraMap(config, chunk))
-                
-    gc.collect()
+
+    t12 = time.time()
+    if config.verbosity >= 2:
+        print(f"Alignment Part 1.2: {t12 - t11}")
+
+    if len(task_list) > 100:
+        gc.collect()
 
     t2 = time.time()
     if config.verbosity >= 2:
-        print("Alignment Part 2: %s" % (str(t2 - t11)))
+        print("Alignment Part 2: %s" % (str(t2 - t12)))
 
     if config.proc_n > 1:
         mappings_outs = ray.get(mapping_results)
@@ -1785,14 +1848,16 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
     cost_map = {}
 
     protein_packages = {}
+    protein_bins: list[tuple[list[str], set[str]]] = []
 
     for prot_id in prot_ids:
         
-        annotation_list = proteins.get_protein_annotation_list(prot_id)
+        annotation_list: list[tuple[str, str]] = proteins.get_protein_annotation_list(prot_id)
 
         seq = proteins.get_sequence(prot_id)
         aaclist = proteins.getAACList(prot_id)
         structure_infos = []
+        structure_set: set[str] = set()
         for (pdb_id, chain) in annotation_list:
             if proteins.is_annotation_stored(pdb_id, chain, prot_id):
                 continue
@@ -1804,11 +1869,22 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
                     cost_map[prot_id] += len(seq)*str_len
                 else:
                     cost_map[prot_id] += (len(seq))**2
-            oligo = proteins.get_oligo(pdb_id, chain)
+            oligo = proteins.structures[pdb_id][chain].oligo
             structure_infos.append((pdb_id, chain, oligo))
+            structure_set.add(pdb_id)
 
         if prot_id not in cost_map:
             continue
+
+        binned = False
+        for prot_bin, bin_structures in protein_bins:
+            if pdb_id in bin_structures:
+                prot_bin.append(prot_id)
+                bin_structures.update(structure_set)
+                binned = True
+                break
+        if not binned:
+            protein_bins.append(([prot_id], structure_set))
 
         if config.proc_n > 1:
             prot_specific_mapping_dump = ray.put((prot_id, seq, aaclist))
@@ -1830,7 +1906,10 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
     chunk = []
     chunk_cost = 0
 
-    prots_todo = set(protein_packages.keys())
+    prots_todo: list[str] = []
+    for prot_bin, _ in protein_bins:
+        prots_todo.extend(prot_bin)
+
     started_processes = 0
 
     while started_processes < config.proc_n and len(prots_todo) > 0:
@@ -1845,12 +1924,8 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
     structure_insertion_list: dict[str, set[str]] = {}
     warn_map = set()
 
-    package_runtimes = []
-    max_runtime = 0
-    min_runtime = sys.maxsize
-    max_runtime_package = None
-    min_runtime_package = []
-    record_package = False
+    total_package_runtimes = []
+    total_integration_times = []
 
     if config.proc_n > 1:
 
@@ -1881,12 +1956,13 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
                 if config.verbosity >= 6:
                     print('Times for get:', (t_get_1 - t_get_0))
 
-                (max_runtime, warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes,
-                    max_runtime_package, min_runtime_package, record_package,
+                (warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes, integration_times,
                     safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes) = process_align_outs(proteins, 
-                            config, align_outs, max_runtime, warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes, max_runtime_package, min_runtime_package, record_package,
+                            config, align_outs, warn_map, alignment_insertion_list, structure_insertion_list,
                             indel_analysis_follow_up, safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes, skip_inserts)
 
+                total_package_runtimes = aggregate_times(total_package_runtimes, package_runtimes)
+                total_integration_times = aggregate_times(total_integration_times, integration_times)
             t_new_0 = time.time()
 
             new_alignment_results = []
@@ -1910,12 +1986,13 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
 
         while True:
             align_outs = alignment_results
-            (max_runtime, warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes,
-                max_runtime_package, min_runtime_package, record_package,
+            (warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes, integration_times,
                 safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes) = process_align_outs(proteins,
-                    config, align_outs, max_runtime, warn_map, alignment_insertion_list, structure_insertion_list, package_runtimes, max_runtime_package, min_runtime_package, record_package,
+                    config, align_outs, warn_map, alignment_insertion_list, structure_insertion_list,
                     indel_analysis_follow_up, safe_complexes, safe_structures, sus_complexes, sus_structures, started_processes, skip_inserts)
-            
+            total_package_runtimes = aggregate_times(total_package_runtimes, package_runtimes)
+            total_integration_times = aggregate_times(total_integration_times, integration_times)
+
             n = len(prots_todo)
             if n == 0:
                 break
@@ -1937,23 +2014,9 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
         del protein_packages[prot_id]
     del protein_packages
 
-    if config.verbosity >= 5 and max_runtime_package is not None:
-        if len(package_runtimes) > 0:
-            print('Maximal package runtime:', max(package_runtimes))
-            print('Minimal package runtime:', min(package_runtimes))
-        if len(package_runtimes) > 1:
-            print('Packages mean runtime:',  statistics.mean(package_runtimes))
-            print('Packages runtime deviation:', statistics.stdev(package_runtimes))
-        print('Max runtime package length:', len(max_runtime_package))
-        if len(max_runtime_package) > 0:
-            print('Max runtime package avg seq_id:', statistics.mean([x[3] for x in max_runtime_package]))
-            print('Max runtime package avg coverage:', statistics.mean([x[4] for x in max_runtime_package]))
-            print('Max runtime package total alignment length:', sum([x[5] for x in max_runtime_package]))
-        print('All packages length:', len(min_runtime_package))
-        if len(min_runtime_package) > 0:
-            print('All packages avg seq_id:', statistics.mean([x[3] for x in min_runtime_package]))
-            print('All packages avg coverage:', statistics.mean([x[4] for x in min_runtime_package]))
-            print('All packages total alignment length:', sum([x[5] for x in min_runtime_package]))
+    if config.verbosity >= 2:
+        print_times(total_package_runtimes, label='Alignment')
+        print_times(total_integration_times, label='Align results integration')
 
     if config.verbosity >= 2:
         t5 = time.time()
@@ -1978,7 +2041,18 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
         print("Alignment Part 7: %s" % (str(t7 - t6)))
 
     # Due the removal of annotations in the previous loop, we might to remove some structures and complexes
-    structures_to_remove = sus_structures - safe_structures
+    structures_to_remove: list[tuple[str, list[str]]] = []
+    for pdb_id in sus_structures:
+        if pdb_id not in safe_structures:
+            structures_to_remove.append((pdb_id, sus_structures[pdb_id]))
+        else:
+            rchains: list[str] = []
+            for chain in sus_structures[pdb_id]:
+                if chain not in safe_structures[pdb_id]:
+                    rchains.append(chain)
+            if len(rchains) > 0:
+                structures_to_remove.append((pdb_id, [x for x in rchains]))
+
     proteins.remove_structures(structures_to_remove)
     complexes_to_remove = sus_complexes - safe_complexes
     if config.verbosity >= 5:
@@ -1990,12 +2064,9 @@ def paraAlignment(config, proteins, skip_inserts=False, indel_analysis_follow_up
             print('Remove complexes:', complexes_to_remove)
     proteins.remove_complexes(complexes_to_remove)
 
-
     if config.verbosity >= 2:
         t8 = time.time()
         print("Alignment Part 8: %s" % (str(t8 - t7)))
-
-    config.removed_structures = structures_to_remove
 
     del mapping_dump
 
@@ -2016,35 +2087,56 @@ def paraMap(config, tasks, static_model_path = None):
 
     results = []
 
-    for u_ac, pdb_id, chain, structure_id, target_seq, template_seq, aaclist, prot_id in tasks:
-        try:
-            if config.model_db_active:
-                if is_alphafold_model(pdb_id):
-                    model_path = alphafold_model_id_to_file_path(pdb_id, config)
-                    #is_model = True
+    parse_dict: dict[str, tuple] = {}
+    structure_set: set[str] = set()
+    multi_demand: dict[str, int] = {}
+
+    for _, _, _, struct_tasks in tasks:
+        for pdb_id, _, _, _, _, in struct_tasks:
+            if pdb_id not in structure_set:
+                structure_set.add(pdb_id)
+            elif pdb_id not in multi_demand:
+                multi_demand[pdb_id] = 1
+            else:
+                multi_demand[pdb_id] += 1
+
+    for u_ac, aaclist, prot_id, struct_tasks in tasks:
+        for pdb_id, chain, structure_id, target_seq, template_seq in struct_tasks:
+            try:
+                if config.model_db_active:
+                    if is_alphafold_model(pdb_id):
+                        model_path = alphafold_model_id_to_file_path(pdb_id, config)
+                        #is_model = True
+                    else:
+                        model_path = static_model_path
                 else:
                     model_path = static_model_path
-            else:
-                model_path = static_model_path
 
-            #template_page, atom_count = pdbParser.standardParsePDB(pdb_id, pdb_path, obsolete_check=True, model_path=model_path)
-            template_page, interaction_partners, chain_type_map, oligo, atom_count, chain_list, rare_residues = pdbParser.getStandardizedPdbFile(pdb_id, pdb_path, verbosity=config.verbosity, obsolete_check=True, model_path=model_path)
+                if pdb_id not in parse_dict:
+                    template_page, _, _, _, atom_count, _, _ = pdbParser.getStandardizedPdbFile(pdb_id, pdb_path, verbosity=config.verbosity, obsolete_check=True, model_path=model_path)
+                    if pdb_id in multi_demand:
+                        parse_dict[pdb_id] = template_page, atom_count
+                else:
+                    template_page, atom_count = parse_dict[pdb_id]
+                    multi_demand[pdb_id] -= 1
+                    if multi_demand[pdb_id] == 1:
+                        del parse_dict[pdb_id]
 
-            seq_res_map, last_residue, first_residue = globalAlignment.createTemplateFasta(template_page, pdb_id, chain, config, onlySeqResMap=True)
+                seq_res_map, last_residue, first_residue = globalAlignment.createTemplateFasta(template_page, pdb_id, chain.encode('ascii'), config, onlySeqResMap=True)
 
-            sub_out = globalAlignment.getSubPos(config, u_ac, target_seq, template_seq, aaclist, seq_res_map, ignore_gaps = True)
+                sub_out = globalAlignment.getSubPos(config, u_ac, target_seq, template_seq, aaclist, seq_res_map, ignore_gaps = True)
 
-            if isinstance(sub_out, str):
-                config.errorlog.add_error("%s %s %s\n%s\n%s" % (sub_out, pdb_id, chain, template_seq.replace('-', ''), seq_res_map))
-                continue
+                if isinstance(sub_out, str):
+                    config.errorlog.add_error("%s %s %s\n%s\n%s" % (sub_out, pdb_id, chain, template_seq.replace('-', ''), seq_res_map))
+                    continue
 
-            sub_infos, aaclist, backmap = sub_out
+                sub_infos, aaclist, backmap = sub_out
 
-            results.append((u_ac, pdb_id, chain, sub_infos, atom_count, last_residue, first_residue, backmap))
-        except:
-            [e, f, g] = sys.exc_info()
-            g = traceback.format_exc()
-            config.errorlog.add_error(f"Error in paraMap:\n{e}\n{f}\n{g}\n{u_ac} ({prot_id}), {pdb_id}:{chain} ({structure_id})\n{target_seq}\n{template_seq}\n{aaclist}")
+                results.append((u_ac, pdb_id, chain, sub_infos, atom_count, last_residue, first_residue, backmap))
+            except:
+                [e, f, g] = sys.exc_info()
+                g = traceback.format_exc()
+                config.errorlog.add_error(f"Error in paraMap:\n{e}\n{f}\n{g}\n{u_ac} ({prot_id}), {pdb_id}:{chain} ({structure_id})\n{target_seq}\n{template_seq}\n{aaclist}")
 
     return results
 
@@ -2052,7 +2144,6 @@ def paraMap(config, tasks, static_model_path = None):
 #called (also) by indel_analysis.py
 @ray.remote(max_calls = 1)
 def align_remote_wrapper(align_dump, package, model_path=None):
-    ray_hack()
 
     config = align_dump
 
@@ -2061,11 +2152,22 @@ def align_remote_wrapper(align_dump, package, model_path=None):
 
 def align(config, package, static_model_path=None, remote=False):
     try:
-
-        t0 = time.time()
-
         results = []
+        total_times = []
         aligner_class = globalAlignment.init_bp_aligner_class()
+
+        parse_dict: dict[str, tuple] = {}
+        structure_set: set[str] = set()
+        multi_demand: dict[str, int] = {}
+
+        for _, structure_infos in package:
+            for pdb_id, _, _ in structure_infos:
+                if pdb_id not in structure_set:
+                    structure_set.add(pdb_id)
+                elif pdb_id not in multi_demand:
+                    multi_demand[pdb_id] = 1
+                else:
+                    multi_demand[pdb_id] += 1
 
         for prot_specific_mapping_dump, structure_infos in package:
 
@@ -2078,6 +2180,8 @@ def align(config, package, static_model_path=None, remote=False):
                 print(f'Alignment of {u_ac} to {len(structure_infos)} number of Structures')
 
             for pdb_id, chain, oligo in structure_infos:
+                times = []
+                t_init = time.time()
 
                 pdb_path = config.pdb_path
                 option_seq_thresh = config.option_seq_thresh
@@ -2100,8 +2204,18 @@ def align(config, package, static_model_path=None, remote=False):
                     else:
                         model_path = static_model_path
 
-                    parse_out = pdbParser.getStandardizedPdbFile(pdb_id, pdb_path, oligo=oligo, verbosity=config.verbosity, model_path=model_path)
+                    if pdb_id not in parse_dict:
+                        parse_out = pdbParser.getStandardizedPdbFile(pdb_id, pdb_path, oligo=oligo, verbosity=config.verbosity, model_path=model_path)
+                        if pdb_id in multi_demand:
+                            parse_dict[pdb_id] = parse_out
+                    else:
+                        parse_out = parse_dict[pdb_id]
+                        multi_demand[pdb_id] -= 1
+                        if multi_demand[pdb_id] == 1:
+                            del parse_dict[pdb_id]
 
+                    t_now = add_to_times(times, t_init)
+                    
                     if parse_out is None:
                         results.append((u_ac, pdb_id, chain, 'pdbParser failed for %s' % str(pdb_id)))
                         continue
@@ -2114,12 +2228,15 @@ def align(config, package, static_model_path=None, remote=False):
 
                     align_out = globalAlignment.alignBioPython(config, u_ac, seq, pdb_id, template_page, chain, aaclist, rare_residues=rare_residues, aligner_class = aligner_class)
                     
+                    t_now = add_to_times(times, t_now)
+
                     if isinstance(align_out, str):
                         align_out = '%s %s' % (align_out, str(model_path))
                         results.append((u_ac, pdb_id, chain, align_out))
                         continue
 
-                    (coverage, seq_id, sub_infos, backmap, alignment_pir, times, aaclist, last_residue, first_residue) = align_out
+                    (coverage, seq_id, sub_infos, backmap, alignment_pir, align_times, aaclist, last_residue, first_residue) = align_out
+                    times.append(align_times)
 
                     if sub_infos is None or seq_id is None:
                         results.append((u_ac, pdb_id, chain, sub_infos, seq_id))
@@ -2139,16 +2256,15 @@ def align(config, package, static_model_path=None, remote=False):
                     g = traceback.format_exc()
                     results.append((u_ac, pdb_id, chain, '%s,%s %s\n%s\n%s\n%s' % (pdb_id, chain, str(model_path), e, str(f), g)))
 
-        t1 = time.time()
+                total_times = aggregate_times(total_times, times)
 
-        runtime = t1-t0
     except:
         [e, f, g] = sys.exc_info()
         g = traceback.format_exc()
         results = [('', '', '', f'\nUnknown critical error in alignment: \n{e}\n{str(f)}\n{g}\n')]
-        runtime = 0
+        total_times = []
 
-    return (results, runtime)
+    return (results, total_times)
 
 
 def debug_freeze(config, stop_number = 1):
@@ -2161,7 +2277,15 @@ def print_locals(items):
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in items), key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, sizeof_fmt(size)))
 
-def core(protein_list, genes, indels, multi_mutation_objects, config, session, outfolder, session_name, out_objects):
+def core(
+        protein_list: dict[str, protein_package.Protein],
+        genes,
+        indels,
+        multi_mutation_objects,
+        config,
+        session
+        ):
+    
     if len(protein_list) == 0:
         return None, 0
 
@@ -2173,7 +2297,7 @@ def core(protein_list, genes, indels, multi_mutation_objects, config, session, o
     background_process_MS = None
 
     # transform the protein map into a Proteins object
-    proteins = protein_package.Proteins(protein_list, indels, multi_mutation_objects)
+    proteins: protein_package.Proteins = protein_package.Proteins(protein_list, indels, multi_mutation_objects)
 
 
     if config.verbosity >= 6:
@@ -2323,7 +2447,7 @@ def core(protein_list, genes, indels, multi_mutation_objects, config, session, o
         #time.sleep(10)
         config.ray_init_counter = 0
         pass
-    return out_objects, amount_of_structures		
+    return amount_of_structures		
 
 
 def main(filename, config):
@@ -2422,8 +2546,6 @@ def main(filename, config):
         newsession = True
     session_name = (nfname.rsplit("/", 1)[1]).rsplit(".", 1)[0]
 
-    out_objects = None
-
     total_amount_of_analyzed_structures = 0
     config.ray_init_counter = 0
     save_ids = None
@@ -2432,6 +2554,7 @@ def main(filename, config):
         if temp_infile is not None:
             if config.verbosity >= 1:
                 print('Infile splitting due to low memory system, processing infile split nr.:', nr_temp_file + 1, 'out of', len(temp_infiles))
+            proteins_chunks: list[tuple[dict[str, protein_package.Protein], dict[str, indel_package.Indel]]]
             proteins_chunks, _, genes = buildQueue(config, temp_infile, already_split=True)
             os.remove(temp_infile)
 
@@ -2457,9 +2580,15 @@ def main(filename, config):
                 t1 = time.time()
                 print(f'Time for sequenceScan: {t1-t0}')
 
-            out_objects, amount_of_structures = core(protein_list, genes, indels, multi_mutation_objects, config, session, config.outfolder, session_name, out_objects)
+            amount_of_structures = core(protein_list, genes, indels, multi_mutation_objects, config, session)
 
             total_amount_of_analyzed_structures += amount_of_structures
+
+            for prot_id in list(protein_list.keys()):
+                del protein_list[prot_id]
+
+            for indel_id in list(indels.keys()):
+                del indels[indel_id]
 
             if config.verbosity >= 3:
                 try:

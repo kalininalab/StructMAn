@@ -1,4 +1,3 @@
-import itertools
 import sys
 import os
 import traceback
@@ -10,8 +9,6 @@ from numba.typed import List as NumbaList
 from numba.types import ListType, int64
 #from numba import typeof
 
-from collections import deque
-from sys import getsizeof, stderr
 
 try:
     from reprlib import repr
@@ -94,8 +91,17 @@ class SparseArray(Slotted_obj):
         if len(self.ranged_lists) == 0:
             self.ranged_lists.append((key, key, [value]))
         elif key == self.ranged_lists[-1][1]+1:
-            self.ranged_lists[-1][2].append(value)
-            self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, self.ranged_lists[-1][2])
+            l = self.ranged_lists[-1][2]
+            try:
+                l.append(value)
+            except AttributeError:
+                l = list(self.ranged_lists[-1][2])
+                l.append(value)
+            try:
+                self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, l)
+            except TypeError:
+                self.ranged_lists = list(self.ranged_lists)
+                self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, l)
         else:
             new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
             self.ranged_lists.append(new_ranged_list)
@@ -251,10 +257,20 @@ def doomsday_protocol(obj, immunity = None):
             pass
 
             
-def boring(abr):
+def boring(abr: str) -> bool:
     if abr in residues.METAL_ATOMS or abr in residues.ION_ATOMS or abr in ligands.NON_BORING_SHORT_LIGANDS:
         return False
     if abr in ligands.BORING_LIGANDS:
+        return True
+    if len(abr) < 3:
+        return True
+    return False
+
+
+def bin_boring(abr: bytes) -> bool:
+    if abr in residues.BIN_METAL_ATOMS or abr in residues.BIN_ION_ATOMS or abr in ligands.BIN_NON_BORING_SHORT_LIGANDS:
+        return False
+    if abr in ligands.BIN_BORING_LIGANDS:
         return True
     if len(abr) < 3:
         return True
@@ -509,51 +525,6 @@ def get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances
         return None
 
     return min_hd, min_ld, min_md, min_id, min_cd, min_rd, min_dd, min_lig, min_metal, min_ion, iacs
-
-
-# Taken from https://code.activestate.com/recipes/577504/
-def total_size(o, handlers={}, verbose=False):
-    """ Returns the approximate memory footprint an object and all of its contents.
-
-    Automatically finds the contents of the following builtin containers and
-    their subclasses:  tuple, list, deque, dict, set and frozenset.
-    To search other containers, add handlers to iterate over their contents:
-
-        handlers = {SomeContainerClass: iter,
-                    OtherContainerClass: OtherContainerClass.get_elements}
-
-    """
-    def dict_handler(d):
-        return itertools.chain.from_iterable(d.items())
-
-    all_handlers = {
-        tuple: iter,
-        list: iter,
-        deque: iter,
-        dict: dict_handler,
-        set: iter,
-        frozenset: iter,
-    }
-    all_handlers.update(handlers)  # user handlers take precedence
-    seen = set()  # track which object id's have already been seen
-    default_size = getsizeof(0)  # estimate sizeof object without __sizeof__
-
-    def sizeof(o):
-        if id(o) in seen:  # do not double count the same object
-            return 0
-        seen.add(id(o))
-        s = getsizeof(o, default_size)
-
-        if verbose:
-            print(s, type(o), repr(o), file=stderr)
-
-        for typ, handler in all_handlers.items():
-            if isinstance(o, typ):
-                s += sum(map(sizeof, handler(o)))
-                break
-        return s
-
-    return sizeof(o)
 
 
 def is_connected(url):

@@ -200,12 +200,12 @@ class Complex(Slotted_obj):
             if chain not in self.chains:
                 del_list.append(chain)
             else:
-                del_pos = []
-                for pos, h_chain in enumerate(self.homomers[chain]):
+                del_chains = []
+                for h_chain in self.homomers[chain]:
                     if h_chain not in self.chains:
-                        del_pos.append(pos)
-                for pos in reversed(del_pos):
-                    del self.homomers[chain][pos]
+                        del_chains.append(h_chain)
+                for h_chain in del_chains:
+                    self.homomers[chain].remove(h_chain)
         for chain in del_list:
             del self.homomers[chain]
 
@@ -267,10 +267,10 @@ class Complex(Slotted_obj):
             parse_out = pdbParser.getStandardizedPdbFile(self.pdb_id, config.pdb_path, verbosity=config.verbosity, model_path = model_path)
 
             if parse_out is None:
-                config.errorlog.add_error('pdbParser failed: %s %s %s' % (u_ac, pdb_id, chain))
+                config.errorlog.add_error(f'pdbParser failed: {self.pdb_id}')
                 return
 
-            (template_page, interaction_partners, chain_type_map, oligo, atom_count, chainlist, rare_residues) = parse_out
+            (template_page, interaction_partners, chain_type_map, _, _, chainlist, _) = parse_out
 
             print(f'In complex object getPage - self_update: interaction_partners: {interaction_partners}')
 

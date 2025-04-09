@@ -479,8 +479,8 @@ class Protein(Slotted_obj):
     def remove_annotations(self):
         del self.structure_annotations
 
-    def get_annotation_list(self):
-        annotation_list = []
+    def get_annotation_list(self) -> list[tuple[str, str]]:
+        annotation_list: list[tuple[str, str]] = []
         for structure_id in self.structure_annotations:
             for chain in self.structure_annotations[structure_id]:
                 annotation_list.append((structure_id, chain))
@@ -898,12 +898,6 @@ class Proteins(Slotted_obj):
                 return True
 
         return False
-    
-    def set_oligo(self, pdb_id, chain, value):
-        self.structures[pdb_id][chain].set_oligo(value)
-
-    def get_oligo(self, pdb_id, chain):
-        return self.structures[pdb_id][chain].get_oligo()
 
     def set_last_residue(self, pdb_id, chain, last_residue):
         self.structures[pdb_id][chain].set_last_residue(last_residue)
@@ -932,7 +926,7 @@ class Proteins(Slotted_obj):
             return False
         return self.structures[pdb_id][chain].contains_residue(res_nr)
 
-    def get_protein_annotation_list(self, u_ac):
+    def get_protein_annotation_list(self, u_ac) -> list[tuple[str, str]]:
         return self.protein_map[u_ac].get_annotation_list()
 
     def get_protein_structure_annotations(self, u_ac):
@@ -1141,14 +1135,15 @@ class Proteins(Slotted_obj):
         except:
             return
 
-    def remove_structures(self, structure_ids):
-        for (structure_id, chain) in structure_ids:
-            try:
-                del self.structures[structure_id][chain]
-                if len(self.structures[structure_id]) == 0:
-                    del self.structures[structure_id]
-            except:
-                continue
+    def remove_structures(self, structure_ids: list[tuple[str, list[str]]]):
+        for (structure_id, chains) in structure_ids:
+            for chain in chains:
+                try:
+                    del self.structures[structure_id][chain]
+                    if len(self.structures[structure_id]) == 0:
+                        del self.structures[structure_id]
+                except:
+                    continue
 
     def remove_complexes(self, pdb_ids):
         for pdb_id in pdb_ids:

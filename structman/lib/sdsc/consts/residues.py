@@ -2,7 +2,7 @@
 # Generated from http://ligand-expo.rcsb.org/dictionaries/Components-smiles-oe.smi
 # Using: grep -P "^\[?(Li|Be|Na|Mg|Al|K|Ca|Sc|Ti|V|Cr|Mn|Fe|Co|Ni|Cu|Zn|Ga|Rb|Sr|Y|Zr|Nb|Mo|Tc|Ru|Rh|Pd|Ag|Cd|In|Sn|Cs|Ba|La|Ce|Pr|Nd|Pm|Sm|Eu|Gd|Tb|Dy|Ho|Er|Tm|Yb|Lu|Hf|Ta|W|Re|Os|Ir|Pt|Au|Hg|Tl|Pb|Bi|Po|Fr|Ra|Ac|Th|Pa|U|Np|Pu|Am|Cm|Bk|Cf|Es|Fm|Md|No|Lr|Rf|Db|Sg|Bh|Hs|Cn)[+-]?[0-9]*\]?\t" Components-smiles-oe.smi
 # Does not include metalloids
-METAL_ATOMS = set(['0BE', '3CO', '3NI', '4MO', '4PU', '4TI', '6MO', 'AG', 'AL',
+METAL_ATOMS: set[str] = set(['0BE', '3CO', '3NI', '4MO', '4PU', '4TI', '6MO', 'AG', 'AL',
                    'AM', 'AU', 'AU3', 'BA', 'BS3', 'CA', 'CD', 'CE', 'CF',
                    'CO', 'CR', 'CS', 'CU', 'CU1', 'CU3', 'DY', 'ER3', 'EU', 'EU3',
                    'FE', 'FE2', 'GA', 'GD', 'GD3', 'HG', 'HO', 'HO3', 'IN', 'IR', 'IR3', 'K',
@@ -11,11 +11,19 @@ METAL_ATOMS = set(['0BE', '3CO', '3NI', '4MO', '4PU', '4TI', '6MO', 'AG', 'AL',
                    'TA0', 'TB', 'TH', 'TL', 'U1', 'V', 'W', 'Y1', 'YB', 'YB2', 'YT3', 'ZCM',
                    'ZN', 'ZN2', 'ZR'])
 
+BIN_METAL_ATOMS: set[bytes] = set()
+for tlc in METAL_ATOMS:
+    BIN_METAL_ATOMS.add(tlc.encode('ascii'))
+
 # PDB Three-letter-codes (spaces stripped)
 # Generated from http://ligand-expo.rcsb.org/dictionaries/Components-smiles-oe.smi
 # Using: grep -P "^\[?(As|Si|F|I|Cl|Sb|Te|At|Br)[+-][0-9]*\]?\t" Components-smiles-oe.smi
 # Includes (unused/obsolete) -group entries (ending in O) in addition to ions
-ION_ATOMS = set(['BR', 'BRO', 'CL', 'CLO', 'F', 'FLO', 'IDO', 'IOD', 'SB', 'XE'])
+ION_ATOMS: set[str] = set(['BR', 'BRO', 'CL', 'CLO', 'F', 'FLO', 'IDO', 'IOD', 'SB', 'XE'])
+BIN_ION_ATOMS: set[bytes] = set()
+for tlc in ION_ATOMS:
+    BIN_ION_ATOMS.add(tlc.encode('ascii'))
+
 AA_MAP_ALIPHATIC = set(['I', 'L', 'V'])
 AA_MAP_HYDROPHOBIC = set(['I', 'L', 'V', 'M', 'F', 'Y', 'W', 'H', 'K', 'T', 'C', 'U', 'A', 'G'])
 AA_MAP_AROMATIC = set(['F', 'Y', 'W', 'H'])
@@ -174,10 +182,21 @@ AA_TO_ONE = {
     'THR': 'T', 'PHE': 'F', 'ALA': 'A', 'HIS': 'H', 'GLY': 'G', 'ILE': 'I', 'LEU': 'L',
     'ARG': 'R', 'TRP': 'W', 'ASN': 'N', 'TYR': 'Y', 'MET': 'M', 'GLU': 'E'
 }
+BIN_AA_TO_ONE = {}
+for tlc in AA_TO_ONE:
+    olc: str = AA_TO_ONE[tlc]
+    BIN_AA_TO_ONE[tlc.encode('ascii')] = olc.encode('ascii')
+
 
 NUCLEOTIDE_TO_ONE = {
     'DT': 'T', 'DG': 'G', 'DC': 'C', 'DA': 'A', 'A': 'A', 'G': 'G', 'C': 'C', 'U': 'U'
 }
+BIN_NUCLEOTIDE_TO_ONE = {}
+for tlc in NUCLEOTIDE_TO_ONE:
+    olc: str = NUCLEOTIDE_TO_ONE[tlc]
+    BIN_NUCLEOTIDE_TO_ONE[tlc.encode('ascii')] = olc.encode('ascii')
+
+
 
 ONE_TO_THREE = {
     'C': 'CYS',
@@ -477,7 +496,10 @@ THREE_TO_ONE = {
     "IVA": "X", "3WU": "X", "3WT": "X", "3FB": "X", "HT7": "W",
     "V9M": "X"
 }
-
+BIN_THREE_TO_ONE = {}
+for tlc in THREE_TO_ONE:
+    olc: str = THREE_TO_ONE[tlc]
+    BIN_THREE_TO_ONE[tlc.encode('ascii')] = olc.encode('ascii')
 
 CHEM_DIST_MATRIX = {
     'A': {

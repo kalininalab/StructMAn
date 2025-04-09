@@ -16,6 +16,8 @@ from structman.lib.sdsc.sdsc_utils import translate
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import protein as protein_package
 from structman.lib.sdsc import gene as gene_package
+from structman.lib.sdsc import position as position_package
+from structman.lib.sdsc import indel as indel_package
 from structman.lib.pdbParser import standardParsePDB, parse_chaintype_map
 from structman.base_utils import base_utils
 from structman.settings import HUMAN_INFO_MAP
@@ -152,7 +154,19 @@ def u_ac_isoform_search(gene_sequence_map, stems, ref_stem_map, config):
 # called by serializedPipeline
 
 
-def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, input_id, prot_map, u_ac=None, u_id=None, ref=None, pdb_id = None, other_ids={}, is_pdb_input = False, gene_id = None, protein_specific_tags = None):
+def integrate_protein(
+        config,
+        proteins: dict[str, protein_package.Protein],
+        genes: dict[str, gene_package.Gene],
+        indel_map: dict[str, indel_package.Indel],
+        primary_protein_id: str,
+        input_id: str,
+        prot_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        u_ac: str | None = None,
+        u_id: str | None = None,
+        ref: str | None = None,
+        pdb_id: str | None = None,
+        other_ids={}, is_pdb_input = False, gene_id = None, protein_specific_tags = None) -> None:
 
     if config.verbosity >= 3:
         t0 = time.time()
@@ -210,7 +224,15 @@ def integrate_protein(config, proteins, genes, indel_map, primary_protein_id, in
     return
 
 
-def indel_insert(config, proteins, indel_map, indels, ac, proteins_is_object = False, create_mut_protein_object = True):
+def indel_insert(
+        config,
+        proteins: dict[str, protein_package.Protein] | protein_package.Proteins,
+        indel_map: dict[str, indel_package.Indel],
+        indels,
+        ac: str,
+        proteins_is_object: bool = False,
+        create_mut_protein_object: bool = True) -> None:
+    
     def proteins_member_check(proteins, member, proteins_is_object):
         if proteins_is_object:
             return proteins.contains(member)
@@ -266,7 +288,18 @@ def fetch_chains(package, config):
 
 
 # called by serializedPipeline
-def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl_map, prot_gene_map, prot_tags_map, number_of_pdbs_to_expand: int):
+def IdMapping(
+        config,
+        ac_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        id_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        np_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        pdb_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        hgnc_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        nm_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        ensembl_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
+        prot_gene_map,
+        prot_tags_map,
+        number_of_pdbs_to_expand: int) -> tuple[dict[str, protein_package.Protein], dict[str, indel_package.Indel], dict[str, gene_package.Gene]]:
 
     if config.verbosity >= 4:
         if len(prot_gene_map) < 100:
@@ -283,9 +316,9 @@ def IdMapping(config, ac_map, id_map, np_map, pdb_map, hgnc_map, nm_map, ensembl
             print(f'Size of ensembl_map: {len(ensembl_map)}')
             print(f'Size of prot_tags_map: {len(prot_tags_map)}')
 
-    proteins = {}
-    indel_map = {}
-    genes = {}
+    proteins: dict[str, protein_package.Protein] = {}
+    indel_map: dict[str, indel_package.Indel] = {}
+    genes: dict[str, gene_package.Gene] = {}
 
     for ac in ac_map:
         if ac in prot_gene_map:

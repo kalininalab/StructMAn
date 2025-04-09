@@ -102,9 +102,10 @@ def weight_majority(value_map, qualities):
     return best_value
 
 class Feature_set(Slotted_obj):
-    def __init__(self):
-        #for feature_name in self.__slots__:
-        #    setattr(self, feature_name, None)
+    def __init__(self, init_none = False):
+        if init_none:
+            for feature_name in self.__slots__:
+                setattr(self, feature_name, None)
         return
     
     """
@@ -388,6 +389,8 @@ class RIN_based_features(Feature_set):
 
         weight_profile_tuples = []
         for mapping_id in unweighted_profiles:
+            if unweighted_profiles[mapping_id] is None:
+                continue
             weight_profile_tuples.append((qualities[mapping_id], unweighted_profiles[mapping_id]))
         self.profile = rin.calculateAverageProfile(weight_profile_tuples)
 
@@ -398,7 +401,7 @@ class Mappings(Slotted_obj):
                     'interaction_recommendations',          'recommendation_order', 'resolutions',
                     'res_aas',                              'amount_of_structures', 'structural_features',
                     'structural_unweighted_feature_dicts',  'rin_based_features',   'rin_based_unweighted_feature_dicts',
-                    'integrated_features',                  'microminer_features'
+                    'integrated_features'
                 ]
 
     slot_mask = [
@@ -407,10 +410,10 @@ class Mappings(Slotted_obj):
         False, True, False,
         False, True, True,
         False, True, False,
-        True, True
+        True
     ]
 
-    def __init__(self):
+    def __init__(self, init_none = False):
         self.qualities = {}
         self.seq_ids = {}
         self.covs = {}
@@ -422,15 +425,14 @@ class Mappings(Slotted_obj):
 
         self.recommendation_order: list[tuple[str, str, int | str]] = []
 
-        self.structural_features = Structural_features()
+        self.structural_features = Structural_features(init_none=init_none)
         self.structural_unweighted_feature_dicts = self.structural_features.create_unweighted_feature_dicts()
 
-        self.microminer_features = Microminer_features()
 
-        self.rin_based_features = RIN_based_features()
+        self.rin_based_features = RIN_based_features(init_none=init_none)
         self.rin_based_unweighted_feature_dicts = self.rin_based_features.create_unweighted_feature_dicts()
 
-        self.integrated_features = Integrated_features()
+        self.integrated_features = Integrated_features(init_none=init_none)
 
     def deconstruct(self):
         doomsday_protocol(self)

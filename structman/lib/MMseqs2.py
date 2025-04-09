@@ -62,68 +62,77 @@ def geneSeqMapToFasta(proteins, outfile, config, filtering_db=None):
         return 'Empty fasta file'
 
 
-def parseHits(temp_outfile, option_seq_thresh, small_genes):
-    f = open(temp_outfile, 'r')
-    lines = f.read().split('\n')
+def parseHits(
+        temp_outfile: str,
+        option_seq_thresh: float,
+        small_genes: set[str]
+        ) -> tuple[dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]], set[str]]:
+    f = open(temp_outfile, 'rb')
+    lines = f.read().split(b'\n')
     f.close()
 
-    entries = {}
+    entries: dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]] = {}
 
     if len(lines) == 0:
-        return (entries)
+        return (entries, None)
 
-    pdb_ids = set()
+    pdb_ids: set[str] = set()
 
     for line in lines:
-        if line == '':
+        if line == b'':
             continue
 
-        words = line.split()
-        gene = words[0]
-        hitlist = words[1].split(',')
-        seq_id = 100.0 * float(words[2])
-        aln_length = int(words[3])
-        target_len = int(words[4])
-        coverage = float(words[5])
+        words: list[bytes] = line.split()
+        prot_id: str = words[0].decode('ascii')
+        hitlist: list[bytes] = words[1].split(b',')
+        seq_id: float = 100.0 * float(words[2])
+        aln_length: int = int(words[3])
+        target_len: int = int(words[4])
+        coverage: float = float(words[5])
 
         if aln_length < 50:
-            if gene not in small_genes:
+            if prot_id not in small_genes:
                 continue
             elif seq_id < (option_seq_thresh * 2):
                 continue
 
-        if gene not in entries:
-            entries[gene] = {}
+        if prot_id not in entries:
+            entries[prot_id] = {}
 
-        hits = {}
+        hits: dict[str, tuple[str, set[str]]] = {}
 
         for hit in hitlist:
-            pdb, chain = hit.rsplit('-',1)
+            pdb, chain = hit.rsplit(b'-',1)
+            pdb = pdb.decode('ascii')
+            chain = chain.decode('ascii')
             if pdb not in hits:
-                hits[pdb] = [chain, set([chain])]
+                hits[pdb] = (chain, set([chain]))
             else:
                 hits[pdb][1].add(chain)
 
-        for hit in hits:
-            pdb_id = hit
+        for pdb_id in hits:
             pdb_ids.add(pdb_id)
-            chain = hits[hit][0]
-            oligos = hits[hit][1]
+            
             if not len(chain) > 1:
-                if not (pdb_id, chain) in entries[gene]:
-                    entries[gene][(pdb_id, chain)] = [seq_id, coverage, oligos, aln_length, target_len]
+                chain: str = hits[pdb_id][0]
+                oligos: set[str] = hits[pdb_id][1]
+                if not pdb_id in entries[prot_id]:
+                    entries[prot_id][pdb_id] = {}
+                if not chain in entries[prot_id][pdb_id]:
+                    entries[prot_id][pdb_id][chain] = (seq_id, coverage, oligos, aln_length, target_len)
                 else:
-                    if aln_length > entries[gene][(pdb_id, chain)][3]:
-                        entries[gene][pdb_id] = [seq_id, coverage, oligos, aln_length, target_len]
-                    entries[gene][(pdb_id, chain)][2].update(oligos)
+                    if aln_length > entries[prot_id][pdb_id][chain][3]:
+                        entries[prot_id][pdb_id][chain] = (seq_id, coverage, oligos, aln_length, target_len)
+                    entries[prot_id][pdb_id][chain][2].update(oligos)
 
     return entries, pdb_ids
 
 
-def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of_ram, errorlog, option_seq_thresh, small_proteins = None, verbosity = 1, number_of_returned_hits = '999999', is_model_db = False):
+def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of_ram, errorlog, option_seq_thresh,
+                 small_proteins: set[str] | None = None, verbosity = 1, number_of_returned_hits = '999999', is_model_db = False):
 
     if small_proteins is None:
-        small_proteins = set()
+        small_proteins: set[str] = set()
 
     temp_outfile = '%s/tmp_outfile_%s.fasta' % (mmseqs_tmp_folder, randomString())
 
@@ -176,6 +185,9 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
         print(f.read())
         f.close()
 
+    hits: dict[bytes, dict[str, dict[str, tuple[float, float, set[str], int, int]]]]
+    pdb_ids: set[str]
+
     hits, pdb_ids = parseHits(temp_outfile, option_seq_thresh, small_proteins)
 
     if verbosity >= 2:
@@ -205,7 +217,7 @@ def wipe_folder(config, folder_path):
 
 
 # called by serializePipeline
-def search(proteins, config):
+def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, tuple[float, float, set[bytes], int, int]]]], set[bytes], bool]]:
 
     # accepts one more argument, custom db
 
@@ -246,7 +258,7 @@ def search(proteins, config):
         is_model_dbs = [False]
     option_seq_thresh = config.option_seq_thresh
 
-    small_proteins = set()
+    small_proteins: set[str] = set()
 
     u_acs = proteins.get_protein_ids()
     for u_ac in u_acs:
@@ -274,7 +286,7 @@ def search(proteins, config):
 
     default_number_of_returned_hits = '999999'
 
-    search_results = []
+    search_results: list[tuple[dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]], set[str], bool]] = []
 
     t1 = time.time()
 
@@ -289,6 +301,9 @@ def search(proteins, config):
 
         is_model_db = is_model_dbs[pos]
 
+        hits: dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]]
+        pdb_ids: set[str]
+
         hits, pdb_ids, debug_store = apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, config.gigs_of_ram, config.errorlog, option_seq_thresh, small_proteins = small_proteins, verbosity = config.verbosity, number_of_returned_hits = number_of_returned_hits, is_model_db = is_model_db)
 
         t11 = time.time()
@@ -299,7 +314,7 @@ def search(proteins, config):
             if u_ac.count(':') == 1:
                 if u_ac not in hits:
                     pdb_id, chain = u_ac.split(':')
-                    hits[u_ac] = {(pdb_id, chain): [100.0, 1.0, [chain], len(proteins.get_sequence(u_ac)), len(proteins.get_sequence(u_ac))]}
+                    hits[u_ac] = {pdb_id: {chain: [100.0, 1.0, [chain], len(proteins.get_sequence(u_ac)), len(proteins.get_sequence(u_ac))]}}
                     pdb_ids.add(pdb_id)
 
         t12 = time.time()

@@ -14,7 +14,7 @@ import ray
 from structman.lib import pdbParser, rin
 from structman.lib.database.retrieval import getStoredResidues
 from structman.lib.database.insertion_lib import insertResidues, remote_insertResidues,insertClassifications, insertComplexes, insert_interface_residues, insert_interfaces
-from structman.base_utils.base_utils import median, distance, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path
+from structman.base_utils.base_utils import median, distance, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path, aggregate_times, print_times
 from structman.lib.sdsc.consts.residues import CORRECT_COUNT, THREE_TO_ONE, BLOSUM62, ONE_TO_THREE, RESIDUE_MAX_ACC, HYDROPATHY, METAL_ATOMS, ION_ATOMS
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import residue as residue_package
@@ -175,7 +175,7 @@ def parsePDB(input_page: str) -> tuple[
 
     modres_map = {}
     res_contig_map: dict[str, residue_package.Residue_Map[tuple[int, str]]] = {}
-    contig_help_map = {}
+    contig_help_map: dict[str, int] = {}
 
     ssbond_map = {}
     link_map = {}
@@ -871,7 +871,11 @@ def annotate(config, chunk, structure_ids, locked = False):
 
     return (outputs, nested_outputs, nested_processes_dump, total_times, total_nested_times, total_serialized_times, background_process)
 
-def analysis_chain(target_chain: str, config, profiles, centralities, analysis_dump):
+def analysis_chain(
+        target_chain: str,
+        config,
+        profiles: dict[str, residue_package.Residue_Map[rin.Interaction_profile]],
+        centralities, analysis_dump):
     coordinate_map: dict[str, tuple[residue_package.Residue_Map, residue_package.Residue_Map]]
     res_contig_map: dict[str, residue_package.Residue_Map[tuple[int, str]]]
     target_residues: dict[str, residue_package.Residue_Map[tuple[int, str]]]
@@ -1065,8 +1069,11 @@ def analysis_chain(target_chain: str, config, profiles, centralities, analysis_d
                 dssp = False
 
 
+        #print(f'Before Adding profiles: {target_chain} {target_res_id} {list(profiles.keys())}')
         if target_chain in profiles:
+            #print(profiles[target_chain].get_keys())
             if profiles[target_chain].contains(target_res_id):
+                #print(f'Setting {profiles[target_chain].get_item(target_res_id)=} to {target_chain} {target_res_id}')
                 residue.interaction_profile = profiles[target_chain].get_item(target_res_id)
 
         if target_chain in centralities:
@@ -1222,7 +1229,7 @@ def structuralAnalysis(
     t5 = time.time()
     times.append(t5-t4)
 
-    profiles = {}
+    profiles: dict[str, residue_package.Residue_Map[rin.Interaction_profile]] = {}
     ligand_profiles = {}
     metal_profiles = {}
     ion_profiles = {}
@@ -1398,28 +1405,6 @@ def trim_down_backmaps(config, proteins):
     if config.verbosity >= 4:
         print(f'Removed backmaps: {removed_backmaps}')
     return
-
-def aggregate_times(total_times, times):
-    if times is None:
-        return total_times
-    if len(total_times) == 0:
-        total_times = times
-    else:
-        for pos, t in enumerate(times):
-            if isinstance(t, float):
-                total_times[pos] += t
-            else:
-                for sub_pos, sub_t in enumerate(times[pos]):
-                    total_times[pos][sub_pos] += sub_t
-    return total_times
-
-def print_times(times):
-    for part, t in enumerate(times):
-        if isinstance(t, float):
-            print(f'Accumulated structural analysis time part {part}: {t}')
-        else:
-            for sub_part, sub_t in enumerate(times[part]):
-                print(f'  Accumulated structural analysis time part {part}.{sub_part}: {sub_t}')
 
 def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 

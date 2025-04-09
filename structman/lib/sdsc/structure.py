@@ -20,14 +20,20 @@ class Structure(Slotted_obj):
         True, True
     ]
 
-    def __init__(self, pdb_id = None, chain = None, oligo=set(), mapped_proteins = None, database_id=None, last_residue=None, first_residue=None, sequence=None, seq_len = None, new_interacting_chain = False):
+    def __init__(self, pdb_id = None, chain = None, oligo = None, mapped_proteins = None, database_id=None, last_residue=None, first_residue=None, sequence=None, seq_len = None, new_interacting_chain = False):
         self.pdb_id = pdb_id
         self.chain = chain
         self.database_id = database_id
-        if isinstance(oligo, str):
-            self.oligo = set(oligo)
+
+        if oligo is None:
+            self.oligo: set[str] = set()
+        elif isinstance(oligo, str):
+            self.oligo = set()
+            for ol in oligo:
+                self.oligo.add(ol)
         else:
             self.oligo = oligo.copy()
+
         self.stored = (database_id is not None)
         if mapped_proteins is None:
             self.mapped_proteins = []
@@ -72,17 +78,11 @@ class Structure(Slotted_obj):
     def get_database_id(self):
         return self.database_id
 
-    def set_oligo(self, value):
-        self.oligo = value
-
     def set_last_residue(self, last_residue):
         self.last_residue = last_residue
 
     def set_first_residue(self, first_residue):
         self.first_residue = first_residue
-
-    def get_oligo(self):
-        return self.oligo
 
     def set_stored(self, value):
         self.stored = value

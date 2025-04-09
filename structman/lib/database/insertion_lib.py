@@ -469,17 +469,22 @@ def createClassValues(proteins):
             m = proteins.get_position_database_id(u_ac, pos)
 
             position = proteins.get_position(u_ac, pos)
-            mappings = position.mappings
-            mappings.recommendation_order = None
+            try:
+                packed_mappings = position.mappings
+            except AttributeError:
+                packed_mappings = None
 
             try:
-                rec_res = mappings.recommended_res
-                max_res = mappings.max_seq_res
+                packed_mm_features = position.microminer_features
             except AttributeError:
-                rec_res = None
-                max_res = None
+                packed_mm_features = None
 
-            values.append((m, pack((rec_res, max_res)), pack(mappings)))
+            try:
+                packed_res_recommends = position.packed_res_recommends
+            except AttributeError:
+                packed_res_recommends = None
+
+            values.append((m, packed_res_recommends, pack((packed_mappings, packed_mm_features))))
             
     return values
 
@@ -529,6 +534,8 @@ def insertComplexes(proteins, config):
             if ia_type != "Ligand":
                 continue
             name = iap[1]
+            if isinstance(name, bytes):
+                name = name.decode('ascii')
             if name in stored_ligands:
                 continue
             if name == "UNK" or name == "UNX":
@@ -543,7 +550,7 @@ def insertComplexes(proteins, config):
                 if len(name) == 1:
                     smiles = "[%s]" % name
                 else:
-                    smiles = "[%s%s]" % (name[0], name[1].lower())
+                    smiles = "[%s%s]" % (name[0], name[1:2].lower())
                 inchi = "InChI=1S/%s" % smiles
             else:
                 (smiles, inchi) = getSI(pdb_id, name, res, chain, pdb_path, config)

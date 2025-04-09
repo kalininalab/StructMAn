@@ -5,13 +5,13 @@ class Gene(Slotted_obj):
                     'gene_id', 'proteins', 'database_id', 'gene_name'
                 ]
 
-    def __init__(self, gene_id, proteins = None, gene_name = None):
+    def __init__(self, gene_id, proteins: dict[str, str] | None = None, gene_name = None):
         self.gene_id = gene_id
         self.gene_name = gene_name
         if proteins is not None:
             self.proteins = proteins
         else:
-            self.proteins = {}
+            self.proteins: dict[str, str] = {}
         self.database_id = None
 
     def print_content(self):

@@ -407,7 +407,9 @@ def parse_processed_mmdb_entry(mmdb_aggregated_entry):
             res_id = words[1]
         feature_values = words[2:]
 
-        feature_dict[(chain_id, res_id)] = []
+        if not chain_id in feature_dict:
+            feature_dict[chain_id] = {}
+        feature_dict[chain_id][res_id] = []
         for pos, feat_val_str in enumerate(feature_values):
             if feature_type_code_list[pos] == 0:
                 try:
@@ -428,7 +430,7 @@ def parse_processed_mmdb_entry(mmdb_aggregated_entry):
                         feat_val = None
                 if feat_val == 0:
                     feat_val = None
-            feature_dict[(chain_id, res_id)].append(feat_val)
+            feature_dict[chain_id][res_id].append(feat_val)
 
     return feature_dict, feature_names
     

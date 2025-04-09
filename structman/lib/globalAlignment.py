@@ -6,19 +6,19 @@ from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.sdsc.residue import Residue_Map
 
 
-def toOne(res_name, only_natural=False):
+def toOne(res_name: bytes, only_natural: bool = False) -> bytes:
     if only_natural:
-        if res_name in residue_consts.AA_TO_ONE:
-            return residue_consts.AA_TO_ONE[res_name]
+        if res_name in residue_consts.BIN_AA_TO_ONE:
+            return residue_consts.BIN_AA_TO_ONE[res_name]
         # if res_name in residue_consts.NUCLEOTIDE_TO_ONE:
         #    return residue_consts.NUCLEOTIDE_TO_ONE[res_name]
-        return '.'
-    if res_name in residue_consts.THREE_TO_ONE:
-        return residue_consts.THREE_TO_ONE[res_name][0]
-    elif res_name in residue_consts.NUCLEOTIDE_TO_ONE:
-        return residue_consts.NUCLEOTIDE_TO_ONE[res_name]
+        return b'.'
+    if res_name in residue_consts.BIN_THREE_TO_ONE:
+        return residue_consts.BIN_THREE_TO_ONE[res_name][0:1]
+    elif res_name in residue_consts.BIN_NUCLEOTIDE_TO_ONE:
+        return residue_consts.BIN_NUCLEOTIDE_TO_ONE[res_name]
     else:
-        return 'X'
+        return b'X'
 
 
 def consecutive(last_residue, res_nr):
@@ -34,65 +34,75 @@ def consecutive(last_residue, res_nr):
 # called by serializedPipeline, sdsc.structure
 
 
-def createTemplateFasta(template_page, template_name, chain, config, onlySeqResMap=False, seqAndMap=False, for_modeller=False, could_be_empty=False, rare_residues=None):
-    lines = template_page.split('\n')
+def createTemplateFasta(
+        lines: list[bytes],
+        template_name: str,
+        chain: bytes,
+        config,
+        onlySeqResMap: bool = False,
+        seqAndMap: bool = False,
+        for_modeller: bool = False,
+        could_be_empty: bool = False,
+        rare_residues: set[bytes] | None = None):
+    
     if rare_residues is None:
         rare_residues = set()
-    seq = ""
-    seq_res_map = []
-    used_res = set()
-    last_residue = None
-    first_residue = None
-    res_atom_count = 0
-    dotted_res_name = None
+        
+    seq: str = ""
+    seq_res_map: list[bytes | int] = []
+    used_res: set[int | bytes] = set()
+    last_residue: int | bytes | None = None
+    first_residue: int | bytes | None = None
+    res_atom_count: int = 0
+    dotted_res_name: bytes | None = None
 
     for line in lines:
-        record_name = line[0:6].replace(" ", "")
+        record_name: bytes = line[0:6].rstrip()
 
-        if record_name.count('ATOM') > 0 and record_name != 'ATOM':  # 100k atom bug fix
-            record_name = 'ATOM'
-        atom_name = line[12:16].replace(" ", "")
+        if record_name.count(b'ATOM') > 0 and record_name != b'ATOM':  # 100k atom bug fix
+            record_name = b'ATOM'
+        atom_name: bytes = line[12:16].strip()
         # ignore water
         if len(atom_name) > 0:
-            if atom_name[0] == 'H':
+            if atom_name[0] == b'H':
                 continue
-        res_name = line[17:20].replace(" ", "")
+        res_name: bytes = line[17:20].strip()
         if len(line) > 21:
-            chain_id = line[21]
-            if chain_id == ' ':
+            chain_id: bytes = line[21:22]
+            if chain_id == b' ':
                 chain_id = chain
 
-            res_nr = line[22:27].replace(" ", "")  # this includes the insertion code
+            res_nr: bytes = line[22:27].strip()  # this includes the insertion code
 
-            if record_name == 'SEQRES':
+            if record_name == b'SEQRES':
                 for tlc in line[19:].split():
                     tlc = tlc.strip()
                     if len(tlc) != 3:
                         continue
-                    if tlc not in residue_consts.THREE_TO_ONE:
+                    if tlc not in residue_consts.BIN_THREE_TO_ONE:
                         rare_residues.add(tlc)
 
             if chain != chain_id:
                 continue
 
-            if record_name == "ATOM" or record_name == 'HETATM':
-                if record_name == 'HETATM':
+            if record_name == b"ATOM" or record_name == b'HETATM':
+                if record_name == b'HETATM':
                     last_residue = res_nr
-                    if (res_name not in residue_consts.THREE_TO_ONE) and (res_name not in rare_residues):
+                    if (res_name not in residue_consts.BIN_THREE_TO_ONE) and (res_name not in rare_residues):
                         continue
                 if for_modeller:
                     if res_nr not in used_res:
                         if len(seq) > 0:
-                            last_res = seq[-1]
+                            last_res: str = seq[-1]
                             if last_res != '-' and last_res != '.':
                                 if residue_consts.CORRECT_COUNT[last_res] > res_atom_count:
-                                    #seq = '%s-' % seq[:-1]
+                                    
                                     seq += '-'
                                 elif residue_consts.CORRECT_COUNT[last_res] < res_atom_count:
-                                    seq = '%s.' % seq[:-1]
-                            res_atom_count = 0
-                        if record_name == "ATOM":
-                            aa = toOne(res_name, only_natural=True)
+                                    seq = f'{seq[:-1]}.'
+                            res_atom_count: int = 0
+                        if record_name == b"ATOM":
+                            aa = toOne(res_name, only_natural=True).decode('ascii')
                         else:
                             aa = '.'
                             dotted_res_name = res_name
@@ -110,11 +120,11 @@ def createTemplateFasta(template_page, template_name, chain, config, onlySeqResM
                         last_residue = res_nr
                         if first_residue is None:
                             first_residue = res_nr
-                    elif atom_name != 'OXT':
+                    elif atom_name != b'OXT':
                         res_atom_count += 1
                 else:
                     if res_nr not in used_res:
-                        aa = toOne(res_name)
+                        aa = toOne(res_name).decode('ascii')
                         if aa not in residue_consts.ONE_TO_THREE:
                             aa = 'X'
                         seq = seq + aa
@@ -129,19 +139,19 @@ def createTemplateFasta(template_page, template_name, chain, config, onlySeqResM
 
     if for_modeller:
         if len(seq) > 0:
-            last_res = seq[-1]
+            last_res: str = seq[-1]
             if last_res != '-' and last_res != '.':
                 if residue_consts.CORRECT_COUNT[last_res] > res_atom_count:
-                    #seq = '%s-' % seq[:-1]
                     seq += '-'
                 elif residue_consts.CORRECT_COUNT[last_res] < res_atom_count:
-                    seq = '%s.' % seq[:-1]
-            elif last_res == '.' and dotted_res_name in residue_consts.AA_TO_ONE:
-                if residue_consts.CORRECT_COUNT[toOne(dotted_res_name, only_natural=True)] == res_atom_count: #this happens, when the last residue is declared as HETATM, but fulfills all criteria for a natural residue
-                    seq = '%s?' % seq[:-1]
+                    seq = f'{seq[:-1]}.'
+            elif last_res == '.' and dotted_res_name in residue_consts.BIN_AA_TO_ONE:
+                if residue_consts.CORRECT_COUNT[toOne(dotted_res_name, only_natural=True).decode('ascii')] == res_atom_count: #this happens, when the last residue is declared as HETATM, but fulfills all criteria for a natural residue
+                    seq = f'{seq[:-1]}?'
 
-    if seq_res_map == [] and not could_be_empty:
-        config.errorlog.add_warning('Warning: seq_res_map empty: %s:%s\n%s' % (template_name, chain, template_page))
+    if len(seq_res_map) == 0 and not could_be_empty:
+        page = b"\n".join(lines).decode("ascii")
+        config.errorlog.add_warning(f'Warning: seq_res_map empty: {template_name} {chain}:\n{page}')
 
     if onlySeqResMap:
         return seq_res_map, last_residue, first_residue
@@ -496,7 +506,7 @@ def createAlignmentPir(target_name, target_aligned_sequence, template_name, temp
 def alignBioPython(config, target_name, wildtype_sequence, template_name, template_page, chain, aaclist, ignore_gaps=False, lock=None, rare_residues=None, aligner_class = None):
     # preparing the alignment of the target and the template, by:
     t0 = time.time()
-    (seq_res_map, template_seq, last_residue, first_residue) = createTemplateFasta(template_page, template_name, chain, config, seqAndMap=True, rare_residues=rare_residues)
+    (seq_res_map, template_seq, last_residue, first_residue) = createTemplateFasta(template_page, template_name, chain.encode('ascii'), config, seqAndMap=True, rare_residues=rare_residues)
     if len(seq_res_map) == 0:
         return 'Unable to create template fasta %s %s %s' % (target_name, template_name, chain)
     startres = seq_res_map[0]

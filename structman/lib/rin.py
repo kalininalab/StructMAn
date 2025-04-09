@@ -13,6 +13,7 @@ from structman.lib.sdsc import residue as residue_package
 
 class Interaction_type(Slotted_obj):
     def addEdge(self, interaction_type: str, score: float) -> None:
+        #print(f'Call of addEdge: {interaction_type} {score} {type(self)}')
         try:
             try:
                 interaction_data = self.__getattribute__(interaction_type)
@@ -451,8 +452,14 @@ def calculateAverageProfile(profiles):
     return average_profile
 
 
-def parse_rinerator_interaction_score_file(interaction_score_file: str, struct_ligands, metals, ions,
-                                            chain_type_map, res_contig_map) -> list[tuple[str, int | str, str, int | str, str, str , float]]:
+def parse_rinerator_interaction_score_file(
+        interaction_score_file: str,
+        struct_ligands: set[tuple[str, str | int]],
+        metals: set[tuple[str, str | int]],
+        ions: set[tuple[str, str | int]],
+        chain_type_map, res_contig_map
+        ) -> tuple[list[tuple[str, int | str, str, int | str, str, str , float]], dict[str, residue_package.Residue_Map[Interaction_profile]]]:
+    
     f = gzip.open(interaction_score_file, 'rt')
     lines = f.readlines()
     f.close()
@@ -501,10 +508,10 @@ def parse_rinerator_interaction_score_file(interaction_score_file: str, struct_l
         
         if chain_a not in profiles:
             profiles[chain_a] = residue_package.Residue_Map()
-        if not profiles[chain_a].contains(res_a):
-            profiles[chain_a].add_item(res_a, Interaction_profile())
-        profile = profiles[chain_a].get_item(res_a)
-        add_interaction_to_profile(chain_a, res_a, chain_b, res_b, struct_ligands, metals, ions,
+        if not profiles[chain_a].contains(res_nr_a):
+            profiles[chain_a].add_item(res_nr_a, Interaction_profile())
+        profile = profiles[chain_a].get_item(res_nr_a)
+        add_interaction_to_profile(chain_a, res_nr_a, chain_b, res_nr_b, struct_ligands, metals, ions,
                                             chain_type_map, res_contig_map, profile,
                                             interaction_type_a, interaction_base_type, score, ligand_profiles,
                                             metal_profiles,
@@ -513,10 +520,10 @@ def parse_rinerator_interaction_score_file(interaction_score_file: str, struct_l
         
         if chain_b not in profiles:
             profiles[chain_b] = residue_package.Residue_Map()
-        if not profiles[chain_b].contains(res_b):
-            profiles[chain_b].add_item(res_b, Interaction_profile())
-        profile = profiles[chain_b].get_item(res_b)
-        add_interaction_to_profile(chain_b, res_b, chain_a, res_a, struct_ligands, metals, ions,
+        if not profiles[chain_b].contains(res_nr_b):
+            profiles[chain_b].add_item(res_nr_b, Interaction_profile())
+        profile = profiles[chain_b].get_item(res_nr_b)
+        add_interaction_to_profile(chain_b, res_nr_b, chain_a, res_nr_a, struct_ligands, metals, ions,
                                             chain_type_map, res_contig_map, profile,
                                             interaction_type_b, interaction_base_type, score,
                                             ligand_profiles,
@@ -600,9 +607,9 @@ def add_interaction_to_profile(
         res: int | str,
         chain_b: str,
         res_b: int | str,
-        ligands: set[str, int | str],
-        metals: set[str, int | str],
-        ions: set[str, int | str],
+        ligands: set[tuple[str, int | str]],
+        metals: set[tuple[str, int | str]],
+        ions: set[tuple[str, int | str]],
         chain_type_map: dict[str, str],
         res_contig_map: dict[str, residue_package.Residue_Map],
         profile: Interaction_profile,
@@ -618,16 +625,16 @@ def add_interaction_to_profile(
     if bondtype == 'combi':
         if chaintype != 'all':
             return
-        if (chain, res) in ligands:
+        if (chain_b, res_b) in ligands:
             add_to_mol_type_profile(chain, res, score, ligand_profiles)
-        elif (chain, res) in metals:
+        elif (chain_b, res_b) in metals:
             add_to_mol_type_profile(chain, res, score, metal_profiles)
-        elif (chain, res) in ions:
+        elif (chain_b, res_b) in ions:
             add_to_mol_type_profile(chain, res, score, ion_profiles)
         elif chain_b != chain:
             add_to_mol_type_profile(chain, chain_b, score, chain_chain_profiles)
-
         return
+    
     if (chain_b, res_b) in ligands:
         interaction_type = 'ligand'
         
@@ -644,6 +651,8 @@ def add_interaction_to_profile(
             return
         if not res_contig_map[chain].contains(res_b):
             return
+        if not res_contig_map[chain].contains(res):
+            return
         res_dist = abs(res_contig_map[chain].get_item(res)[0] - res_contig_map[chain].get_item(res_b)[0])
         if res_dist < 2:
             interaction_type = 'neighbor'
@@ -652,9 +661,7 @@ def add_interaction_to_profile(
         else:
             interaction_type = 'long'
 
-    error = profile.addEdge(chaintype, bondtype, interaction_type, score, chain_b, res_b)
-    if error is not None:
-        return None
+    profile.addEdge(chaintype, bondtype, interaction_type, score, chain_b, res_b)
 
 
 def calculateIAPProfiles(
@@ -779,7 +786,7 @@ def lookup(
         model_path : str | None = None,
         keep_tmp_files: bool = True
         ) -> tuple[
-            dict[str, residue_package.Residue_Map[tuple[Interaction_profile, Centrality_scores]]],
+            dict[str, residue_package.Residue_Map[Interaction_profile]],
             dict,
             dict,
             dict,
@@ -823,6 +830,7 @@ def lookup(
     if config.verbosity >= 4:
         print(f'Call of parse_rinerator_interaction_score_file: {structure_id} {interaction_score_file} {t1-t0}')
 
+    profiles: dict[str, residue_package.Residue_Map[Interaction_profile]]
     interaction_list, profiles, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles = parse_rinerator_interaction_score_file(interaction_score_file, ligands, metals, ions, chain_type_map, res_contig_map)
 
     t2 = time.time()

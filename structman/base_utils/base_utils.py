@@ -95,6 +95,39 @@ class Errorlog:
         f.write(warn_text)
         f.close()
 
+def add_to_times(times: list[float], prev_timepoint: float) -> float:
+    now = time.time()
+    times.append(now - prev_timepoint)
+    return now
+
+def aggregate_times(total_times, times):
+
+    if times is None:
+        return total_times
+    if len(total_times) == 0:
+        total_times = list(times)
+        for p, t in enumerate(total_times):
+            if isinstance(t, tuple):
+                total_times[p] = list(t)
+    else:
+        for pos, t in enumerate(times):
+            if isinstance(t, float):
+                total_times[pos] += t
+            else:
+                for sub_pos, sub_t in enumerate(times[pos]):
+                    total_times[pos][sub_pos] += sub_t
+    return total_times
+
+def print_times(times, label = 'structural analysis'):
+    if len(times) == 0:
+        print(f'empty times: {label}')
+    for part, t in enumerate(times):
+        if isinstance(t, float):
+            print(f'Accumulated {label} time part {part}: {t}')
+        else:
+            for sub_part, sub_t in enumerate(times[part]):
+                print(f'  Accumulated {label} time part {part}.{sub_part}: {sub_t}')
+
 structure_id_types = [
     'PDB',
     'Asymmetric unit PDB',

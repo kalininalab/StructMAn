@@ -995,14 +995,14 @@ def insertStructures(structurelist: dict[str, set[str]], proteins, config):
     for row in results:
         pdb_id = row[1]
         chain = row[2]
+        stored_complexes.add(pdb_id)
         if not proteins.contains_structure(pdb_id, chain):
             continue
         
         s_id = row[0]
         proteins.set_structure_db_id(pdb_id, chain, s_id)
         proteins.set_structure_stored(pdb_id, chain, True)  # all structures, mapped or not go into this dictionary, this is important for not reinserting residues from interacting structures
-        stored_complexes.add(pdb_id)
-
+        
         if pdb_id in structurelist:
             structurelist[pdb_id].remove(chain)
             if len(structurelist[pdb_id]) == 0:
@@ -1014,7 +1014,7 @@ def insertStructures(structurelist: dict[str, set[str]], proteins, config):
 
     for pdb_id in structurelist:
         for chain in structurelist[pdb_id]:
-            oligos = proteins.get_oligo(pdb_id, chain)
+            oligos = proteins.structures[pdb_id][chain].oligo
             oligos = ''.join(oligos)
             values.append((pdb_id, chain, oligos))
 
@@ -1290,17 +1290,18 @@ def getAlignments(proteins, config, get_all_alignments=False):
         t8 = time.time()
         print("Time for part 8 in getAlignments: %s" % (str(t8 - t7)))
 
+    structure_map: dict[str, dict[str, tuple[int, str]]]
     structure_map, id_structure_map = getStructure_map(structure_ids, config)
 
     if config.verbosity >= 2:
         t9 = time.time()
         print("Time for part 9 in getAlignments: %s" % (str(t9 - t8)))
 
-    pdb_ids = set()
-    for pdb_id in structure_map:
-        pdb_ids.add(pdb_id)
+    #pdb_ids = set()
+    #for pdb_id in structure_map:
+    #    pdb_ids.add(pdb_id)
 
-    complex_map = getComplexMap(config, pdb_ids=pdb_ids)
+    complex_map = getComplexMap(config, pdb_ids=proteins.complexes.keys())
 
     if config.verbosity >= 2:
         t10 = time.time()
@@ -1319,7 +1320,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
             #print('Add annotation', prot_id, pdb_id, chain)
 
             if not proteins.contains_structure(pdb_id, chain):
-                oligo = structure_map[pdb_id][ chain][1]
+                oligo: str = structure_map[pdb_id][chain][1]
                 struct = structure_package.Structure(pdb_id, chain, oligo=oligo, mapped_proteins=[prot_id], database_id=structure_id)
                 if structure_id in interacting_structures:
                     struct.interacting_structure = True
@@ -1333,6 +1334,9 @@ def getAlignments(proteins, config, get_all_alignments=False):
                                      metal_profile=metal_profile, ion_profile=ion_profile,
                                      chain_chain_profile=cc_profile, stored=True, database_id=comp_id, homomers_str=homooligomers)
                 proteins.add_complex(pdb_id, compl)
+            elif (pdb_id in complex_map) and not proteins.complexes[pdb_id].stored:
+                proteins.complexes[pdb_id].stored = True
+                proteins.complexes[pdb_id].daatabes_id = complex_map[pdb_id][0]
 
             proteins.set_structure_db_id(pdb_id, chain, structure_id)
 
@@ -1346,7 +1350,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
 
 def getStructure_map(structure_ids, config):
-    structure_map = {}
+    structure_map: dict[str, dict[str, tuple[int, str]]] = {}
     id_structure_map = {}
     if len(structure_ids) > 0:
         results = binningSelect(structure_ids, ['Structure_Id', 'PDB', 'Chain', 'Homooligomer'], 'Structure', config)
@@ -1356,7 +1360,8 @@ def getStructure_map(structure_ids, config):
 
             pdb_id = row[1]
             chain = row[2]
-            oligo = row[3]
+            oligo: str = row[3]
+            
             if pdb_id not in structure_map:
                 structure_map[pdb_id] = {}
             structure_map[pdb_id][chain] = (s_id, oligo)

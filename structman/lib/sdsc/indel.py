@@ -27,6 +27,8 @@ def aggregate_positions(position_objects, config):
     if position_objects is None:
         return mappings, None, None
     for pos_obj in position_objects:
+        if isinstance(pos_obj.mappings, bytes):
+            continue
         pos_structural_features = pos_obj.mappings.structural_features
         pos_rin_based_features = pos_obj.mappings.rin_based_features
         mappings.add_result(pos_obj.pos, pos_structural_features, pos_rin_based_features, 1.0, 1.0, 1.0)

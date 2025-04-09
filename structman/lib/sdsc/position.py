@@ -5,17 +5,19 @@ from structman.lib.output.out_utils import calculatePositionScore
 
 class Position(Slotted_obj):
     __slots__ = [
-        'pos',                      'wt_aa',    'mut_aas',
-        'pos_tags',                 'stored',   'database_id',
-        'pdb_res_nr',               'checked',  'mappings',
-        'recommended_structure',    'session_less'
+        'pos',                      'wt_aa',        'mut_aas',
+        'pos_tags',                 'stored',       'database_id',
+        'pdb_res_nr',               'checked',      'mappings',
+        'recommended_structure',    'session_less', 'microminer_features',
+        'packed_res_recommends'
         ]
 
     slot_mask = [
         True, True, True,
         True, True, True,
         True, True, False,
-        True, True
+        True, True, False,
+        False
     ]
 
     def __init__(self, pos=0, wt_aa='X', mut_aas=set(), tags = None, mut_tags_map={}, pdb_res_nr=None,
@@ -39,9 +41,10 @@ class Position(Slotted_obj):
         self.database_id = database_id
         self.stored = (database_id is not None)
         self.checked = checked  # Flag for sanity checks
-        self.mappings = sdsc.mappings.Mappings()
+        #self.mappings = sdsc.mappings.Mappings()
         self.recommended_structure = recommended_structure
         self.session_less = session_less
+        self.microminer_features = None
 
     def deconstruct(self, completely = False):
         try:

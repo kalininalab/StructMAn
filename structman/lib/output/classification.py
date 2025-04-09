@@ -308,12 +308,19 @@ def class_and_feature_table_main_loop(
                 max_seq_structure_str = None
             row = list(row)
             if row[5] is None:
-                mappings = mappings_package.Mappings()
+                mappings = mappings_package.Mappings(init_none = True)
+                microminer_features = mappings_package.Microminer_features(init_none=True)
                 if config.verbosity >= 6:
                     print(f'Position Data is None for Mutation db id {m} (Protein db id {prot_db_id})')
             else:
                 try:
-                    mappings = base_utils.unpack(row[5])
+                    packed_mappings, packed_mm_features = base_utils.unpack(row[5])
+                    mappings = base_utils.unpack(packed_mappings)
+                    microminer_features = base_utils.unpack(packed_mm_features)
+                    if microminer_features is None:
+                        microminer_features = mappings_package.Microminer_features(init_none=True)
+                    if mappings is None:
+                        mappings = mappings_package.Mappings(init_none=True)
                 except:
                     warn_count += 1
                     if warn_count <= 10:
@@ -321,8 +328,6 @@ def class_and_feature_table_main_loop(
                     continue
 
             rin_based_features = mappings.rin_based_features
-
-            microminer_features = mappings.microminer_features
 
             structural_features = mappings.structural_features
 

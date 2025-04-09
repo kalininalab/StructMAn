@@ -147,7 +147,7 @@ def process_mutations_str(config, mutation_str, tags, pos_set = None, pdb_style=
         tags = set(tags.split(','))
     tags, gene_id = extract_dedicated_tags(tags)
     multi_mutations = []
-    positions = []
+    positions: list[position_package.Position] = []
     aachanges = mutation_str.split(',')
     skipped_aachanges = 0
     if pos_set is None:
