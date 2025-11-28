@@ -1,4 +1,5 @@
 import time
+import ray
 import multiprocessing
 from filelock import FileLock
 
@@ -6,7 +7,8 @@ from structman.lib.pdbParser import parseLigandDB, getSI, updateLigandDB
 from structman.lib.database.retrieval import getStoredResidues
 from structman.lib.sdsc import structure as structure_package
 from structman.lib.sdsc import residue as residue_package
-from structman.base_utils.base_utils import pack
+from structman.lib.sdsc import interface as interface_package
+from structman.base_utils.base_utils import pack, unpack, add_to_times
 from structman.lib.database.database_core_functions import binningSelect, insert, select, update
 
 def insert_interfaces(proteins, config):
@@ -60,8 +62,9 @@ def insert_interfaces(proteins, config):
                         if pos_pos_interaction.protein_b is None or pos_pos_interaction.position_b is None:
                             config.errorlog.add_warning(f'Faulty pos_pos_interaction object: {protein_id} {pos_a} {i_prot} {i_pos} {pos_pos_interaction.protein_b=} {pos_pos_interaction.position_b=}')
                             continue
-                        pos_b_db_id = proteins.protein_map[pos_pos_interaction.protein_b].positions[pos_pos_interaction.position_b].database_id
+                        pos_b_db_id = pos_pos_interaction.position_b
                         
+
                         (chain_a, res_a, chain_b, res_b) = pos_pos_interaction.recommended_interaction
 
 
@@ -106,9 +109,11 @@ def insert_interfaces(proteins, config):
                             try:
                                 prot_prot_map[prot_a_db_id][prot_b_db_id][2][pos_pos_map[pos_a_db_id][pos_b_db_id][2]] -= 1
                             except KeyError as e:
-                                config.errorlog.add_warning(f'Unexpected KeyError: {prot_a_db_id} {prot_b_db_id}\n{e}')
+                                config.errorlog.add_warning(f'Unexpected KeyError {e}: {prot_a_db_id} {prot_b_db_id} {pos_pos_map[pos_a_db_id][pos_b_db_id]=}\n{list(prot_prot_map[prot_a_db_id][prot_b_db_id][2].keys())=}')
+                                prot_prot_map[prot_a_db_id][prot_b_db_id][2][pos_pos_map[pos_a_db_id][pos_b_db_id][2]] = 0
                             pos_pos_map[pos_a_db_id][pos_b_db_id] = (pos_pos_map[pos_a_db_id][pos_b_db_id][0], pos_pos_interaction.interaction_score, (pos_pos_interaction.recommended_complex, chain_a, chain_b))
 
+    insert('Interface', ['Protein', 'Structure_Recommendation', 'First_Position', 'Last_Position', 'Mean_Position', 'Interface_Size'], interface_values, config)
 
     for structure_id in proteins.complexes:
         for chain in proteins.complexes[structure_id].chains:
@@ -117,13 +122,11 @@ def insert_interfaces(proteins, config):
                     if len(proteins.structures[structure_id][chain].residues) > 0: #If there are residues inside the structure datastructure ...
                         break_it = False
                         for res in proteins.structures[structure_id][chain].residues.get_keys():
-                            residue = proteins.structures[structure_id][chain].residues.get_item(res)
+                            residue: list | None = proteins.structures[structure_id][chain].residues.get_item(res)
                             if residue is None:
                                 continue
-                            if isinstance(residue, tuple):
-                                break_it = True
-                                break
-                            elif residue.database_id != None: #look if the first residue has a database id ...
+                            
+                            elif residue[1] != None: #look if the first residue has a database id ...
                                 break_it = True
                                 break
                         if break_it: #If yes, don't queue it for retrieval
@@ -141,7 +144,7 @@ def insert_interfaces(proteins, config):
         if not proteins.structures[recommended_complex][chain_a].residues.contains(res_a):
             continue
 
-        if isinstance(proteins.structures[recommended_complex][chain_a].residues.get_item(res_a), tuple):
+        if isinstance(proteins.structures[recommended_complex][chain_a].residues.get_item(res_a), list):
             res_a_db_id = proteins.structures[recommended_complex][chain_a].residues.get_item(res_a)[1]
         else:
             res_a_db_id = proteins.structures[recommended_complex][chain_a].residues.get_item(res_a).database_id
@@ -152,13 +155,12 @@ def insert_interfaces(proteins, config):
         if not proteins.structures[recommended_complex][chain_b].residues.contains(res_b):
             continue
 
-        if isinstance(proteins.structures[recommended_complex][chain_b].residues.get_item(res_b), tuple):
+        if isinstance(proteins.structures[recommended_complex][chain_b].residues.get_item(res_b), list):
             res_b_db_id = proteins.structures[recommended_complex][chain_b].residues.get_item(res_b)[1]
         else:
             res_b_db_id = proteins.structures[recommended_complex][chain_b].residues.get_item(res_b).database_id
         pos_pos_values.append((pos_a_db_id, pos_b_db_id, res_a_db_id, res_b_db_id, interaction_score))
-
-    insert('Interface', ['Protein', 'Structure_Recommendation', 'First_Position', 'Last_Position', 'Mean_Position', 'Interface_Size'], interface_values, config)
+        pos_pos_values.append((pos_b_db_id, pos_a_db_id, res_b_db_id, res_a_db_id, interaction_score))
 
     results = binningSelect(prot_db_ids, ['Protein', 'Interface_Id', 'First_Position', 'Last_Position', 'Mean_Position', 'Interface_Size'], 'Interface', config)
 
@@ -198,7 +200,7 @@ def insert_interfaces(proteins, config):
             if interface_hash_b is not None:
                 interface_b_db_id = blank_interfaces[prot_b_db_id][interface_hash_b]
             elif prot_b_db_id not in blank_interfaces:
-                config.errorlog.add_warning(f'{prot_b_db_id} not in blank_interfaces')
+                config.errorlog.add_warning(f'{prot_b_db_id=} not in blank_interfaces, {len(prot_db_ids)=}')
                 continue
             elif len(blank_interfaces[prot_b_db_id]) == 1:
                 interface_b_db_id = list(blank_interfaces[prot_b_db_id].values())[0]
@@ -239,6 +241,197 @@ def insert_interfaces(proteins, config):
 
     insert('Protein_Protein_Interaction', ['Interface_A', 'Interface_B', 'Complex', 'Chain_A', 'Chain_B', 'Interaction_Score'], prot_prot_values, config)
 
+
+def remote_insert_interfaces(
+        prot_a_db_id: int,
+        interface_map: list[interface_package.Aggregated_interface],
+        structs_from_db: dict[str, dict[str, residue_package.Residue_Map[tuple[int, bytes]]]],
+        complex_db_id_map: dict[str, tuple[any, any, int]],
+        config,
+        db_lock=None) -> list[float]:
+    interface_values = []
+    prot_prot_values = [[] for _ in range(10)]
+    prot_prot_map: dict[int, dict[int, list]] = {}
+    prot_db_ids = set()
+
+    if config.verbosity >= 5:
+        print(f'In remote_insert_interfaces: {prot_a_db_id} {len(interface_map)=}')
+
+    times = []
+    ti = time.time()
+
+    prot_db_ids.add(prot_a_db_id)
+
+    if not prot_a_db_id in prot_prot_map:
+        prot_prot_map[prot_a_db_id] = {}
+
+    for aggregated_interface in interface_map:
+        
+        structure_recommendation = f'{aggregated_interface.recommended_complex},{aggregated_interface.chain},{aggregated_interface.interacting_chain}'
+        if config.verbosity >= 7:
+            print(f'In insert_interfaces: {prot_a_db_id} {structure_recommendation=} {(aggregated_interface.prot_prot_interactions)=}')
+            aggregated_interface.print_interface()
+
+        #structure_ids_for_residue_retrieval[proteins.structures[(aggregated_interface.recommended_complex, aggregated_interface.chain)].database_id] = (aggregated_interface.recommended_complex, aggregated_interface.chain)
+
+        interface_hash_tuple = aggregated_interface.get_interface_hash()
+
+        if aggregated_interface.database_id is None:
+            interface_values.append((prot_a_db_id, structure_recommendation, interface_hash_tuple))
+
+        for prot_b_db_id in aggregated_interface.prot_prot_interactions:
+            if not prot_b_db_id in prot_prot_map[prot_a_db_id]:
+                prot_prot_map[prot_a_db_id][prot_b_db_id] = [{}, 0, pack(aggregated_interface.prot_prot_interactions[prot_b_db_id])]
+
+            for pos_a_db_id in aggregated_interface.prot_prot_interactions[prot_b_db_id]:
+                if config.verbosity >= 7:
+                    print(f'Processing {prot_b_db_id=} {pos_a_db_id=} ({len(aggregated_interface.prot_prot_interactions[prot_b_db_id][pos_a_db_id])}=) in Interface {prot_a_db_id=} {interface_hash_tuple=}')
+
+                for pos_b_db_id in aggregated_interface.prot_prot_interactions[prot_b_db_id][pos_a_db_id]:
+                    pos_pos_interaction = aggregated_interface.prot_prot_interactions[prot_b_db_id][pos_a_db_id][pos_b_db_id]
+                    
+                    (chain_a, res_a, chain_b, res_b) = pos_pos_interaction.recommended_interaction
+                    
+                    prot_prot_map[prot_a_db_id][prot_b_db_id][1] += pos_pos_interaction.interaction_score
+
+                    if not (pos_pos_interaction.recommended_complex, chain_a, chain_b) in prot_prot_map[prot_a_db_id][prot_b_db_id][0]:
+                        prot_prot_map[prot_a_db_id][prot_b_db_id][0][(pos_pos_interaction.recommended_complex, chain_a, chain_b)] = 0
+
+                    prot_prot_map[prot_a_db_id][prot_b_db_id][0][(pos_pos_interaction.recommended_complex, chain_a, chain_b)] += 1
+
+                    
+    ti = add_to_times(times, ti)
+
+    insert('Interface', ['Protein', 'Structure_Recommendation', 'Hash'], interface_values, config, locked=True)
+    
+    ti = add_to_times(times, ti)
+
+    results = binningSelect(prot_db_ids, ['Protein', 'Interface_Id', 'Hash'], 'Interface', config, locked=True, db_lock=db_lock)
+
+    ti = add_to_times(times, ti)
+
+    blank_interfaces = {}
+    for row in results:
+        prot_db_id = row[0]
+        interface_db_id = row[1]
+
+        interface_hash_tuple = row[2]
+        if not prot_db_id in blank_interfaces:
+            blank_interfaces[prot_db_id] = {}
+
+        blank_interfaces[prot_db_id][interface_hash_tuple] = interface_db_id
+
+    if config.verbosity >= 6:
+        if len(prot_prot_map) < 10:
+            print(f'In insert_interfaces: contents of prot_prot_map before transformation to prot_prot_values: {prot_prot_map=}')
+        else:
+            print(f'In insert_interfaces: size of prot_prot_map before transformation to prot_prot_values:{len(prot_prot_map)=}')
+
+    ti = add_to_times(times, ti)
+
+    for prot_a_db_id in prot_prot_map:
+        for prot_b_db_id in prot_prot_map[prot_a_db_id]:
+
+            pos_pos_recommendations, ppi_score, packed_pos_pos_interactions = prot_prot_map[prot_a_db_id][prot_b_db_id]
+
+            max_count = 0
+            for recommended_complex, chain_a, chain_b in pos_pos_recommendations:
+                count = pos_pos_recommendations[(recommended_complex, chain_a, chain_b)]
+                if count > max_count:
+                    best_recommended_complex, best_chain_a, best_chain_b = recommended_complex, chain_a, chain_b
+                    max_count = count
+
+            recommended_complex, chain_a, chain_b = best_recommended_complex, best_chain_a, best_chain_b
+
+            prot_prot_values[prot_a_db_id%10].append((prot_a_db_id, prot_b_db_id, complex_db_id_map[recommended_complex][2], chain_a, chain_b, ppi_score, packed_pos_pos_interactions))
+            if prot_a_db_id != prot_b_db_id:
+                prot_prot_values[prot_b_db_id%10].append((prot_b_db_id, prot_a_db_id, complex_db_id_map[recommended_complex][2], chain_b, chain_a, ppi_score, packed_pos_pos_interactions))
+
+            
+
+    if config.verbosity >= 6:
+        if len(prot_prot_values[0]) < 1000:
+            print(f'In insert_interfaces: contents of prot_prot_values: {prot_prot_values=}')
+        else:
+            print(f'In insert_interfaces: contents of prot_prot_values: {len(prot_prot_values[0])=}')
+
+    ti = add_to_times(times, ti)
+
+    for pos, values in enumerate(prot_prot_values):
+        if len(values) > 0:
+            insert(f'Protein_Protein_Interaction_{pos}', ['Protein_A', 'Protein_B', 'Complex', 'Chain_A', 'Chain_B', 'Interaction_Score', 'Pos_Pos_Data'], values, config, locked=True, buffer_factor=30.)
+
+    ti = add_to_times(times, ti)
+
+    position_interface_values = []
+
+    if prot_a_db_id not in blank_interfaces:
+        if config.verbosity >= 5:
+            print(f'Protein ({prot_a_db_id}) omitted in position_interface insert')
+        return
+    for aggregated_interface in interface_map:
+        if aggregated_interface.database_id is not None:
+            continue
+
+        interface_db_id = blank_interfaces[prot_a_db_id][aggregated_interface.get_interface_hash()]
+
+        for position_db_id in aggregated_interface.positions:
+            structure_id, chain, res = aggregated_interface.positions[position_db_id]
+            position_interface_values.append((interface_db_id, position_db_id, f'{structure_id}:{chain} {res}'))
+
+    ti = add_to_times(times, ti)
+
+    insert('RS_Position_Interface', ['Interface', 'Position', 'Recommended_Residue'], position_interface_values, config, locked=True)
+
+    ti = add_to_times(times, ti)
+
+    return times
+
+def remote_insert_interface_residues(
+        interfaces: dict[str, dict[str, dict[str, interface_package.Interface]]],
+        structure_ids: dict[str, dict[str, int]],
+        structures_from_db: dict[str, dict[str, residue_package.Residue_Map[tuple[int, None]]]],
+        config,
+        db_lock=None):
+    residue_interface_values = []
+
+    print_count = 0
+ 
+    for structure_id in interfaces:
+        if config.verbosity >= 5:
+            print(f'In insert interface residues: {structure_id}, {len(interfaces[structure_id])=}')
+        for chain in interfaces[structure_id]:
+            for i_chain in interfaces[structure_id][chain]:
+                try:
+                    structure_db_id = structure_ids[structure_id][chain]
+                except:
+                    config.errorlog.add_warning(f'Structure missing: {structure_id} {chain=} {i_chain=}')
+                    continue
+                for res in interfaces[structure_id][chain][i_chain].residues:
+
+                    if not structures_from_db[structure_id][chain].contains(res):
+                        if config.verbosity >= 4:
+                            if print_count < 100:
+                                print(f'Residue {res} filtered from {structure_id} {chain} {i_chain} in insert_interfaces: not in structures object {print_count=}')
+                                print_count += 1
+                        continue #Happens for ligands declared as part of the chain
+                    res_db_id = structures_from_db[structure_id][chain].get_item(res)[0]
+                    if res_db_id is None: 
+                        if config.verbosity >= 4:
+                            print(f'Residue {res} filtered from {structure_id} {chain} {i_chain} in insert_interfaces: db_id is None')
+                        continue
+                    if res in interfaces[structure_id][chain][i_chain].interactions:
+                        i_res_strings = []
+                        for i_res in interfaces[structure_id][chain][i_chain].interactions[res]:
+                            score = interfaces[structure_id][chain][i_chain].interactions[res][i_res]
+                            i_res_strings.append(f'{i_chain},{i_res},{score}')
+                        i_res_string = ';'.join(i_res_strings)
+                    else:
+                        i_res_string = f'{i_chain},,'
+                    residue_interface_values.append((structure_db_id, res_db_id, pack(i_res_string)))
+
+    insert('RS_Residue_Interface', ['Structure', 'Residue', 'Interacting_Residue'], residue_interface_values, config, locked=True, db_lock=db_lock)
+
     
 def insert_interface_residues(proteins, config):
     residue_interface_values = []
@@ -246,7 +439,8 @@ def insert_interface_residues(proteins, config):
     print_count = 0
  
     for structure_id in proteins.complexes:
-        #print(structure_id, proteins.complexes[structure_id].interfaces)
+        if config.verbosity >= 5:
+            print(f'In insert interface residues: {structure_id}, {len(proteins.complexes[structure_id].interfaces)=}')
         for chain in proteins.complexes[structure_id].interfaces:
             for i_chain in proteins.complexes[structure_id].interfaces[chain]:
                 if proteins.complexes[structure_id].interfaces[chain][i_chain].stored:
@@ -261,10 +455,10 @@ def insert_interface_residues(proteins, config):
                     if not proteins.structures[structure_id][chain].residues.contains(res):
                         if config.verbosity >= 4:
                             if print_count < 100:
-                                print(f'Residue {res} filtered from {structure_id} {chain} {i_chain} in insert_interfaces: not in structures object')
+                                print(f'Residue {res} filtered from {structure_id} {chain} {i_chain} in insert_interfaces: not in structures object {print_count=}')
                                 print_count += 1
                         continue #Happens for ligands declared as part of the chain
-                    res_db_id = proteins.structures[structure_id][chain].residues.get_item(res).database_id
+                    res_db_id = proteins.structures[structure_id][chain].residues.get_item(res)[1]
                     if res_db_id is None: 
                         if config.verbosity >= 4:
                             print(f'Residue {res} filtered from {structure_id} {chain} {i_chain} in insert_interfaces: db_id is None')
@@ -282,10 +476,10 @@ def insert_interface_residues(proteins, config):
     insert('RS_Residue_Interface', ['Structure', 'Residue', 'Interacting_Residue'], residue_interface_values, config)
 
 
-def background_insert_residues(values, config):
+def background_insert_residues(values, config, locked=False, db_lock = None):
 
     columns = ['Structure', 'Number', 'Residue_Data']
-    insert('Residue', columns, values, config)
+    insert('Residue', columns, values, config, locked = locked, db_lock = db_lock)
 
 
 def insertResidues(structural_analysis, proteins, config):
@@ -333,13 +527,13 @@ def insertResidues(structural_analysis, proteins, config):
 
             for res_id in analysis_map.get_keys():
                 t_0 += time.time()
-                residue: residue_package.Residue = analysis_map.get_item(res_id)
-                if residue is None:
+                residue_data = analysis_map.get_item(res_id)
+                if residue_data is None:
                     t_2 += time.time()
                     continue
 
-                packed_res_info = pack(residue.get_res_info())
-                
+                _, _, packed_res_info = residue_data
+
                 t_1 += time.time()
 
                 values.append([s_id, res_id, packed_res_info])
@@ -350,7 +544,7 @@ def insertResidues(structural_analysis, proteins, config):
                     if n_prints < max_prints_per_prot:
                         print(f'Calling structures.add_residue in insertResidues: {pdb_id} {chain} {res_id}')
                         n_prints += 1
-                proteins.structures[pdb_id][chain].add_residue(res_id, residue)
+                proteins.structures[pdb_id][chain].add_residue(res_id, residue_data)
                 t_13 += time.time()
 
     if config.verbosity >= 2:
@@ -371,7 +565,8 @@ def remote_insertResidues(
         structural_analysis_list: list[tuple[str, dict[str, residue_package.Residue_Map]]],
         structure_ids: dict[str: dict[str, int]],
         config,
-        locked: bool = True) -> None:
+        locked: bool = True,
+        db_lock = None) -> None:
 
     if config.verbosity >= 4:
         t0 = time.time()
@@ -405,13 +600,13 @@ def remote_insertResidues(
 
             for res_id in analysis_map.get_keys():
                 t_0 += time.time()
-                residue: residue_package.Residue = analysis_map.get_item(res_id)
-                if residue is None:
+                residue_data = analysis_map.get_item(res_id)
+                if residue_data is None:
                     t_2 += time.time()
                     continue
 
-                packed_res_info = pack(residue.get_res_info())
-                
+                _, _, packed_res_info = residue_data
+
                 t_1 += time.time()
 
                 values.append([s_id, res_id, packed_res_info])
@@ -428,8 +623,7 @@ def remote_insertResidues(
         process.start()
         return process
     else:
-        with FileLock('insert_residues_lock.lock'):
-            background_insert_residues(values, config)
+        background_insert_residues(values, config, locked=True, db_lock=db_lock)
     return None
 
 def insertClassifications(proteins, config):
@@ -451,6 +645,19 @@ def insertClassifications(proteins, config):
     if config.verbosity >= 2:
         t3 = time.time()
         print('insertClassifications part 2: %s' % (t3 - t2))
+
+def remote_insert_classifications(values, config, db_lock = None):
+    if config.verbosity >= 2:
+        t1 = time.time()
+
+    table = 'Position'
+    columns = ['Position_Id', 'Recommended_Structure_Data', 'Position_Data']
+
+    update(config, table, columns, values, locked=True, db_lock=db_lock)
+
+    if config.verbosity >= 2:
+        t2 = time.time()
+        print('insertClassifications part 1: %s' % (t2 - t1), 'Update Classifications of', len(values), 'positions')
 
 
 def createClassValues(proteins):

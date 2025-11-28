@@ -35,7 +35,12 @@ class Config:
         except configparser.MissingSectionHeaderError:
             with open(config_path, 'r') as f:
                 self.config_parser_obj.read_string(f'[user]\n{f.read()}')
-        cfg = self.config_parser_obj['user']
+        try:
+            cfg = self.config_parser_obj['user']
+        except KeyError:
+            print(f'Got KeyError in config_parser: {config_path=}')
+            return None
+
 
         # fix typo `adress` -> `address`, but want old configs to still work, so also check for unfixed name
         old_address_name = cfg.get('db_adress', fallback='-')
@@ -47,9 +52,10 @@ class Config:
         self.mapping_db = cfg.get('mapping_db', fallback=None)
 
         #gets custom_db_path
-        self.custom_db_path = cfg.get('custom_db_path', fallback='')
-        self.custom_db_fasta_path = self.custom_db_path + "_custom_db.fasta"
-        self.mmseqs2_custom_db_path = f'{self.custom_db_path }/custom_db_search_db_mmseqs2'
+        self.custom_db_path = cfg.get('custom_db_path', fallback=None)
+        if self.custom_db_path is not None:
+            self.custom_db_fasta_path = self.custom_db_path + "_custom_db.fasta"
+            self.mmseqs2_custom_db_path = f'{self.custom_db_path }/custom_db_search_db_mmseqs2'
 
         if local_db is None:
             self.local_db_path = cfg.get('local_db_path', fallback = None)
@@ -259,6 +265,7 @@ class Config:
         self.errorlog = Errorlog(path=self.errorlog_path, warn_path=self.warnlog_path, print_all_errors=print_all_errors, print_all_warns=print_all_warns)
 
         sqlite_max_package_size = 800000000
+        self.max_connections = 40
         if not configure_mode:
             # Determine maximal package size from database
             try:
@@ -268,12 +275,14 @@ class Config:
                 db = None
                 self.main_db_is_set = False
                 self.max_package_size = None
-
+                
             if db is not None and not basic_util_mode:
                 if self.db_address != '-':
                     try:
                         cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_allowed_packet'")
                         self.max_package_size = int(cursor.fetchone()[1]) * 100 // 99
+                        cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_connections'")
+                        self.max_connections = int(cursor.fetchone()[1])
                         db.close()
                         db, cursor = self.getDB()
                         self.main_db_is_set = True
@@ -305,6 +314,8 @@ class Config:
             elif db is not None and basic_util_mode:
                 cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_allowed_packet'")
                 self.max_package_size = int(cursor.fetchone()[1]) * 100 // 99
+                cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_connections'")
+                self.max_connections = int(cursor.fetchone()[1])
                 db.close()
             elif self.db_address == '-':
                 self.main_db_is_set = True

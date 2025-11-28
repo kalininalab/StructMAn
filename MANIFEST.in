@@ -12,3 +12,5 @@ include structman/resources/pdbba.fasta.gz
 include structman/resources/human_info_map.tab
 include structman/resources/smssp
 include changelog.txt
+include build_smssp/build.sh
+include build_smssp/meson.build

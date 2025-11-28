@@ -12,6 +12,7 @@ from structman import settings
 from structman.lib import rin
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import mappings as mappings_package
+from structman.lib.sdsc.interface import Position_Position_Interaction
 from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.database import database
 from structman.lib.database.database_core_functions import select, binningSelect
@@ -160,7 +161,7 @@ def create_structguy_project_file(config, outfolder, session_id, structguy_proje
     lines.append(f'mmseqs_tmp_folder = {config.tmp_folder}\n')
     lines.append(f'mmseqs_path = {config.mmseqs2_path}\n')
     lines.append(f'pdb_path = {config.pdb_path}\n')
-
+    lines.append(f'msa_folder_path = {config.outpath}/msas\n')
 
     lines.append(f'msa_db = {msa_db_path}\n')
     if most_common_snv_value_tag is not None:
@@ -267,7 +268,7 @@ def class_and_feature_table_main_loop(
     feature_header_written = False
     classification_header_written = False
 
-    position_dict = {}
+    position_dict: dict[int, tuple[int, str, int]] = {}
 
     while((main_loop_counter)*max_rows_at_a_time <= len(all_results)):
         if config.verbosity >= 2:
@@ -319,6 +320,8 @@ def class_and_feature_table_main_loop(
                     microminer_features = base_utils.unpack(packed_mm_features)
                     if microminer_features is None:
                         microminer_features = mappings_package.Microminer_features(init_none=True)
+                        if config.verbosity >= 6:
+                            print(f'Microminer features are None for {m=} {prot_db_id=}')
                     if mappings is None:
                         mappings = mappings_package.Mappings(init_none=True)
                 except:
@@ -349,7 +352,9 @@ def class_and_feature_table_main_loop(
             else:
                 stat_dict[m] = (integrated_features.structural_classification, float(max_seq_seq_id), recommended_structure)
 
-            (prot_id, u_ac, refseq, u_id, _,_, input_id, _, _) = protein_dict[prot_db_id]
+            (prot_id, u_ac, refseq, u_id, _,_, input_id, prot_specific_tags, _, _) = protein_dict[prot_db_id]
+
+            function_type = out_utils.get_function_type_from_tags(prot_specific_tags)
 
             if input_id is None:
                 input_id = prot_id
@@ -425,6 +430,8 @@ def class_and_feature_table_main_loop(
                 feature_output.add_value('Mut Amino Acid', new_aa)
                 feature_output.add_value('AA change', f'{wt_aa}{new_aa}')
                 feature_output.add_value('Tags', tags)
+
+                feature_output.add_value('Function Type', function_type)
 
                 integrated_features.add_to_output_object(feature_output)
                 structural_features.add_to_output_object(feature_output)
@@ -574,6 +581,9 @@ def classificationOutput(
     if config.verbosity >= 3:
         print(f'Size of tag_map: {len(tag_map)}')
 
+    table = 'RS_Protein_Session'
+    cols = ['Protein', 'Tags']
+
     mutation_dict: dict[int, tuple[int | None, int, str | None, str]] = database.getMutationDict(list(tag_map.keys()), config)
 
     if config.verbosity >= 2:
@@ -608,7 +618,7 @@ def classificationOutput(
                         snv_value_tag, value_str = snv_tag[1:].split('=')
                     except:
                         print(f'Splitting of SNV value Tag failed for SNV: {row[0]}, value tag: {snv_tag}')
-                if not snv_value_tag in snv_value_tags_count:
+                if snv_value_tag not in snv_value_tags_count:
                     snv_value_tags_count[snv_value_tag] = 1
                 else:
                     snv_value_tags_count[snv_value_tag] += 1
@@ -644,17 +654,17 @@ def classificationOutput(
     if config.verbosity >= 7:
         print(f'SNV map in classificationOutput:\n{snv_map}')
 
-    prot_id_list = set()
+    prot_id_set: set[int] = set()
     input_res_id_dict = {}
     for m in mutation_dict:
-        prot_id_list.add(mutation_dict[m][1])
+        prot_id_set.add(mutation_dict[m][1])
         input_res_id_dict[m] = mutation_dict[m][2]
 
     if config.verbosity >= 2:
         t22 = time.time()
         print("Time for classificationOutput part 2.2: ", t22 - t21)
 
-    protein_dict, gene_db_ids = database.getProteinDict(prot_id_list, session_id, config, includeSequence = True)
+    protein_dict, gene_db_ids = database.getProteinDict(prot_id_set, session_id, config, includeSequence = True)
 
     if config.verbosity >= 2:
         t23 = time.time()
@@ -670,46 +680,84 @@ def classificationOutput(
         table = 'Interface'
         columns = ['Protein', 'Interface_Id', 'Structure_Recommendation']
 
-        results = binningSelect(prot_id_list, columns, table, config)
+        results = binningSelect(prot_id_set, columns, table, config)
 
         interface_dict = {}
         for row in results:
             interface_dict[row[1]] = (row[0], row[2])
 
+
+        #table = 'Position_Position_Interaction'
+        #columns = ['Position_A', 'Position_B', 'Residue_A', 'Residue_B', 'Interaction_Score']
+
+        #results = binningSelect(list(tag_map.keys()), columns, table, config)
+
+        #pos_pos_map, residue_ids, session_less_position_ids = process_pos_pos_table_entries(results, set(tag_map.keys()))
+
+        table = 'RS_Position_Interface'
+        columns = ['Position', 'Interface', 'Recommended_Residue']
+
+        results = binningSelect(list(tag_map.keys()), columns, table, config)
+
+
+        interacting_interfaces = set()
+        position_interface_map = {}
+        for row in results:
+            position_interface_map[row[0]] = (row[1], row[2])
+            interacting_interfaces.add(row[1])
+
         if config.verbosity >= 2:
             t251 = time.time()
             print("Time for classificationOutput part 2.5.1: ", t251 - t24)
 
-        table = 'Protein_Protein_Interaction'
-        columns = ['Interface_A', 'Interface_B', 'Complex', 'Chain_A', 'Chain_B', 'Interaction_Score']
-
-        results = binningSelect(list(interface_dict.keys()), columns, table, config)
+        
 
         prot_prot_file = out_utils.generate_ppi_filename(outfolder, session_name)
+        network_file = f'{outfolder}/{session_name}_ppi.sif'
+        sif_lines = []
 
         if os.path.isfile(prot_prot_file):
             os.remove(prot_prot_file)
         prot_prot_output, prot_prot_f = init_protein_protein_table(prot_prot_file)
 
-        ppi_map = {}
-        complex_ids = set()
-        interacting_interfaces = set()
-        for row in results:
-            if row[0] not in ppi_map:
-                ppi_map[row[0]] = [row[1:]]
-                interacting_interfaces.add(row[1])
-            elif len(ppi_map[row[0]]) < 5:
-                ppi_map[row[0]].append(row[1:])
-                interacting_interfaces.add(row[1])
-            elif row[5] > ppi_map[row[0]][0][4]:
-                ppi_map[row[0]] = [row[1:]]
-                interacting_interfaces.add(row[1])
-            complex_ids.add(row[2])
+        ppi_map: dict[int, list[tuple[int, int, str, str, float]]] = {}
+        complex_ids: set[int] = set()
+        expanded_protein_ids: set[int] = set()
+        pos_pos_map: dict[int, dict[int, Position_Position_Interaction]] = {}
+        session_less_position_ids: set[int] = set()
+
+        for i in range(10):
+            table = f'Protein_Protein_Interaction_{i}'
+            columns = ['Protein_A', 'Protein_B', 'Complex', 'Chain_A', 'Chain_B', 'Interaction_Score', 'Pos_Pos_Data']
+
+            results = binningSelect(prot_id_set, columns, table, config)
+
+            for row in results:
+                if row[0] not in ppi_map:
+                    ppi_map[row[0]] = [row[1:6]]
+                    #interacting_interfaces.add(row[1])
+                elif len(ppi_map[row[0]]) < 5:
+                    ppi_map[row[0]].append(row[1:6])
+                    #interacting_interfaces.add(row[1])
+                elif row[5] > ppi_map[row[0]][0][4]:
+                    ppi_map[row[0]] = [row[1:6]]
+                    #interacting_interfaces.add(row[1])
+                complex_ids.add(row[2])
+                if row[1] not in prot_id_set:
+                    expanded_protein_ids.add(row[1])
+
+                packed_pos_pos_data = row[6]
+                pos_pos_dict = base_utils.unpack(packed_pos_pos_data)
+                for pos_a_db_id in pos_pos_dict:
+                    if pos_a_db_id not in tag_map:
+                        session_less_position_ids.add(pos_a_db_id)
+                    if pos_a_db_id not in pos_pos_map:
+                        pos_pos_map[pos_a_db_id] = {}
+                    for pos_b_db_id in pos_pos_dict[pos_a_db_id]:
+                        if pos_b_db_id not in tag_map:
+                            session_less_position_ids.add(pos_b_db_id)
+                        pos_pos_map[pos_a_db_id][pos_b_db_id] = pos_pos_dict[pos_a_db_id][pos_b_db_id]
             
-
-        for int_a in ppi_map:
-            interacting_interfaces.add(ppi_map[int_a][0][0])
-
         if config.verbosity >= 2:
             t252 = time.time()
             print("Time for classificationOutput part 2.5.2: ", t252 - t251)
@@ -720,14 +768,10 @@ def classificationOutput(
 
             results = binningSelect(interacting_interfaces, columns, table, config)
 
-            expanded_protein_ids = set()
-
             for row in results:
                 if row[0] not in interacting_interfaces:
                     continue
                 interface_dict[row[0]] = (row[1], row[2])
-                expanded_protein_ids.add(row[1])
-
 
             if config.verbosity >= 2:
                 t253 = time.time()
@@ -777,40 +821,28 @@ def classificationOutput(
             t255 = time.time()
             print("Time for classificationOutput part 2.5.5: ", t255 - t254)
 
-        table = 'RS_Position_Interface'
-        columns = ['Interface', 'Position', 'Recommended_Residue']
-
-        results = binningSelect(list(interface_dict.keys()), columns, table, config)
-
-        position_interface_map = {}
-        for row in results:
-            position_interface_map[row[1]] = (row[0], row[2])
+        
 
         if config.verbosity >= 2:
             t256 = time.time()
             print("Time for classificationOutput part 2.5.6: ", t256 - t255)
 
-        table = 'Position_Position_Interaction'
-        columns = ['Position_A', 'Position_B', 'Residue_A', 'Residue_B', 'Interaction_Score']
-
-        results = binningSelect(list(tag_map.keys()), columns, table, config)
-
-        pos_pos_map, residue_ids, session_less_position_ids = process_pos_pos_table_entries(results, set(tag_map.keys()))
+       
 
         if config.verbosity >= 2:
             t257 = time.time()
             print(f'Time for classificationOutput part 2.5.7: {t257 - t256}, {len(pos_pos_map)}')
 
-        table = 'Residue'
-        columns = ['Residue_Id', 'Number', 'Structure']
+        #table = 'Residue'
+        #columns = ['Residue_Id', 'Number', 'Structure']
 
-        results = binningSelect(list(residue_ids), columns, table, config)
+        #results = binningSelect(list(residue_ids), columns, table, config)
 
-        res_nr_map = {}
-        structure_ids = set()
-        for row in results:
-            res_nr_map[row[0]] = (row[1], row[2])
-            structure_ids.add(row[2])
+        #res_nr_map = {}
+        #structure_ids = set()
+        #for row in results:
+        #    res_nr_map[row[0]] = (row[1], row[2])
+        #    structure_ids.add(row[2])
 
         if config.verbosity >= 2:
             t258 = time.time()
@@ -826,14 +858,14 @@ def classificationOutput(
         for row in results:
             pos_info_map[row[0]] = row[2], row[1]
 
-        table = 'Structure'
-        columns = ['Structure_Id', 'PDB', 'Chain']
+        #table = 'Structure'
+        #columns = ['Structure_Id', 'PDB', 'Chain']
 
-        results = binningSelect(structure_ids, columns, table, config)
+        #results = binningSelect(structure_ids, columns, table, config)
 
-        structure_info_dict = {}
-        for row in results:
-            structure_info_dict[row[0]] = (row[1], row[2])
+        #structure_info_dict = {}
+        #for row in results:
+        #    structure_info_dict[row[0]] = (row[1], row[2])
 
         if config.verbosity >= 2:
             t259 = time.time()
@@ -938,8 +970,10 @@ def classificationOutput(
         print("Time for classificationOutput part 4.1: ", t5 - t4)
 
 
+    position_dict: dict[int, tuple[int, str, int]]
     pos_info_map, snv_tag_map, interface_numbers, position_dict, stat_dict = class_and_feature_table_main_loop(
-        all_results, snv_map, mutation_dict, protein_dict, tag_map, pos_info_map, position_interface_map, interface_dict, snv_tag_map,
+        all_results, snv_map, mutation_dict, protein_dict, tag_map,
+        pos_info_map, position_interface_map, interface_dict, snv_tag_map,
         config,
         classification_output, f,
         interface_output, interface_f,
@@ -947,13 +981,12 @@ def classificationOutput(
         max_rows_at_a_time = max_rows_at_a_time)
 
     if config.compute_ppi:
-        for interface_a_db_id in ppi_map:
+        for prot_a_db_id in ppi_map:
 
-            prot_a_db_id, structure_rec_prot_a = interface_dict[interface_a_db_id]
             try:
-                (prot_a_id, u_ac_a, refseq_a, u_id_a, error_code_a, error_a, input_id_a, gene_db_id_a, seq_a) = protein_dict[prot_a_db_id]
-            except:
-                (prot_a_id, u_ac_a, refseq_a, u_id_a, error_code_a, error_a, input_id_a, gene_db_id_a, seq_a) = expanded_protein_dict[prot_a_db_id]
+                (prot_a_id, u_ac_a, _, _, _, _, input_id_a, _, gene_db_id_a, _) = protein_dict[prot_a_db_id]
+            except KeyError:
+                (prot_a_id, u_ac_a, _, _, _, _, input_id_a, _, gene_db_id_a, _) = expanded_protein_dict[prot_a_db_id]
 
             if input_id_a is None:
                 input_id_a = prot_a_id
@@ -963,36 +996,17 @@ def classificationOutput(
             else:
                 gene_name_a = None
 
-            for interface_b_db_id, complex_db_id, chain_a, chain_b, ppi_interaction_score in ppi_map[interface_a_db_id]:
-
-                try:
-                    prot_b_db_id, structure_rec_prot_b = interface_dict[interface_b_db_id]
-                    if not prot_b_db_id in interface_numbers:
-                        interface_numbers[prot_b_db_id] = {}
-                    if not interface_b_db_id in interface_numbers[prot_b_db_id]:
-                        interface_numbers[prot_b_db_id][interface_b_db_id] = len(interface_numbers[prot_b_db_id]) + 1
-                    interface_b_number = interface_numbers[prot_b_db_id][interface_b_db_id]
-                except KeyError:
-                    if config.verbosity >= 6:
-                        [e, f, g] = sys.exc_info()
-                        g = traceback.format_exc()
-                        print(f'PPI skipped: {prot_a_id} {interface_a_db_id=} {interface_b_db_id=}\n{e}\n{f}\n{g}')
-                    continue
+            for prot_b_db_id, complex_db_id, chain_a, chain_b, ppi_interaction_score in ppi_map[prot_a_db_id]:
 
                 prot_prot_output.add_value('Gene A', gene_name_a)
                 prot_prot_output.add_value('Input Protein ID A', input_id_a)
                 prot_prot_output.add_value('Primary Protein ID A', prot_a_id)
                 prot_prot_output.add_value('Uniprot-Ac A', u_ac_a)
 
-                if not prot_a_db_id in interface_numbers:
-                    interface_numbers[prot_a_db_id] = {}
-                if not interface_a_db_id in interface_numbers[prot_a_db_id]:
-                    interface_numbers[prot_a_db_id][interface_a_db_id] = len(interface_numbers[prot_a_db_id]) + 1
-
-                interface_a_number = interface_numbers[prot_a_db_id][interface_a_db_id]
-                prot_prot_output.add_value('Interface Number A', interface_a_number)
-
-                (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, _) = expanded_protein_dict[prot_b_db_id]
+                try:
+                    (prot_b_id, u_ac_b, _, _, _, _, input_id_b, _, gene_db_id_b, _) = protein_dict[prot_b_db_id]
+                except KeyError:
+                    (prot_b_id, u_ac_b, _, _, _, _, input_id_b, _, gene_db_id_b, _) = expanded_protein_dict[prot_b_db_id]
 
                 if input_id_b is None:
                     input_id_b = prot_b_id
@@ -1006,14 +1020,6 @@ def classificationOutput(
                 prot_prot_output.add_value('Primary Protein ID B', prot_b_id)
                 prot_prot_output.add_value('Uniprot-Ac B', u_ac_b)
 
-                if not prot_b_db_id in interface_numbers:
-                    interface_numbers[prot_b_db_id] = {}
-                if not interface_b_db_id in interface_numbers[prot_b_db_id]:
-                    interface_numbers[prot_b_db_id][interface_b_db_id] = len(interface_numbers[prot_b_db_id]) + 1
-
-                interface_b_number = interface_numbers[prot_b_db_id][interface_b_db_id]
-                prot_prot_output.add_value('Interface Number B', interface_b_number)
-
                 rec_struct_id = complex_id_map[complex_db_id]
 
                 prot_prot_output.add_value('Structure Recommendation', f'{rec_struct_id}:{chain_a}:{chain_b}')
@@ -1021,48 +1027,38 @@ def classificationOutput(
 
                 prot_prot_f.write(prot_prot_output.pop_line())
 
+                sif_lines.append(f'{input_id_a} pp {input_id_b}\n')
+
+        f = open(network_file, 'w')
+        f.write(''.join(sif_lines))
+        f.close()
+
         prot_prot_f.close()
 
         for pos_a_db_id in pos_pos_map:
+            if pos_a_db_id not in position_dict:
+                continue
+            prot_a_db_id = position_dict[pos_a_db_id][2]
+
+            if pos_a_db_id not in position_interface_map:
+                print('This shouldnt actually happen, investigate deeper ...')
+                continue
+
+            (prot_a_id, u_ac_a, _, _, _, _, input_id_a, _, gene_db_id_a, _) = protein_dict[prot_a_db_id]
+
             for pos_b_db_id in pos_pos_map[pos_a_db_id]:
-                res_a_db_id, res_b_db_id, pos_pos_interaction_score = pos_pos_map[pos_a_db_id][pos_b_db_id]
-                if pos_a_db_id not in position_interface_map:
-                    #This shouldnt actually happen, investigate deeper ...
-                    continue
+                if pos_b_db_id in position_dict:
+                    prot_b_db_id = position_dict[pos_b_db_id][2]
+                    _, complex_db_id, chain_a, chain_b, ppi_interaction_score = ppi_map[prot_a_db_id][0]
 
-                interface_db_id, recommended_interface_residue = position_interface_map[pos_a_db_id]
-
-                if not pos_b_db_id in position_interface_map:
-                    continue
-
+                pos_pos_i_obj: Position_Position_Interaction = pos_pos_map[pos_a_db_id][pos_b_db_id]
+                
+                rec_struct_id = complex_id_map[complex_db_id]
+                
                 try:
-                    interface_b_db_id, complex_db_id, chain_a, chain_b, ppi_interaction_score = ppi_map[interface_db_id][0]
-                    rec_struct_id = complex_id_map[complex_db_id]
+                    (prot_b_id, u_ac_b, _, _, _, _, input_id_b, _, gene_db_id_b, _) = expanded_protein_dict[prot_b_db_id]
                 except:
-
-                    if not pos_b_db_id in position_interface_map:
-                        continue
-                    interface_b_db_id, recommended_interface_residue_b = position_interface_map[pos_b_db_id]
-                    rec_struct_id, chain_a = recommended_interface_residue.split()[0].split(':')
-                    chain_b = recommended_interface_residue_b.split()[0].split(':')[1]
-
-                prot_a_db_id, structure_rec_prot_a = interface_dict[interface_db_id]
-                try:
-                    prot_b_db_id, structure_rec_prot_b = interface_dict[interface_b_db_id]
-                    if not prot_db_id in interface_numbers:
-                        interface_numbers[prot_b_db_id] = {}
-                    if not interface_b_db_id in interface_numbers[prot_b_db_id]:
-                        interface_numbers[prot_b_db_id][interface_b_db_id] = len(interface_numbers[prot_b_db_id]) + 1
-                    interface_b_number = interface_numbers[prot_b_db_id][interface_b_db_id]
-                except:
-                    continue
-
-                (prot_a_id, u_ac_a, refseq_a, u_id_a, error_code_a, error_a, input_id_a, gene_db_id_a, seq_a) = protein_dict[prot_a_db_id]
-
-                try:
-                    (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, _) = expanded_protein_dict[prot_b_db_id]
-                except:
-                    (prot_b_id, u_ac_b, refseq_b, u_id_b, error_code_b, error_b, input_id_b, gene_db_id_b, _) = protein_dict[prot_a_db_id]
+                    (prot_b_id, u_ac_b, _, _, _, _, input_id_b, _, gene_db_id_b, _) = protein_dict[prot_a_db_id]
 
                 if input_id_a is None:
                     input_id_a = prot_a_id
@@ -1075,15 +1071,6 @@ def classificationOutput(
                 pos_pos_output.add_value('WT Amino Acid A', wt_aa_a)
                 pos_pos_output.add_value('Position A', position_number_a)
 
-                if not prot_a_db_id in interface_numbers:
-                    interface_numbers[prot_a_db_id] = {}
-                if not interface_db_id in interface_numbers[prot_a_db_id]:
-                    interface_numbers[prot_a_db_id][interface_db_id] = len(interface_numbers[prot_a_db_id]) + 1
-                interface_a_number = interface_numbers[prot_a_db_id][interface_db_id]
-
-                pos_pos_output.add_value('Interface Number A', interface_a_number)
-
-                
                 if input_id_b is None:
                     input_id_b = prot_b_id
 
@@ -1095,12 +1082,13 @@ def classificationOutput(
                 pos_pos_output.add_value('WT Amino Acid B', wt_aa_b)
                 pos_pos_output.add_value('Position B', position_number_b)
 
-                pos_pos_output.add_value('Interface Number B', interface_b_number)
-
-                res_nr_a, struct_a_db_id = res_nr_map[res_a_db_id]
-                res_nr_b, struct_b_db_id = res_nr_map[res_b_db_id]
-                rec_pdb_id, chain_a = structure_info_dict[struct_a_db_id]
-                rec_pdb_id, chain_b = structure_info_dict[struct_b_db_id]
+                #res_nr_a, struct_a_db_id = res_nr_map[res_a_db_id]
+                #res_nr_b, struct_b_db_id = res_nr_map[res_b_db_id]
+                #rec_pdb_id, chain_a = structure_info_dict[struct_a_db_id]
+                #rec_pdb_id, chain_b = structure_info_dict[struct_b_db_id]
+                rec_pdb_id = pos_pos_i_obj.recommended_complex
+                (chain_a, res_nr_a, chain_b, res_nr_b) = pos_pos_i_obj.recommended_interaction
+                pos_pos_interaction_score = pos_pos_i_obj.interaction_score
 
                 pos_pos_output.add_value('Structure Recommendation', f'{rec_pdb_id}:{chain_a}-{res_nr_a}:{chain_b}-{res_nr_b}')
                 pos_pos_output.add_value('Interaction Score', pos_pos_interaction_score)

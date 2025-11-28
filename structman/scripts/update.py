@@ -119,6 +119,15 @@ def main(
             create_mmseqs_index(model_db_fasta_name, search_db_base_path, mmseqs2_tmp)
 
             print("Model search database for MMseqs2 created!")
+    elif update_alphafold_db:
+        model_db_fasta_name = 'model_db_mmseqs2'
+        config.model_db_fasta_path = f'{search_db_base_path}/{model_db_fasta_name}'
+        createPdbBaDb.update_model_db(config, update_source = update_source, init_ray = True)
+        if config.model_db_fasta_created:
+
+            create_mmseqs_index(model_db_fasta_name, search_db_base_path, mmseqs2_tmp)
+
+            print("Model search database for MMseqs2 created!")
 
     elif check_search_db:
         if os.path.exists(mmseqs2_db_path):

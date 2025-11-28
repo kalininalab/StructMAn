@@ -678,6 +678,9 @@ def IdMapping(
 
 
 def getUniprotIds(config, query_ids, querytype, target_type = "UniProtKB", target_sub_type = 'uniProtkbId', timeout = 60):
+    #Uniport Rest API got remodelled, this function needs to be rewritten
+    return {}
+
     if query_ids is None:
         config.errorlog.add_error(f'Query_ids is None, {querytype} {target_type}')
         return {}
@@ -1201,7 +1204,7 @@ def get_all_isoforms(u_ac_stems, config):
 
 
 def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_errors=True, skip_missing_routine=False):
-    gene_sequence_map = {}
+    gene_sequence_map: dict[str, str] = {}
     filtered_set = set()
 
     missing_set = set()

@@ -1,15 +1,235 @@
 import sys
 import re
+import os
+import shutil
 import traceback
+import subprocess
+import random
+import string
+import wget
+import requests
 
 from bisect import bisect_left
 from more_itertools import consecutive_groups
 
+from filelock import FileLock
 from structman.lib.sdsc.consts import codons, residues
 from structman.lib.sdsc import indel as indel_package
 from structman.lib.sdsc import mutations as mutation_package
 from structman.lib.sdsc import position as position_package
+from structman.lib.sdsc.sdsc_utils import is_connected
 from structman.lib.globalAlignment import call_biopython_alignment
+from structman.base_utils.base_utils import get_af_model_folder
+
+def fetch_af_msa(config, model_id, folder_path, current_afdb_version = 'v6'):
+    full_id = None
+    for fn in os.listdir(folder_path):
+        if fn.count(model_id) == 1 and fn.count('-model') > 0:
+            full_id = fn.split('-model')[0]
+            break
+
+    if full_id is None:
+        config.errorlog.add_warning(f'Did not find file {model_id} in alphafold model db: {config.path_to_model_db}')
+        return None
+
+    af_msa_filename = f'{full_id}-msa_{current_afdb_version}.a3m'
+
+    if config.verbosity >= 3:
+        print(f'Fetching MSA for {model_id} from AFDB')
+
+ 
+    url = f'https://alphafold.ebi.ac.uk/files/msa/{af_msa_filename}'
+    connected, error = is_connected(url)
+    if not connected:
+        config.errorlog.add_warning(f'Did not find file {model_id} in online alphafold model db: {url} {error=}')
+        return None
+    r = requests.head(url)
+    if r.status_code < 300:
+        wget.download(url, out=folder_path)
+    else:
+        config.errorlog.add_warning(f'Invalid http code {r.status_code} trying to fetch {model_id} msa in online alphafold model db: {url}')
+        return None
+
+    os.rename(f'{folder_path}/{af_msa_filename}', f'{folder_path}/{model_id}_msa.fasta')
+
+
+def truncate_af_msa(infile, outfile, overwrite_query_label = None):
+    print(f'Call of truncate_af_msa: {infile=} {outfile=} {overwrite_query_label=}')
+
+    f = open(infile, 'r')
+    lines = f.readlines()
+    f.close()
+
+    if overwrite_query_label is not None:
+        outlines = [f'>{overwrite_query_label}\n', lines[1]]
+    else:
+        outlines = lines[:2]
+
+    query_seq = lines[1][:-1]
+
+    seq_len = len(query_seq)
+
+    current_seq = ''
+
+    for line in lines[2:]:
+        if line[0] == '>':
+            if len(current_seq) > 0:
+                outlines.append(f'{current_seq[:seq_len]}\n')
+                current_seq = ''
+            outlines.append(line)
+            continue
+
+        current_seq += line[:-1]
+    if len(current_seq) > 0:
+        outlines.append(f'{current_seq[:seq_len]}\n')
+
+    f = open(outfile, 'w')
+    f.write(''.join(outlines))
+    f.close()
+
+def use_mafft_add(msa_file, outfile, work_folder, prot_id, seq, num_of_threads):
+    print(f'Call of use_mafft_add: {msa_file=} {outfile=} {work_folder=} {prot_id=} {len(seq)=} {num_of_threads=}')
+    random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+    add_file = f'{work_folder}/{prot_id}_{random_string}.fasta'
+
+    f = open(add_file, 'w')
+    f.write(f'>{prot_id}\n{seq}\n')
+    f.close()
+
+    cmds = ' '.join([
+        'mafft',
+        '--add',
+        f'"{add_file}"',
+        '--thread',
+        str(num_of_threads),
+        '--reorder',
+        f'"{msa_file}"'
+        ])
+    
+    print(f'{os.stat(msa_file)=} {os.path.isfile(msa_file)=} {add_file=} {os.path.isfile(add_file)=}')
+
+    with open(outfile, 'w') as target:
+        p = subprocess.Popen(cmds, shell=True, stdout=target)
+        p.wait()
+
+    #os.remove(add_file)
+
+    f = open(outfile, 'r')
+    lines = f.readlines()
+    f.close()
+
+    head_lines = []
+    outlines = []
+
+    for line in lines:
+        if len(line) == 0:
+            continue
+        if line[0] == '>':
+            words = line[1:-1].split()
+            entry_id = words[0]
+            
+            if entry_id == prot_id:
+                head_lines.append(line)
+            else:
+                outlines.append(line)
+            
+        else:
+            if entry_id == prot_id:
+                head_lines.append(line)
+            else:
+                outlines.append(line)
+
+    total_lines = head_lines + outlines
+
+    f = open(outfile, 'w')
+    f.write(''.join(total_lines))
+    f.close()
+
+def clean_prot_id(prot_id):
+    cleaned_id = prot_id.replace('(','').replace(')','').replace('/','_')
+    if cleaned_id[0] == '_':
+        cleaned_id = cleaned_id[1:]
+    return cleaned_id
+
+def check_msa_file(infile, seq):
+    fsize = os.path.getsize(infile)
+    if fsize < 10:
+        return False
+    f = open(infile, 'r')
+    lines = f.readlines()
+    f.close()
+
+    first_seq = ''
+    for line in lines:
+        if line[0] == '>':
+            if len(first_seq) == 0:
+                continue
+            else:
+                break
+        else:
+            first_seq += line[:-1]
+
+    if seq == first_seq:
+        return True
+    
+    l_ind = first_seq.find(seq)
+
+    if l_ind == -1:
+        return None
+    
+    r_ind = l_ind + len(seq)
+
+    outlines = []
+    seq_parts = []
+    for line in lines:
+        if line[0] == '>':
+            if len(seq_parts) > 0:
+                seq = ''.join(seq_parts)
+                seq = seq[l_ind:r_ind]
+                outlines.append(f'{seq}\n')
+                seq_parts = []
+            outlines.append(line)
+        else:
+            seq_parts.append(line[:-1])
+
+    seq = ''.join(seq_parts)
+    seq = seq[l_ind:r_ind]
+    outlines.append(f'{seq}\n')
+
+    f = open(infile, 'w')
+    f.write(''.join(outlines))
+    f.close()
+
+    return True
+
+def fetch_msa(config, model_id, prot_id, seq, seq_identity, num_of_threads):
+    folder_path = get_af_model_folder(model_id, config)
+    msa_file = f'{folder_path}/{model_id}_msa.fasta'
+    if not os.path.isfile(msa_file):
+        fetch_af_msa(config, model_id, folder_path)
+
+    if not os.path.isfile(msa_file):
+        return None
+    
+    msa_outfolder = f'{config.outpath}/msas/{prot_id}'
+
+    if not os.path.isdir(msa_outfolder):
+        os.makedirs(msa_outfolder)
+
+    cleaned_prot_id = clean_prot_id(prot_id)
+
+    target_file = f'{msa_outfolder}/{cleaned_prot_id}_{model_id}_msa.fasta'
+    if seq_identity < 1.0:
+        target_file_precursor = f'{msa_outfolder}/{cleaned_prot_id}_{model_id}_msa_precursor.fasta'
+        truncate_af_msa(msa_file, target_file_precursor, overwrite_query_label = model_id)
+        use_mafft_add(target_file_precursor, target_file, msa_outfolder, cleaned_prot_id, seq, num_of_threads)
+
+        #os.remove(target_file_precursor)
+
+    else:
+        truncate_af_msa(msa_file, target_file, overwrite_query_label = cleaned_prot_id)
+
+
 
 
 def extract_dedicated_tags(tags):
@@ -188,6 +408,9 @@ def process_mutations_str(config, mutation_str, tags, pos_set = None, pdb_style=
                 config.errorlog.add_warning("Position/Mutation String Format Error: %s\n%s\n%s\n%s" % (mutation_str, str(e), str(f), str(g)))
                 return None
 
+            if pos <= 0:
+                continue
+
             if pdb_style:
                 if aa2 is None:
                     position = position_package.Position(pdb_res_nr=pos, wt_aa=aa1, tags=tags)
@@ -217,6 +440,9 @@ def process_mutations_str(config, mutation_str, tags, pos_set = None, pdb_style=
                         position = pos
                     multi_mutations.append((position, aa2))
             
+
+    if config.verbosity >= 7:
+        print(f'{aachanges=} {skipped_aachanges=} {tags=}')
 
     if len(aachanges) == skipped_aachanges:
         protein_specific_tags = tags

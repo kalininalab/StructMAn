@@ -9,6 +9,7 @@ CREATE TABLE `Alignment` (
   `Sequence_Identity` float DEFAULT NULL,
   `Coverage` float DEFAULT NULL,
   `Alignment` BLOB(65535) DEFAULT NULL,
+  `Backmap` BLOB(65535) DEFAULT NULL,
   UNIQUE (`Alignment_Id`,`Protein`,`Structure`)
 );
 
@@ -28,20 +29,107 @@ CREATE TABLE `Interface` (
   `Interface_Id` integer  NOT NULL PRIMARY KEY AUTOINCREMENT,
   `Protein` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Structure_Recommendation` varchar(32) NOT NULL,
-  `First_Position` integer  NOT NULL,
-  `Last_Position` integer  NOT NULL,
-  `Mean_Position` integer  NOT NULL,
-  `Interface_Size` integer  NOT NULL
+  `Hash` integer  NOT NULL
 );
 
-CREATE TABLE `Protein_Protein_Interaction` (
-  `Protein_Protein_Interaction_Id` integer NOT NULL PRIMARY KEY AUTOINCREMENT,
-  `Interface_A` integer  NOT NULL REFERENCES `Interface` (`Interface_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Interface_B` integer  NOT NULL REFERENCES `Interface` (`Interface_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+CREATE TABLE `Protein_Protein_Interaction_0` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Chain_A` char(1) DEFAULT NULL,
   `Chain_B` char(1) DEFAULT NULL,
-  `Interaction_Score` float DEFAULT NULL
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_1` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_2` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_3` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_4` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_5` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_6` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_7` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_8` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
+);
+
+CREATE TABLE `Protein_Protein_Interaction_9` (
+  `Protein_A` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Protein_B` integer  NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Complex` integer  NOT NULL REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` BLOB DEFAULT NULL
 );
 
 CREATE TABLE `Position_Position_Interaction` (
@@ -50,7 +138,8 @@ CREATE TABLE `Position_Position_Interaction` (
   `Position_B` integer NOT NULL REFERENCES `Position` (`Position_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Residue_A` integer  NOT NULL REFERENCES `Residue` (`Residue_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Residue_B` integer  NOT NULL REFERENCES `Residue` (`Residue_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Interaction_Score` float DEFAULT NULL
+  `Interaction_Score` float DEFAULT NULL,
+  UNIQUE (`Position_A`,`Position_B`)
 );
 
 CREATE TABLE `Protein` (

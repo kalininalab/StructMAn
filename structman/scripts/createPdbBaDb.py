@@ -402,6 +402,8 @@ def create_model_db_fasta(config):
         if not os.path.isdir(f'{config.path_to_model_db}/{topfolder}'):
             continue
         for sub_folder in os.listdir(f'{config.path_to_model_db}/{topfolder}'):
+            if not os.path.isdir(f'{config.path_to_model_db}/{topfolder}/{sub_folder}'):
+                continue
             parse_results.append(parseByAtom.remote(parse_dump, f'{topfolder}/{sub_folder}', model_db = True))
 
     parse_out = ray.get(parse_results)
@@ -447,6 +449,22 @@ def create_model_db_fasta(config):
     f.close()
 
     return len(great_seq_map) > 0
+
+def update_model_db(config, update_source = None, init_ray = False):
+    if init_ray:
+        ray_init(config)
+    if (config.path_to_model_db is not None) and (config.path_to_model_db != ''):
+        config.model_db_fasta_created = create_model_db_fasta(config)
+    else:
+        config.model_db_fasta_created = False
+
+    if update_source is not None and config.model_db_fasta_created:
+        target_folder = f'{update_source}/structman/resources'
+        with open(f'{target_folder}/modeldb.fasta.gz', 'w') as outfile:
+            p = subprocess.run(['gzip', '-9', '-c', config.model_db_fasta_path], stdout=outfile)    
+
+    if init_ray:
+        ray.shutdown()
 
 def main(config, update_source = None):
     seq_file = config.pdb_fasta_path # get set in scripts/update.py
@@ -539,19 +557,12 @@ def main(config, update_source = None):
     f.write(page)
     f.close()
 
-    if (config.path_to_model_db is not None) and (config.path_to_model_db != ''):
-        config.model_db_fasta_created = create_model_db_fasta(config)
-    else:
-        config.model_db_fasta_created = False
+    update_model_db(config, update_source = update_source)
 
     if update_source is not None:
         target_folder = f'{update_source}/structman/resources'
         with open(f'{target_folder}/pdbba.fasta.gz', 'w') as outfile:
             p = subprocess.run(['gzip', '-9', '-c', seq_file], stdout=outfile)
-            
-        if config.model_db_fasta_created:
-            with open(f'{target_folder}/modeldb.fasta.gz', 'w') as outfile:
-                p = subprocess.run(['gzip', '-9', '-c', config.model_db_fasta_path], stdout=outfile)             
 
     ray.shutdown()
 

@@ -19,7 +19,7 @@ from structman.lib.sdsc.consts import ligands, residues
 from structman.base_utils.base_utils import identify_structure_id_type_key
 
 class Slotted_obj:
-    def __serialize__(self) -> dict[str, any]:
+    def __serialize__(self) -> list:
         serialized_object = []
         try:
             slot_mask: list[bool] = self.slot_mask
@@ -40,6 +40,17 @@ class Slotted_obj:
                 except AttributeError:
                     serialized_object.append(None)
         return serialized_object
+    
+    def deactivate_slot_mask(self) -> None:
+        slot_mask_bu = []
+        for pos in range(len(self.slot_mask)):
+            slot_mask_bu.append(self.slot_mask[pos])
+            self.__class__.slot_mask[pos] = True
+        return slot_mask_bu
+
+    def reactivate_slot_mask(self, slot_mask_bu) -> None:
+        for pos in range(len(slot_mask_bu)):
+            self.__class__.slot_mask[pos] = slot_mask_bu[pos]
 
 class SparseArray(Slotted_obj):
     __slots__ = ['ranged_lists']
@@ -51,7 +62,11 @@ class SparseArray(Slotted_obj):
         for ranged_list_id, (min_key, max_key, value_list) in enumerate(self.ranged_lists):
             if key >= min_key:
                 if key <= max_key: #New element inside one of the ranged lists
-                    value_list[key-min_key] = value
+                    try:
+                        value_list[key-min_key] = value
+                    except TypeError:
+                        value_list = list(value_list)
+                        value_list[key-min_key] = value
                     return
             elif key == (min_key-1): #New element just one index to the left of current ranged list
                 if ranged_list_id == 0: #And it is the most left ranged list -> fuse with current ranged list
@@ -378,7 +393,7 @@ def classify(interaction_profile, location):
     return rin_class, rin_simple_class
 
 
-def process_alignment_data(alignment):
+def process_alignment_data(alignment) -> str | tuple[str, str]:
     if alignment is None:
         return 'Cannot process None'
     lines = alignment.split("\n")
@@ -403,10 +418,10 @@ def process_alignment_data(alignment):
                 else:
                     target_start = False
                     template_start = True
-                    words = line.split(":")
-                    startres = words[2]
-                    endres = words[4]
-                    chain = words[3]
+                    #words = line.split(":")
+                    #startres = words[2]
+                    #endres = words[4]
+                    #chain = words[3]
                 nextline = False
             elif line[0] == "\n":
                 template_start = False
@@ -562,7 +577,7 @@ def connection_sleep_cycle(verbosity, url):
             print(f'No connection: {error}\n Sleeping a bit and then try again')
         time.sleep(30)
 
-def is_alphafold_model(structure_id):
+def is_alphafold_model(structure_id: str) -> bool:
     structe_id_type_key = identify_structure_id_type_key(structure_id)
     return (structe_id_type_key == 2)
 

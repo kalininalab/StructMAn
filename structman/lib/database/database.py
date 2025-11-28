@@ -7,12 +7,13 @@ import traceback
 
 import ray
 
-from structman.base_utils.base_utils import calc_checksum, pack, unpack, calculate_chunksizes
+from structman.base_utils.base_utils import calc_checksum, pack, unpack, calculate_chunksizes, is_alphafold_model
 from structman.base_utils import ray_utils
 from structman.lib import pdbParser
 from structman.lib import rin
 from structman.lib import serializedPipeline
 from structman.lib import uniprot
+from structman.lib.lib_utils import fetch_msa
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import complex as complex_package
 from structman.lib.sdsc import structure as structure_package
@@ -33,7 +34,7 @@ def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
         return {}, set()
 
     table = 'RS_Protein_Session'
-    columns = ['Protein', 'Session', 'Input_Id']
+    columns = ['Protein', 'Session', 'Input_Id', 'Tags']
 
     if session_id is not None:
         results = select(config, columns, table, equals_rows={'Session': session_id})
@@ -45,7 +46,7 @@ def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
                 continue
             prot_id = row[0]
             if prot_id in prot_id_list:
-                prot_input_dict[prot_id] = row[2]
+                prot_input_dict[prot_id] = (row[2], row[3])
     else:
         prot_input_dict = set(prot_id_list)
 
@@ -66,13 +67,14 @@ def getProteinDict(prot_id_list, session_id, config, includeSequence=False):
             gene_db_ids.add(gene_db_id)
         if prot_id in prot_input_dict:
             if session_id is not None:
-                input_id = prot_input_dict[prot_id]
+                input_id, tags = prot_input_dict[prot_id]
             else:
                 input_id = None
+                tags = None
             if not includeSequence:
-                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], input_id, gene_db_id, None)
+                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], input_id, tags, gene_db_id, None)
             else:
-                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], input_id, gene_db_id, row[8])
+                protein_dict[prot_id] = (row[1], row[2], row[3], row[4], row[5], row[6], input_id, tags, gene_db_id, row[8])
 
     return protein_dict, gene_db_ids
 
@@ -116,7 +118,7 @@ def protCheck(proteins, genes, session_id, config):
     results = select(config, ['Protein_Id', 'Primary_Protein_Id', 'Sequence'], 'Protein')
 
     if config.verbosity >= 3:
-        print('Just after protCheck selection')
+        print(f'Just after protCheck selection {len(proteins.protein_map)=} {len(results)=}')
 
     prot_id_list = set([])
     prot_ids_mutants_excluded = set()
@@ -140,6 +142,9 @@ def protCheck(proteins, genes, session_id, config):
             max_database_id = database_id
 
     proteins.set_stored_ids(prot_id_list, prot_ids_mutants_excluded)
+
+    if config.verbosity >= 3:
+        print(f'In protCheck  {len(prot_id_list)=} {len(proteins.stored_ids)=}')
 
     prot_ids = proteins.get_protein_ids()
 
@@ -308,23 +313,29 @@ def insertMultiMutations(proteins, genes, session, config):
     if config.verbosity >= 3:
         print(f'insertMultiMutations: {len(proteins.multi_mutations)}')
 
+    t0 = time.time()
     db_ids = []
     for wt_prot in proteins.multi_mutations:
         db_ids.append(proteins.get_protein_database_id(wt_prot))
 
     if len(db_ids) > 0:
+        t10 = time.time()
         columns = ['Wildtype_Protein', 'Multi_Mutation_Id', 'SNVs', 'Indels']
         table = 'Multi_Mutation'
 
         results = binningSelect(db_ids, columns, table, config)
+
+        t11 = time.time()
+        if config.verbosity >= 3:
+            print(f'insertMultiMutations part 1.1: {t11-t10}')
 
         for row in results:
             wt_database_id = row[0]
             wt_prot_id = proteins.getU_acByDbId(wt_database_id)
             if wt_prot_id not in proteins.multi_mutations:
                 continue
-            snv_db_ids = row[2].split(',')
-            indel_db_ids = row[3].split(',')
+            snv_db_ids = set(row[2].split(','))
+            indel_db_ids = set(row[3].split(','))
 
             for multi_mutation in proteins.multi_mutations[wt_prot]:
                 if snv_db_ids != multi_mutation.get_snv_db_ids():
@@ -334,6 +345,14 @@ def insertMultiMutations(proteins, genes, session, config):
                     continue
                 multi_mutation.database_id = row[1]
                 multi_mutation.stored = True
+
+        t12 = time.time()
+        if config.verbosity >= 3:
+            print(f'insertMultiMutations part 1.2: {t12-t11}')
+
+    t1 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 1: {t1-t0}')
 
     obj_map = {}
     if config.read_only_mode:
@@ -368,19 +387,32 @@ def insertMultiMutations(proteins, genes, session, config):
             table = 'Multi_Mutation'
             insert(table, columns, values, config)
 
+    t2 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 2: {t2-t1}')
+
     columns = ['Wildtype_Protein', 'Multi_Mutation_Id', 'SNVs', 'Indels']
     table = 'Multi_Mutation'
 
     results = binningSelect(wt_prot_db_ids, columns, table, config)
+
+    t3 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 3: {t3-t2}')
+
     for row in results:
         wt_db_id = row[0]
         wt_prot_id = proteins.getU_acByDbId(wt_db_id)
 
         mm_obj_id = (wt_db_id, row[2], row[3])
-        if not mm_obj_id in obj_map:
+        if mm_obj_id not in obj_map:
             continue
 
         obj_map[mm_obj_id].database_id = row[1]
+
+    t4 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 4: {t4-t3}')
 
     columns = ['Multi_Mutation', 'Session', 'Tags']
     table = 'RS_Multi_Mutation_Session'
@@ -401,11 +433,23 @@ def insertMultiMutations(proteins, genes, session, config):
                 gene_db_id = genes[proteins[wt_prot].gene].database_id
                 isoform_values.append((wt_db_id, mut_db_id, gene_db_id, session, multi_mutation.database_id))
 
+    t5 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 5: {t5-t4}')
+
     if len(values) > 0:
         insert(table, columns, values, config)
 
+    t6 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 6: {t6-t5}')
+
     if len(isoform_values) > 0:
         insert('RS_Isoform', ['Protein_A', 'Protein_B', 'Gene', 'Session', 'Multi_Mutation'], isoform_values, config)
+
+    t7 = time.time()
+    if config.verbosity >= 3:
+        print(f'insertMultiMutations part 1: {t7-t6}')
 
     return
 
@@ -942,7 +986,7 @@ def getComplexMap(config, pdb_ids=None):
 def structureCheck(proteins, config):
     table = 'Structure'
     rows = ['Structure_Id', 'PDB', 'Chain']
-    if len(proteins.structures) > 50:
+    if len(proteins.structures) > 5000:
         results = select(config, rows, table)
     elif len(proteins.structures) > 0:
         structure_ids = []
@@ -967,7 +1011,7 @@ def structureCheck(proteins, config):
         if config.verbosity >= 6:
             print(f'{pdb_id} {chain} set as stored in structureCheck')
 
-def draw_complexes(config, proteins, stored_complexes=[], draw_all=False):
+def draw_complexes(config, proteins, stored_complexes=[], draw_all=False, get_stable_objs = False, update_infos = False):
     results = select(config, ['Complex_Id', 'PDB', 'Resolution', 'Chains', 'Ligand_Profile', 'Metal_Profile', 'Ion_Profile', 'Chain_Chain_Profile', 'Homooligomers'], 'Complex')
 
     for row in results:
@@ -975,7 +1019,15 @@ def draw_complexes(config, proteins, stored_complexes=[], draw_all=False):
         if pdb_id not in stored_complexes and not draw_all:
             continue
 
-        compl = complex_package.Complex(pdb_id, resolution=float(row[2]), chains_str=row[3], lig_profile_str=row[4], metal_profile_str=row[5], ion_profile_str=row[6], chain_chain_profile_str=row[7], stored=True, database_id=row[0], homomers_str=row[8])
+        compl: complex_package.Complex
+        if get_stable_objs:
+            compl = complex_package._Complex(pdb_id, resolution=float(row[2]), chains_str=row[3], lig_profile_str=row[4], metal_profile_str=row[5], ion_profile_str=row[6], chain_chain_profile_str=row[7], stored=True, database_id=row[0], homomers_str=row[8])
+
+        else:
+            compl = complex_package.Complex(pdb_id, resolution=float(row[2]), chains_str=row[3], lig_profile_str=row[4], metal_profile_str=row[5], ion_profile_str=row[6], chain_chain_profile_str=row[7], stored=True, database_id=row[0], homomers_str=row[8])
+
+        if update_infos:
+            compl.getPage(config, self_update=True)
 
         proteins.add_complex(pdb_id, compl)
 
@@ -1004,9 +1056,10 @@ def insertStructures(structurelist: dict[str, set[str]], proteins, config):
         proteins.set_structure_stored(pdb_id, chain, True)  # all structures, mapped or not go into this dictionary, this is important for not reinserting residues from interacting structures
         
         if pdb_id in structurelist:
-            structurelist[pdb_id].remove(chain)
-            if len(structurelist[pdb_id]) == 0:
-                del structurelist[pdb_id]
+            if chain in structurelist[pdb_id]:
+                structurelist[pdb_id].remove(chain)
+                if len(structurelist[pdb_id]) == 0:
+                    del structurelist[pdb_id]
 
     draw_complexes(config, proteins, stored_complexes=stored_complexes)
 
@@ -1040,25 +1093,16 @@ def insertStructures(structurelist: dict[str, set[str]], proteins, config):
 
 
 # called by serializedPipeline
-def insertAlignments(alignment_list, proteins, config):
-    values = []
-    if config.verbosity >= 2:
+def insertAlignments(values, config, db_lock = None):
+
+    if config.verbosity >= 5:
         t0 = time.time()
-    for (u_ac, prot_id, pdb_id, chain, alignment_pir) in alignment_list:
-        s_id = proteins.get_structure_db_id(pdb_id, chain)
-        seq_id = proteins.get_sequence_id(u_ac, pdb_id, chain)
-        coverage = proteins.get_coverage(u_ac, pdb_id, chain)
-        if config.verbosity >= 6:
-            print(f'Adding alignment to the database: {u_ac} {prot_id} {pdb_id} {chain} {s_id}')
-        values.append((prot_id, s_id, seq_id, coverage, pack(alignment_pir)))
-    if config.verbosity >= 2:
-        t1 = time.time()
-        print('Time for insertAlignments, part 1: ', t1 - t0)
+
     if len(values) > 0:
-        insert('Alignment', ['Protein', 'Structure', 'Sequence_Identity', 'Coverage', 'Alignment'], values, config)
-    if config.verbosity >= 2:
-        t2 = time.time()
-        print('Time for insertAlignments, part 2: ', t2 - t1)
+        insert('Alignment', ['Protein', 'Structure', 'Sequence_Identity', 'Coverage', 'Alignment', 'Backmap'], values, config, locked=True, db_lock=db_lock)
+    if config.verbosity >= 5:
+        t1 = time.time()
+        print(f'Time for insertAlignments: {t1 - t0} {len(values)=}')
 
 
 def get_interfaces(protein_db_ids, config, proteins):
@@ -1172,6 +1216,9 @@ def getAlignments(proteins, config, get_all_alignments=False):
     if config.verbosity >= 2:
         t0 = time.time()
 
+    if config.verbosity >= 3:
+        print(f'Call fo getAlignments: {get_all_alignments=} {len(proteins.stored_ids)=}')
+
     prot_db_ids = proteins.get_stored_ids(exclude_completely_stored=(not get_all_alignments))
 
     for prot_id in proteins.indels:
@@ -1196,16 +1243,16 @@ def getAlignments(proteins, config, get_all_alignments=False):
         structure_id = row[1]
         seq_id = row[2]
         coverage = row[3]
-        alignment = unpack(row[4])
+        packed_alignment = row[4]
 
         structure_ids.add(structure_id)
 
-        target_seq, template_seq = sdsc_utils.process_alignment_data(alignment)
+        #target_seq, template_seq = sdsc_utils.process_alignment_data(alignment)
 
         if prot_db_id not in prot_structure_alignment_map:
             prot_structure_alignment_map[prot_db_id] = {}
 
-        prot_structure_alignment_map[prot_db_id][structure_id] = (target_seq, template_seq, coverage, seq_id)
+        prot_structure_alignment_map[prot_db_id][structure_id] = (packed_alignment, coverage, seq_id)
 
     if config.verbosity >= 2:
         t2 = time.time()
@@ -1258,22 +1305,23 @@ def getAlignments(proteins, config, get_all_alignments=False):
             structure_id = row[0]
             seq_id = row[2]
             coverage = row[3]
-            alignment = unpack(row[4])
+            #alignment = unpack(row[4])
+            packed_alignment = row[4]
 
             structure_ids.add(structure_id)
 
-            target_seq, template_seq = sdsc_utils.process_alignment_data(alignment)
+            #target_seq, template_seq = sdsc_utils.process_alignment_data(alignment)
 
             if prot_db_id not in prot_structure_alignment_map:
                 prot_structure_alignment_map[prot_db_id] = {}
                 interacting_protein_db_ids.append(prot_db_id)
 
-            prot_structure_alignment_map[prot_db_id][structure_id] = (target_seq, template_seq, coverage, seq_id)
+            prot_structure_alignment_map[prot_db_id][structure_id] = (packed_alignment, coverage, seq_id)
             #print('Adding interacting protein', prot_db_id, structure_id, seq_id)
 
     if config.verbosity >= 2:
         t6 = time.time()
-        print("Time for part 6 in getAlignments: %s" % (str(t6 - t5)))
+        print(f"Time for part 6 in getAlignments: {t6 - t5} {len(interacting_structures)=}")
 
     if config.compute_ppi:
         #pos_db_map = retrieve_stored_proteins(interacting_protein_db_ids, config, proteins, without_positions=True)
@@ -1283,8 +1331,8 @@ def getAlignments(proteins, config, get_all_alignments=False):
         t7 = time.time()
         print(f'Time for part 7 in getAlignments: {str(t7 - t6)}, {len(interacting_protein_db_ids)}')
 
-    if config.compute_ppi:
-        get_interfaces(interacting_protein_db_ids, config, proteins)
+    #if config.compute_ppi:
+    #    get_interfaces(interacting_protein_db_ids, config, proteins)
 
     if config.verbosity >= 2:
         t8 = time.time()
@@ -1312,9 +1360,9 @@ def getAlignments(proteins, config, get_all_alignments=False):
         for structure_id in prot_structure_alignment_map[prot_db_id]:
             (pdb_id, chain) = id_structure_map[structure_id]
 
-            (target_seq, template_seq, coverage, seq_id) = prot_structure_alignment_map[prot_db_id][structure_id]
+            (packed_alignment, coverage, seq_id) = prot_structure_alignment_map[prot_db_id][structure_id]
 
-            struct_anno = structure_package.StructureAnnotation(prot_id, pdb_id, chain, alignment=(target_seq, template_seq), stored=True)
+            struct_anno = structure_package.StructureAnnotation(prot_id, pdb_id, chain, alignment=packed_alignment, stored=True)
             proteins.add_annotation(prot_id, pdb_id, chain, struct_anno)
 
             #print('Add annotation', prot_id, pdb_id, chain)
@@ -1343,6 +1391,12 @@ def getAlignments(proteins, config, get_all_alignments=False):
             proteins.set_coverage_by_db_id(prot_db_id, pdb_id, chain, coverage)
             proteins.set_sequence_id_by_db_id(prot_db_id, pdb_id, chain, seq_id)
             proteins.set_annotation_db_id_by_db_id(prot_db_id, pdb_id, chain, True)
+
+            if is_alphafold_model(pdb_id) and config.provide_msas:
+                if config.verbosity >= 3:
+                    print(f'fetching msa for {prot_id}  {pdb_id}')
+                seq = proteins[prot_id].sequence
+                fetch_msa(config, pdb_id, prot_id, seq, seq_id, config.proc_n)
 
     if config.verbosity >= 2:
         t11 = time.time()
@@ -1860,19 +1914,24 @@ def getLigandAnnotation(chosen_ones,session_id,distance_threshold,db,cursor):
 '''
 
 
-def getProtIdsFromSession(session_id, config, filter_mutant_proteins=False):
+def getProtIdsFromSession(session_id, config, prot_db_ids = None, filter_mutant_proteins=False) -> dict[int, tuple[str, None | set[str]]] :
     table = 'RS_Protein_Session'
     cols = ['Protein', 'Input_Id', 'Tags']
     eq_cols = {'Session': session_id}
     results = select(config, cols, table, equals_rows=eq_cols)
-    prot_ids = {}
+    prot_ids: dict[int, tuple[str, None | set[str]]] = {}
     for row in results:
+        if config.verbosity >= 5:
+            print(f'In getProtIdsFromSession: {row=}')
         if filter_mutant_proteins and row[1] is None:
             continue
+        if prot_db_ids is not None:
+            if row[0] not in prot_db_ids:
+                continue
         tags = row[2]
         if tags is not None:
             tags = set(tags.split(','))
-        prot_ids[row[0]] = row[1], tags
+        prot_ids[row[0]] = (row[1], tags)
     return prot_ids
 
 def retrieve_gene_id_map(gene_db_ids, config):
@@ -1885,7 +1944,14 @@ def retrieve_gene_id_map(gene_db_ids, config):
         gene_id_map[row[0]] = (row[1], row[2])
     return gene_id_map
 
-def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = False, with_struct_recs = True, without_positions = False, return_pos_db_map = True):
+def retrieve_stored_proteins(
+        prot_db_ids: dict[int, tuple[str, None | set[str]]],
+        config, proteins,
+        with_mappings = False,
+        with_struct_recs = True,
+        without_positions = False,
+        return_pos_db_map = True,
+        input_id_is_majored = False):
     if config.verbosity >= 2:
         t0 = time.time()
     cols = ['Protein_Id', 'Primary_Protein_Id', 'Sequence', 'Mutant_Type', 'Mutant_Positions', 'Gene']
@@ -1901,7 +1967,7 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print(f'Retrieve stored proteins, part 1: {t1 - t0} {len(prot_db_ids)}')
+        print(f'Retrieve stored proteins, part 1: {t1 - t0} {len(prot_db_ids)=} {input_id_is_majored=} {prot_db_ids[:10]=}')
 
     id_prot_id_map = {}
 
@@ -1911,13 +1977,14 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
     gene_db_ids = set()
 
     for row in results:
-
-        id_prot_id_map[row[0]] = row[1]
+        protein_db_id: int = row[0]
+        if config.verbosity >= 5:
+            print(f'{row=}')
         if protein_ids_unknown:
             input_id = row[1]
             tags = None
         else:
-            input_id, tags = prot_db_ids[row[0]]
+            input_id, tags = prot_db_ids[protein_db_id]
         mut_type = row[3]
         if row[4] is None:
             sav_positions = None
@@ -1959,15 +2026,23 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
             wt_prot = None
 
         gene_db_id = row[5]
+        
+        if input_id_is_majored:
+            primary_id = input_id
+        else:
+            primary_id = row[1]
+
+        id_prot_id_map[protein_db_id] = primary_id
+
         if gene_db_id is not None:
-            prot_gene_db_id_map[row[1]] = gene_db_id
+            prot_gene_db_id_map[primary_id] = gene_db_id
             gene_db_ids.add(gene_db_id)
 
-        prot_obj = protein_package.Protein(config.errorlog, primary_protein_id=row[1], database_id=row[0], input_id=input_id, sequence=row[2], wildtype_protein = wt_prot, mutant_type = mut_type, sav_positions = sav_positions, insertion_positions = insertion_positions, deletion_flanks = deletion_flanks, tags = tags)
-        proteins[row[1]] = prot_obj
-        prot_id_list.add(row[0])
+        prot_obj = protein_package.Protein(config.errorlog, primary_protein_id=primary_id, database_id=protein_db_id, input_id=input_id, sequence=row[2], wildtype_protein = wt_prot, mutant_type = mut_type, sav_positions = sav_positions, insertion_positions = insertion_positions, deletion_flanks = deletion_flanks, tags = tags)
+        proteins[primary_id] = prot_obj
+        prot_id_list.add(protein_db_id)
         if mut_type is not None:
-            prot_ids_mutants_excluded.add(row[0])
+            prot_ids_mutants_excluded.add(protein_db_id)
 
     if config.verbosity >= 2:
         t2 = time.time()
@@ -1990,7 +2065,7 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
     if config.verbosity >= 2:
         t5 = time.time()
-        print(f'Retrieve stored proteins, part 5: {t5 - t4}')
+        print(f'Retrieve stored proteins, part 5: {t5 - t4} {without_positions=} {with_mappings=} {with_struct_recs=}')
 
     pos_db_map = {}
 
@@ -2003,7 +2078,7 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
         elif with_struct_recs:
             cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data']
         else:
-            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue', 'Recommended_Structure_Data']
+            cols = ['Protein', 'Position_Number', 'Position_Id', 'Wildtype_Residue']
         table = 'Position'
 
         if protein_ids_unknown:
@@ -2042,7 +2117,9 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 
                 else:
                     try:
-                        mappings_obj: mappings_package.Mappings = unpack(row[5])
+                        packed_mappings, _ = unpack(row[5])
+                        mappings_obj = unpack(packed_mappings)
+                        
                         mappings_obj.recommended_res = recommended_structure_str
                         mappings_obj.max_seq_res = max_seq_structure_str
                         
@@ -2079,17 +2156,20 @@ def retrieve_stored_proteins(prot_db_ids, config, proteins, with_mappings = Fals
 # called by output
 
 def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=False, with_mappings = False,
-                   with_snvs=False, with_indels = False, with_multi_mutations = False, mutate_snvs=False,
-                   with_alignments=False, with_complexes=False, keep_ray_alive=False, current_chunk = None, prot_db_id_dict = None):
+                   with_snvs=False, with_indels = False, with_multi_mutations = False, mutate_snvs=False, get_stable_objs=False,
+                   with_alignments=False, with_complexes=False, keep_ray_alive=False, current_chunk = None, prot_db_id_dict = None,
+                   input_id_is_majored = False, update_complexes = False):
 
     if config.verbosity >= 2:
-        print(f'Calling proteinsFromDb, session {session}, with_residues {with_residues}, with_mappings {with_mappings}')
+        print(f'Calling proteinsFromDb, {session=} {with_residues=} {with_mappings=} {input_id_is_majored=} {filter_mutant_proteins=}')
 
     if with_alignments:
         with_complexes = True
 
-    if prot_db_id_dict is None:
-        prot_db_id_dict = getProtIdsFromSession(session, config, filter_mutant_proteins=filter_mutant_proteins)
+    prot_db_id_dict: dict[int, tuple[str, None | set[str]]] = getProtIdsFromSession(session, config, filter_mutant_proteins=filter_mutant_proteins, prot_db_ids = prot_db_id_dict)
+
+    if config.verbosity >= 5:
+        print(f'In proteinsFromDb, {prot_db_id_dict=}')
 
     if current_chunk is not None:
         n_of_chunks = (len(prot_db_id_dict) // config.chunksize) + 1
@@ -2122,10 +2202,14 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
 
     proteins = protein_package.Proteins({}, {}, {})  # create empty Proteins object
 
-    pos_db_map = retrieve_stored_proteins(prot_db_id_dict, config, proteins, with_mappings = with_mappings)
+    pos_db_map = retrieve_stored_proteins(prot_db_id_dict, config, proteins, with_mappings = with_mappings, input_id_is_majored = input_id_is_majored)
+
+    if config.verbosity >= 5:
+        print(f'In proteinsFromDb, point 0 - {list(proteins.protein_map.keys())=}')
+
 
     if with_complexes:
-        draw_complexes(config, proteins, draw_all=True)
+        draw_complexes(config, proteins, draw_all=True, get_stable_objs=get_stable_objs, update_infos=update_complexes)
 
     if with_multi_mutations:
         with_snvs = True
@@ -2143,6 +2227,9 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             (prot_id, pos) = pos_db_map[row[0]]
             proteins[prot_id].positions[pos].mut_aas[row[1]] = snv
             snv_db_id_map[row[2]] = (pos, snv)
+
+    if config.verbosity >= 5:
+        print(f'In proteinsFromDb, point A - {list(proteins.protein_map.keys())=}')
 
     if with_indels:
 
@@ -2209,6 +2296,8 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
         indel_map = {}
         for wt_prot in indel_pre_map:
             uniprot.indel_insert(config, proteins, indel_map, indel_pre_map[wt_prot], wt_prot, proteins_is_object = True)
+
+    
 
     if with_multi_mutations:
         table = 'RS_Multi_Mutation_Session'
@@ -2287,6 +2376,9 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             proteins.multi_mutations[multi_mutation_obj.wt_prot].append(multi_mutation_obj)
             mm_db_id = mm_db_map[multi_mutation_obj.wt_prot][multi_mutation_obj.mut_prot]
             proteins.multi_mutation_back_map[mm_db_id] = multi_mutation_obj
+
+    if config.verbosity >= 5:
+        print(f'In proteinsFromDb, point B - {list(proteins.protein_map.keys())=}')
 
     ray_utils.ray_init(config)
 

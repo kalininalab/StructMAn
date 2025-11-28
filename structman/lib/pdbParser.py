@@ -10,6 +10,7 @@ import urllib.request
 from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import residue as residue_package
+from structman.base_utils.base_utils import aggregate_times, add_to_times
 
 chain_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
 
@@ -499,7 +500,16 @@ def parseMMCIFSequence(buf, chain):
 # called by sdsc
 
 
-def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=False, get_is_local=False, verbosity=0, model_path=None, only_first_model = False):
+def standardParsePDB(
+        pdb_id,
+        pdb_path,
+        obsolete_check=False,
+        return_10k_bool=False,
+        get_is_local=False,
+        verbosity=0,
+        model_path=None,
+        only_first_model = False,
+        return_bytes = False):
     AU = False
     if pdb_id.count('_AU') == 1:
         pdb_id = pdb_id[0:4]
@@ -636,6 +646,8 @@ def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=Fal
 
         else:
             # We are not interested in other record types
+            if model_path is not None:
+                print(f'Strange record in model: {pdb_id=} {model_path=} {record_name=}')
             continue
 
         # Adjust serials after skipping records
@@ -655,7 +667,10 @@ def standardParsePDB(pdb_id, pdb_path, obsolete_check=False, return_10k_bool=Fal
 
     newlines.append(b'ENDMDL                                                                          \n')
 
-    template_page = b'\n'.join(newlines).decode('ascii')
+    if return_bytes:
+        template_page = b'\n'.join(newlines)
+    else: 
+        template_page = b'\n'.join(newlines).decode('ascii')
 
     buf.close()
 
@@ -803,6 +818,17 @@ def standardParseMMCIF(pdb_id, pdb_path, obsolete_check=False):
 
     return template_page
 
+def toOne(res_name: str, only_natural: bool = False) -> str:
+    if only_natural:
+        if res_name in residue_consts.AA_TO_ONE:
+            return residue_consts.AA_TO_ONE[res_name]
+        return '.'
+    if res_name in residue_consts.THREE_TO_ONE:
+        return residue_consts.THREE_TO_ONE[res_name][0:1]
+    elif res_name in residue_consts.NUCLEOTIDE_TO_ONE:
+        return residue_consts.NUCLEOTIDE_TO_ONE[res_name]
+    else:
+        return 'X'
 
 # called by serializedPipeline
 def getStandardizedPdbFile(
@@ -811,7 +837,11 @@ def getStandardizedPdbFile(
         oligo: set[str] = set(),
         verbosity: int = 0,
         model_path: str | None = None,
-        obsolete_check: bool = False) -> tuple[list[bytes], list, dict[str, str], set[str], int, list[str], set[str]]:
+        obsolete_check: bool = False,
+        get_residue_maps: bool = False) -> tuple[list[bytes], list, dict[str, str], set[str], int, list[str], set[str]]:
+
+    t0 = time.time()
+    times: list[float] = []
 
     AU: bool = False
 
@@ -833,8 +863,6 @@ def getStandardizedPdbFile(
 
     lig_set: dict[str, set[int | bytes]] = {}
 
-    newlines: list[bytes] = []
-
     interaction_partners: list[tuple] = []
 
     rare_residues: set[bytes] = set()
@@ -850,103 +878,122 @@ def getStandardizedPdbFile(
     current_serial: int = 1
     firstAltLoc: bytes | None = None
 
+    seq_res_maps: dict[str, list[str | int]] = {}
+    used_res_s: dict[str, set[int | bytes]] = {}
+    first_residues: dict[str, int | str] = {}
+    last_residues: dict[str, int | str] = {}
+    seqs: dict[str, str] = {}
+
+    t1 = time.time()
+    times.append(t1-t0)
+
+    #total_subtimes = []
+
     for line in buf:
-        
+        #ti = time.time()
+        #subtimes: list[float] = []
         if len(line) >= 27:
             try:
-                record_name: bytes = line[0:6].rstrip()
                 line: bytes = line.rstrip(b'\n')
+                record_name: bytes = line[0:6].rstrip()
             except:
                 return f'Error in parsing PDB file {pdb_id}, line:\n{line}'
         else:
             continue
 
-        if record_name == b'EXPDTA':
-            words: list[bytes] = line.split()
-            if len(words) < 3:
-                continue
-            if words[2] == b'NMR':
-                not_crystal = True
+        #ti = add_to_times(subtimes, ti)
 
-            if words[1] == b'SOLUTION' and (words[2] == b'SCATTERING' or words[2] == b'SCATTERING;' or words[2] == b'NMR;' or words[2] == b'NMR'):
-                not_crystal = True
-
-            if line.count(b'NMR') > 0:
-                not_crystal = True
-            newlines.append(line)
-            continue
-
-        elif record_name == b'MODEL':
-            current_model_id = int(line[10:14])
-            if not current_model_id in multi_model_chain_dict:
-                multi_model_chain_dict[current_model_id] = {}
-            if not multi_model_mode:
-                newlines.append(line)
-            elif len(multi_model_chain_dict) * asymetric_chain_number >= len(chain_order):
-                break
-            continue
-
-        elif record_name == b'ENDMDL':
-            if not_crystal or AU:
-                newlines.append(line)
-                break
-            elif not multi_model_mode:
-                multi_model_mode = True
-                asymetric_chain_number = len(chain_ids)
-            continue
-
-        elif record_name == b'SEQRES':
-            for tlc in line[19:].split():
-                tlc = tlc.strip()
-                if len(tlc) != 3:
+        match record_name:
+            case b'EXPDTA':
+                words: list[bytes] = line.split()
+                if len(words) < 3:
                     continue
-                if tlc not in residue_consts.BIN_THREE_TO_ONE:
-                    rare_residues.add(tlc)
+                if words[2] == b'NMR':
+                    not_crystal = True
 
-        elif record_name == b'TER':
-            # This can happen, if the whole chain consists of boring ligands,
-            # which is very boring
-            if chain_id not in chain_type_map:
+                if words[1] == b'SOLUTION' and (words[2] == b'SCATTERING' or words[2] == b'SCATTERING;' or words[2] == b'NMR;' or words[2] == b'NMR'):
+                    not_crystal = True
+
+                if line.count(b'NMR') > 0:
+                    not_crystal = True
                 continue
 
-        elif record_name == b'MODRES':
-            chain_id: str = line[16:17].decode('ascii')
-            res_nr: str = line[18:23].strip().decode('ascii')
-            res_name: str = line[24:27].strip().decode('ascii')
-            if chain_id not in modres_map:
-                modres_map[chain_id] = residue_package.Residue_Map()
-            modres_map[chain_id].add_item(res_nr, res_name)
+            case b'MODEL':
+                current_model_id = int(line[10:14])
+                if not current_model_id in multi_model_chain_dict:
+                    multi_model_chain_dict[current_model_id] = {}
 
-        elif record_name == b'ATOM' or record_name == b'HETATM':
-            altLoc: bytes = line[16:17]
-            if firstAltLoc is None and altLoc != b' ':
-                firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
-            if altLoc != b' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
+                if not multi_model_mode:
+                    pass
+                elif len(multi_model_chain_dict) * asymetric_chain_number >= len(chain_order):
+                    break
                 continue
-            res_name: str = line[17:20].strip().decode('ascii')
-            chain_id: str = line[21:22].decode('ascii')
 
-            if chain_id not in chain_ids:
-                chain_ids.add(chain_id)
-                multi_model_chain_dict[current_model_id][chain_id] = chain_id
-            elif multi_model_mode:
-                if not chain_id in multi_model_chain_dict[current_model_id]:
-                    new_chain_id = None
-                    while new_chain_id is None:
-                        if not chain_order[chain_order_pos_marker] in chain_ids:
-                            new_chain_id = chain_order[chain_order_pos_marker]
-                        chain_order_pos_marker += 1
-                    multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
-                    chain_id = new_chain_id
-                else:
-                    chain_id = multi_model_chain_dict[current_model_id][chain_id]
+            case b'ENDMDL':
+                if not_crystal or AU:
+                    break
+                elif not multi_model_mode:
+                    multi_model_mode = True
+                    asymetric_chain_number = len(chain_ids)
+                continue
 
-            res_nr: str = line[22:27].strip().decode('ascii')
+            case b'SEQRES':
+                for tlc in line[19:].split():
+                    tlc = tlc.strip()
+                    if len(tlc) != 3:
+                        continue
+                    if tlc not in residue_consts.BIN_THREE_TO_ONE:
+                        rare_residues.add(tlc)
 
-            #occupancy = float(line[54:60].replace(" ",""))
+            case b'TER':
+                # This can happen, if the whole chain consists of boring ligands,
+                # which is very boring
+                if chain_id not in chain_type_map:
+                    continue
 
-            if chain_id not in chain_type_map:
-                if record_name == b'ATOM':
+            case b'MODRES':
+                chain_id: str = line[16:17].decode('ascii')
+                res_nr: str = line[18:23].strip().decode('ascii')
+                res_name: str = line[24:27].strip().decode('ascii')
+                if chain_id not in modres_map:
+                    modres_map[chain_id] = residue_package.Residue_Map()
+                modres_map[chain_id].add_item(res_nr, res_name)
+
+            case b'ATOM':
+                altLoc: bytes = line[16:17]
+                if firstAltLoc is None and altLoc != b' ':
+                    firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
+                if altLoc != b' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
+                    continue
+                
+                chain_id: str = line[21:22].decode('ascii')
+
+                if chain_id not in chain_ids:
+                    chain_ids.add(chain_id)
+                    multi_model_chain_dict[current_model_id][chain_id] = chain_id
+                elif multi_model_mode:
+                    if not chain_id in multi_model_chain_dict[current_model_id]:
+                        new_chain_id = None
+                        while new_chain_id is None:
+                            if not chain_order[chain_order_pos_marker] in chain_ids:
+                                new_chain_id = chain_order[chain_order_pos_marker]
+                            chain_order_pos_marker += 1
+                        multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
+                        chain_id = new_chain_id
+                    else:
+                        chain_id = multi_model_chain_dict[current_model_id][chain_id]
+
+                res_nr: str = line[22:27].strip().decode('ascii')
+                if not chain_id in used_res_s:
+                    used_res_s[chain_id] = set()
+                    seq_res_maps[chain_id] = []
+                    seqs[chain_id] = ''
+                #occupancy = float(line[54:60].replace(" ",""))
+
+
+                res_name: str = line[17:20].strip().decode('ascii')
+                if chain_id not in chain_type_map:
+                    
                     if len(res_name) == 1:
                         chain_type = 'RNA'
                     elif len(res_name) == 2:
@@ -955,7 +1002,63 @@ def getStandardizedPdbFile(
                         chain_type = 'Protein'
                     chain_type_map[chain_id] = chain_type
                     chain_list.append(chain_id)
-                elif record_name == b'HETATM':
+                    
+                elif chain_type_map[chain_id] == 'Peptide':
+                    if len(res_name) == 1:
+                        chain_type = "RNA"
+                    elif len(res_name) == 2:
+                        chain_type = "DNA"
+                    elif len(res_name) == 3:
+                        chain_type = "Protein"
+                    chain_type_map[chain_id] = chain_type
+
+                if res_nr not in used_res_s[chain_id]:
+                    aa = toOne(res_name)
+                    if aa not in residue_consts.ONE_TO_THREE:
+                        aa = 'X'
+                    seqs[chain_id] += aa
+
+                    try:
+                        seq_res_maps[chain_id].append(int(res_nr))
+                    except:
+                        seq_res_maps[chain_id].append(res_nr)
+                    used_res_s[chain_id].add(res_nr)
+                    last_residues[chain_id] = res_nr
+                    if chain_id not in first_residues:
+                        first_residues[chain_id] = res_nr
+
+            case b'HETATM':
+                altLoc: bytes = line[16:17]
+                if firstAltLoc is None and altLoc != b' ':
+                    firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
+                if altLoc != b' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
+                    continue
+                res_name: str = line[17:20].strip().decode('ascii')
+                chain_id: str = line[21:22].decode('ascii')
+
+                if chain_id not in chain_ids:
+                    chain_ids.add(chain_id)
+                    multi_model_chain_dict[current_model_id][chain_id] = chain_id
+                elif multi_model_mode:
+                    if not chain_id in multi_model_chain_dict[current_model_id]:
+                        new_chain_id = None
+                        while new_chain_id is None:
+                            if not chain_order[chain_order_pos_marker] in chain_ids:
+                                new_chain_id = chain_order[chain_order_pos_marker]
+                            chain_order_pos_marker += 1
+                        multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
+                        chain_id = new_chain_id
+                    else:
+                        chain_id = multi_model_chain_dict[current_model_id][chain_id]
+
+                #occupancy = float(line[54:60].replace(" ",""))
+
+                if not chain_id in used_res_s:
+                    used_res_s[chain_id] = set()
+                    seq_res_maps[chain_id] = []
+                    seqs[chain_id] = ''
+
+                if chain_id not in chain_type_map:
                     # For a hetero peptide 'boring' hetero amino acids are
                     # allowed [as well as other non boring molecules not in
                     # threeToOne, which are hopefully some kind of abnormal amino
@@ -965,21 +1068,17 @@ def getStandardizedPdbFile(
                         chain_type_map[chain_id] = chain_type
                         chain_list.append(chain_id)
 
-            elif record_name == b'ATOM' and chain_type_map[chain_id] == 'Peptide':
-                if len(res_name) == 1:
-                    chain_type = "RNA"
-                elif len(res_name) == 2:
-                    chain_type = "DNA"
-                elif len(res_name) == 3:
-                    chain_type = "Protein"
-                chain_type_map[chain_id] = chain_type
+                res_nr: str = line[22:27].strip().decode('ascii')
 
-            if record_name == b'HETATM':
+                if res_nr not in used_res_s[chain_id]:
+                    last_residues[chain_id] = res_nr
+
                 # modified residue are not parsed as ligands
-                if (res_name not in residue_consts.BIN_THREE_TO_ONE) and (res_name not in rare_residues):
-                    if not sdsc_utils.bin_boring(res_name):
+                if (res_name not in residue_consts.THREE_TO_ONE) and (res_name not in rare_residues):
+                    if not sdsc_utils.boring(res_name):
                         if chain_id not in lig_set:
                             lig_set[chain_id] = set()
+                            
                         if res_nr not in lig_set[chain_id]:
                             lig_set[chain_id].add(res_nr)
 
@@ -990,27 +1089,41 @@ def getStandardizedPdbFile(
                             interaction_partners.append(["Ligand", res_name, res_nr, chain_id])
                     elif len(res_name) == 3:
                         continue
+                else:
+                    if res_nr not in used_res_s[chain_id]:
+                        aa = toOne(res_name)
+                        if aa not in residue_consts.ONE_TO_THREE:
+                            aa = 'X'
+                        seqs[chain_id] += aa
 
-        else:
-            # We are not interested in other record types
-            continue
+                        try:
+                            seq_res_maps[chain_id].append(int(res_nr))
+                        except:
+                            seq_res_maps[chain_id].append(res_nr)
 
-        # Adjust serials after skipping records
-        if current_serial > 99999:
-            newline = record_name[0:5].ljust(5, b' ') + str(current_serial).encode('ascii').rjust(6, b' ')
-        else:
-            newline = record_name.ljust(6, b' ') + str(current_serial).encode('ascii').rjust(5, b' ')
-        newline += line[11:]
+                        used_res_s[chain_id].add(res_nr)
+                        if chain_id not in first_residues:
+                            first_residues[chain_id] = res_nr
 
-        if multi_model_mode:
-            newline = newline[:21] + chain_id.encode('ascii') + newline[22:]
+            case _:
+                # We are not interested in other record types
+                continue
 
-        newlines.append(newline)
+        #ti = add_to_times(subtimes, ti)
+
         current_serial += 1
 
-    buf.close()
+        #ti = add_to_times(subtimes, ti)
+        #total_subtimes = aggregate_times(total_subtimes, subtimes)
+        
 
-    newlines.append(b'ENDMDL                                                                          \n')
+    #for t in total_subtimes:
+    #    times.append(t)
+
+    t2 = time.time()
+    times.append(t2-t1)
+
+    buf.close()
 
     pep_not_lig = []
     for chain_id in chain_type_map:
@@ -1040,7 +1153,10 @@ def getStandardizedPdbFile(
     for chain in irregular_homo_chains:
         oligo.remove(chain)
 
-    return newlines, interaction_partners, chain_type_map, oligo, current_serial, chain_list, rare_residues
+    t3 = time.time()
+    times.append(t3-t2)
+
+    return interaction_partners, chain_type_map, oligo, current_serial, chain_list, rare_residues, times, seq_res_maps, first_residues, last_residues, seqs
 
 # Newly written MMCIF version
 # Called by getStandardizedPDBFile if PDB file does not exist
@@ -1281,9 +1397,9 @@ def getSI(pdb_id, name, res, chain, pdb_path, config):
     try:
         i_err = None
         s_err = None
-        inchiproc = subprocess.Popen(["babel", "-i", "pdb", "-o", "inchi"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        inchiproc = subprocess.Popen(["obabel", "-i", "pdb", "-o", "inchi"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         inchi, i_err = inchiproc.communicate(page, timeout=600)
-        smilesproc = subprocess.Popen(["babel", "-i", "pdb", "-o", "smi"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        smilesproc = subprocess.Popen(["obabel", "-i", "pdb", "-o", "smi"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         smiles, s_err = smilesproc.communicate(page, timeout=600)
     except:
         config.errorlog.add_warning(f"Babel Package seems not to be installed: {pdb_id} {name} {res} {chain}\n{i_err}\n{s_err}")
@@ -1352,7 +1468,7 @@ def getMMCIFHeaderBuffer(pdb_id, pdb_path, tries=0):
 
 
 # called by templateSelection
-def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]]]:
+def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]], dict[str, str]]:
     buf = getPDBHeaderBuffer(pdb_id, pdb_path)
 
     # Added automatization here
@@ -1367,12 +1483,11 @@ def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]]]:
     not_crystal = False
 
     homomer_dict: dict[str, set[str]] = {}
+    chain_names: dict[str, str] = {}
 
     multiple_chain_line = False
 
     for line in buf:
-        if abort:
-            break
 
         line = line.rstrip(b'\n')
         words = line.split()
@@ -1433,6 +1548,16 @@ def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]]]:
                         resolution = 100.0
                         abort = True
 
+            elif words[0] == b'DBREF' or words[0] == b'DBREF1':
+                chain_id = words[2].decode('ascii')
+                if words[5] != b'UNP':
+                    continue
+                if len(words) > 7:
+                    name = words[7].decode('ascii')
+                else:
+                    name = words[6].decode('ascii')
+                chain_names[chain_id] = name
+
             elif words[0] == b'SEQRES':
                 break
 
@@ -1452,7 +1577,7 @@ def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]]]:
         resolution = float(resolution)
     except:
         raise NameError("Resolution buggy for: %s" % pdb_id)
-    return resolution, homomer_dict
+    return resolution, homomer_dict, chain_names
 
 
 chain_id_list = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]

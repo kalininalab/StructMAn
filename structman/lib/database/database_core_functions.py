@@ -4,6 +4,9 @@ import traceback
 import random
 import math
 import itertools
+
+from filelock import FileLock
+
 #from structman.base_utils.config_class import Config
 from typing import TypeAlias
 #from jenkspy import JenksNaturalBreaks
@@ -61,7 +64,9 @@ def binningSelect(
         rows: list[str],
         table: str,
         config: any,
-        density: float =0.5) -> list[list]:
+        density: float =0.5,
+        locked: bool = False,
+        db_lock = None) -> list[list]:
     
     # Use this for huge selects, the first entry of rows has to be the key by which the entries are selected
     key_name: str = rows[0]
@@ -76,37 +81,37 @@ def binningSelect(
     singletons, bins = naive_neighbor_binning(keys, density_thresh = density)
 
 
-    if config.verbosity >= 6:
+    if config.verbosity >= 7:
         print('\nbinningSelect keys:\n', keys, 'and binning results:\n', singletons, '\n', bins)
 
     t1 = time.time()
-    if config.verbosity >= 3:
+    if config.verbosity >= 4:
         print(f'Time for binning in binningSelect {table}: {t1 - t0} {len(keys)=}')
 
     if len(singletons) > 0:
         if len(singletons) == 1:
             equals_rows = {key_name: singletons[0]}
-            total_results = list(select(config, rows, table, equals_rows=equals_rows))
+            total_results = list(select(config, rows, table, equals_rows=equals_rows, locked=locked, db_lock=db_lock))
         else:
             in_rows = {key_name: singletons}
-            total_results = list(select(config, rows, table, in_rows=in_rows))
+            total_results = list(select(config, rows, table, in_rows=in_rows, locked=locked, db_lock=db_lock))
     else:
         total_results = []
 
     t2 = time.time()
-    if config.verbosity >= 3:
+    if config.verbosity >= 4:
         print('Time for singleton select in binningSelect:', t2 - t1, 'Amount of singletons:', len(singletons))
 
     t3 = 0.
     t4 = 0.
     t5 = 0.
     for ids, min_id, max_id in bins:
-        if config.verbosity >= 3:
+        if config.verbosity >= 4:
             print(f'Binning select from {min_id} to {max_id}, {len(ids)=}')
         t3 += time.time()
         between_rows = {key_name: (min_id, max_id)}
 
-        results = select(config, rows, table, between_rows=between_rows)
+        results = select(config, rows, table, between_rows=between_rows, locked=locked, db_lock=db_lock)
 
         t4 += time.time()
         if isinstance(ids, list):
@@ -117,14 +122,24 @@ def binningSelect(
             total_results.append(row)
         t5 += time.time()
 
-    if config.verbosity >= 3:
+    if config.verbosity >= 4:
         print('Time for between selects in binningSelect:', t4 - t3, 'Amount of bins:', len(bins))
         print('Time for id checks in binningSelect:', t5 - t4)
 
     return total_results
 
 
-def insert(table: str, columns: list[str], values: list | tuple, config: any, n_trials: int = 3, mapping_db: bool = False, db_name: str | None = None):
+def insert(
+        table: str,
+        columns: list[str],
+        values: list | tuple,
+        config: any,
+        n_trials: int = 3,
+        mapping_db: bool = False,
+        db_name: str | None = None,
+        locked = False,
+        db_lock = None,
+        buffer_factor = 3.0):
     if config.db_address != '-':
         wildcard_symbol = '%s'
         insert_statement = 'INSERT IGNORE'
@@ -147,7 +162,7 @@ def insert(table: str, columns: list[str], values: list | tuple, config: any, n_
         return
 
     max_package_size = config.max_package_size
-    size_of_values = size_estimation(values)
+    size_of_values = size_estimation(values, buffer_factor=buffer_factor)
 
     number_of_packages = (size_of_values // max_package_size)
     if not size_of_values % max_package_size == 0:
@@ -157,7 +172,7 @@ def insert(table: str, columns: list[str], values: list | tuple, config: any, n_
     if not len(values) % number_of_packages == 0:
         package_length += 1
 
-    if config.verbosity >= 3:
+    if config.verbosity >= 4:
         print('Insert to', table, 'with total estimated size', size_of_values / 1024. / 1024., 'Mb,since max size is',
               max_package_size / 1024. / 1024., 'Mb this makes', number_of_packages,
               'packages in total (size per package:', size_of_values / 1024. / 1024. / number_of_packages, ')')
@@ -179,31 +194,63 @@ def insert(table: str, columns: list[str], values: list | tuple, config: any, n_
         value_str = ','.join(value_strs)
         parts.append((value_str, params))
 
-    for value_str, params in parts:
-        statement = f'{insert_statement} INTO {table} ({columns_str}) VALUES {value_str}'
+    if db_lock is None:
+        db_lock_file = f'{config.tmp_folder}/insert_{table}_lock.lock'
+    else:
+        db_lock_file = f'{config.tmp_folder}/{db_lock}'
 
-        if config.verbosity >= 2:
-            print(f'Insert with {len(params)} parameters, {db_name=}')
+    n = 0
+    while n < n_trials:  # Repeat the querry if fails for n_trials times
+        if locked:
+            with FileLock(db_lock_file):
+                
+                db, cursor = config.getDB(mapping_db = mapping_db, db_name = db_name)
+                try:
+                    for value_str, params in parts:
+                        statement = f'{insert_statement} INTO {table} ({columns_str}) VALUES {value_str}'
 
-        if config.verbosity >= 5:
-            print(f'Better size estimation of the package: {sys.getsizeof(str(params))} + {sys.getsizeof(statement)}')
+                        if config.verbosity >= 4:
+                            print(f'Insert with {len(params)} parameters, {db_name=}')
 
-        n = 0
-        while n < n_trials:  # Repeat the querry if fails for n_trials times
+                        if config.verbosity >= 6:
+                            print(f'Better size estimation of the package: {sys.getsizeof(str(params))} + {sys.getsizeof(statement)}')
+                        
+                        cursor.execute(statement, params)
+                        db.commit()
+                    db.close()
+                    break
+                except:
+                    if db is not None:
+                        db.close()
+                    n += 1
+                    if n == 1:
+                        [e, f, g] = sys.exc_info()
+                        g = traceback.format_exc()
+        else:
             db, cursor = config.getDB(mapping_db = mapping_db, db_name = db_name)
             try:
-                cursor.execute(statement, params)
-                db.commit()
+                for value_str, params in parts:
+                    statement = f'{insert_statement} INTO {table} ({columns_str}) VALUES {value_str}'
+
+                    if config.verbosity >= 4:
+                        print(f'Insert with {len(params)} parameters, {db_name=}')
+
+                    if config.verbosity >= 6:
+                        print(f'Better size estimation of the package: {sys.getsizeof(str(params))} + {sys.getsizeof(statement)}')
+                    
+                    cursor.execute(statement, params)
+                    db.commit()
                 db.close()
                 break
             except:
-                db.close()
+                if db is not None:
+                    db.close()
                 n += 1
                 if n == 1:
                     [e, f, g] = sys.exc_info()
                     g = traceback.format_exc()
-        if n == n_trials:
-            raise NameError('Invalid Insert: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, str(f), g))
+    if n == n_trials:
+        raise NameError('Invalid Insert: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, str(f), g))
 
 
 def remove(config, table, between_rows={}, in_rows={}, equals_rows={}, null_columns=set(), n_trials=3, from_mapping_db=False):
@@ -277,7 +324,7 @@ def size_estimation(values: list[any], buffer_factor: float = 1.5, exact = False
     return size_of_values
 
 
-def update(config, table, columns, values, mapping_db = False):
+def update(config, table, columns, values, mapping_db = False, locked=False, db_lock=None, buffer_factor = 4.0):
     if config.db_address != '-':
         wildcard_symbol = '%s'
         insert_statement = 'INSERT IGNORE'
@@ -313,10 +360,15 @@ def update(config, table, columns, values, mapping_db = False):
     if len(values) == 0:
         return
 
+    if db_lock is None:
+        db_lock_file = f'{config.tmp_folder}/update_{table}_lock.lock'
+    else:
+        db_lock_file = f'{config.tmp_folder}/{db_lock}'
+
     if config.db_address != '-':
 
         max_package_size = config.max_package_size
-        size_of_values = size_estimation(values, buffer_factor=2)
+        size_of_values = size_estimation(values, buffer_factor=buffer_factor)
 
         number_of_packages = (size_of_values // max_package_size)
         if not size_of_values % max_package_size == 0:
@@ -348,38 +400,88 @@ def update(config, table, columns, values, mapping_db = False):
                 continue
 
             statement = f'{insert_statement} INTO {table} ({column_str}) VALUES {value_str} {conflict_statement} {update_str}'
-            db, cursor = config.getDB(mapping_db = mapping_db)
-            try:
-                cursor.execute(statement, params)
-                db.commit()
-            except:
-                [e, f, g] = sys.exc_info()
-                g = traceback.format_exc()
-                exact_size_of_values = size_estimation(values, buffer_factor=2, exact=True)
-                exact_size_of_params = size_estimation(params, buffer_factor=2, exact=True)
-                raise NameError(f'Invalid Update {mapping_db=} {size_of_values=} {exact_size_of_values=} {exact_size_of_params=} {max_package_size=} {len(parts)=}:\n{statement[:300]} ... {conflict_statement} {update_str}\nParam size:{len(params)}\n{e}\n{f}\n{g}')
-            db.close()
+            if locked:
+                max_number_of_tries = 3
+                try_count = 0
+                while try_count < max_number_of_tries:
+                    broken = False
+                    with FileLock(db_lock_file):
+                        db, cursor = config.getDB(mapping_db = mapping_db)
+                        try:
+                            cursor.execute(statement, params)
+                            db.commit()
+                            broken = True
+                        except:
+                            if try_count < max_number_of_tries:
+                                try_count += 1
+                                time.sleep(0.1)
+                            else:
+                                [e, f, g] = sys.exc_info()
+                                g = traceback.format_exc()
+                                exact_size_of_values = size_estimation(values, buffer_factor=buffer_factor, exact=True)
+                                exact_size_of_params = size_estimation(params, buffer_factor=buffer_factor, exact=True)
+                                raise NameError(f'Invalid Update {mapping_db=} {size_of_values=} {exact_size_of_values=} {exact_size_of_params=} {max_package_size=} {len(parts)=}:\n{statement[:300]} ... {conflict_statement} {update_str}\nParam size:{len(params)}\n{e}\n{f}\n{g}')
+                        finally:
+                            db.close()
+                    if broken:
+                        break
+            else:
+                db, cursor = config.getDB(mapping_db = mapping_db)
+                try:
+                    cursor.execute(statement, params)
+                    db.commit()
+                except:
+                    [e, f, g] = sys.exc_info()
+                    g = traceback.format_exc()
+                    exact_size_of_values = size_estimation(values, buffer_factor=buffer_factor, exact=True)
+                    exact_size_of_params = size_estimation(params, buffer_factor=buffer_factor, exact=True)
+                    raise NameError(f'Invalid Update {mapping_db=} {size_of_values=} {exact_size_of_values=} {exact_size_of_params=} {max_package_size=} {len(parts)=}:\n{statement[:300]} ... {conflict_statement} {update_str}\nParam size:{len(params)}\n{e}\n{f}\n{g}')
+                finally:
+                    db.close()
     else:
-        db, cursor = config.getDB(mapping_db = mapping_db)
-        sql = "PRAGMA synchronous = OFF;"
-        cursor.execute(sql)
-        db.commit()
-        sql = "PRAGMA journal_mode = MEMORY;"
-        cursor.execute(sql)
-        db.commit()
-        for value_tuple in values:
-            params = list(value_tuple[1:])
-            params.append(value_tuple[0])
-            statement = f"UPDATE OR IGNORE {table} SET {column_str} WHERE {where_str}"
-            
-            try:
-                cursor.execute(statement, params)
+        if locked:
+            with FileLock(db_lock_file):
+                db, cursor = config.getDB(mapping_db = mapping_db)
+                sql = "PRAGMA synchronous = OFF;"
+                cursor.execute(sql)
                 db.commit()
-            except:
-                [e, f, g] = sys.exc_info()
-                g = traceback.format_exc()
-                raise NameError('Invalid Update: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, f, g))
-        db.close()
+                sql = "PRAGMA journal_mode = MEMORY;"
+                cursor.execute(sql)
+                db.commit()
+                for value_tuple in values:
+                    params = list(value_tuple[1:])
+                    params.append(value_tuple[0])
+                    statement = f"UPDATE OR IGNORE {table} SET {column_str} WHERE {where_str}"
+                    
+                    try:
+                        cursor.execute(statement, params)
+                        db.commit()
+                    except:
+                        [e, f, g] = sys.exc_info()
+                        g = traceback.format_exc()
+                        raise NameError('Invalid Update: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, f, g))
+                db.close()
+        else:
+            db, cursor = config.getDB(mapping_db = mapping_db)
+            sql = "PRAGMA synchronous = OFF;"
+            cursor.execute(sql)
+            db.commit()
+            sql = "PRAGMA journal_mode = MEMORY;"
+            cursor.execute(sql)
+            db.commit()
+            for value_tuple in values:
+                params = list(value_tuple[1:])
+                params.append(value_tuple[0])
+                statement = f"UPDATE OR IGNORE {table} SET {column_str} WHERE {where_str}"
+                
+                try:
+                    cursor.execute(statement, params)
+                    db.commit()
+                except:
+                    [e, f, g] = sys.exc_info()
+                    g = traceback.format_exc()
+                    raise NameError('Invalid Update: %s\nParam size:%s\n%s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:500]), e, f, g))
+            db.close()
 
 
 def calc_density(sorted_unique_ints: list[int]) -> float:
@@ -540,7 +642,9 @@ def select(
         equals_rows: dict[str, any] = {},
         null_columns: list[str] = [],
         n_trials: int = 3,
-        from_mapping_db: bool = False) -> list[list]:
+        from_mapping_db: bool = False,
+        locked: bool = False,
+        db_lock = None) -> list[list]:
     
     if len(rows) == 0:
         row_str = '*'
@@ -584,20 +688,50 @@ def select(
 
     statement = f'SELECT {row_str} FROM {table}{where_str}'
 
+    if db_lock is None:
+        db_lock_file = f'{config.tmp_folder}/select_lock.lock'
+  
+    else:
+        db_lock_file = f'{config.tmp_folder}/{db_lock}'
+
+
     n = 0
     while n < n_trials:  # Repeat the querry if fails for n_trials times
-        db, cursor = config.getDB(mapping_db=from_mapping_db)
-        try:
-            cursor.execute(statement, params)
-            results = cursor.fetchall()
-            db.commit()
+        broken = False
+        if locked:
+            with FileLock(db_lock_file):
+                db, cursor = config.getDB(mapping_db=from_mapping_db)
+                try:
+                    cursor.execute(statement, params)
+                    results = cursor.fetchall()
+                    db.commit()
+                    broken = True
+                except:
+                    if n == 0:
+                        [e, f, g] = sys.exc_info()
+                        g = traceback.format_exc()
+                    n += 1
+                    time.sleep(0.01)
+                finally:
+                    if db is not None:
+                        db.close()
+        else:
+            db, cursor = config.getDB(mapping_db=from_mapping_db)
+            try:
+                cursor.execute(statement, params)
+                results = cursor.fetchall()
+                db.commit()
+                broken = True
+            except:
+                if n == 0:
+                    [e, f, g] = sys.exc_info()
+                    g = traceback.format_exc()
+                n += 1
+            finally:
+                if db is not None:
+                    db.close()
+        if broken:
             break
-        except:
-            if n == 0:
-                [e, f, g] = sys.exc_info()
-                g = traceback.format_exc()
-            n += 1
-        db.close()
     if n == n_trials:
-        raise NameError('Invalid Select: %s\nParam size:%s\n%s\n%s, %s\n%s\n%s\n%s' % (statement[:500], str(len(params)), str(params[:50]), from_mapping_db, config.mapping_db, e, str(f), g))
+        raise NameError(f'Invalid Select: {statement[:500]} {len(params)=}\n{params[:50]}\n{from_mapping_db=}\n{e}\n{f}\n{g}')
     return results

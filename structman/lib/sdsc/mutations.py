@@ -6,7 +6,7 @@ from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
 
 
 class MultiMutation(Slotted_obj):
-    __slots__ = ['wt_prot', 'mut_prot', 'snvs', 'indels', 'database_id', 'stored', 'tags']
+    __slots__ = ['wt_prot', 'mut_prot', 'snvs', 'indels', 'database_id', 'stored', 'tags', 'snv_db_ids', 'indel_db_ids']
 
     def __init__(self, wt_prot, mut_prot, mutation_list, tags=None):
 
@@ -27,6 +27,8 @@ class MultiMutation(Slotted_obj):
                 self.snvs[mut[0].pos] = (mut[0].mut_aas[mut[1]])
         self.database_id = None
         self.stored = False
+        self.snv_db_ids = None
+        self.indel_db_ids = None
 
     def deconstruct(self):
        for snv in self.snvs:
@@ -39,16 +41,22 @@ class MultiMutation(Slotted_obj):
        doomsday_protocol(self)
 
     def get_snv_db_ids(self):
-        db_ids = []
+        if self.snv_db_ids is not None:
+            return self.snv_db_ids
+        db_ids = set()
         for pos in self.snvs:
             snv = self.snvs[pos]
-            db_ids.append(snv.database_id)
+            db_ids.add(snv.database_id)
+        self.snv_db_ids = db_ids
         return db_ids
 
     def get_indel_db_ids(self):
-        db_ids = []
+        if self.indel_db_ids is not None:
+            return self.indel_db_ids
+        db_ids = set()
         for indel in self.indels:
-            db_ids.append(indel.database_id)
+            db_ids.add(indel.database_id)
+        self.indel_db_ids = db_ids
         return db_ids
 
     def print_indels(self):

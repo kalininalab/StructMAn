@@ -23,7 +23,7 @@ class Complex(Slotted_obj):
     def __init__(self, pdb_id = None, resolution=None, chains_str=None, lig_profile=None, lig_profile_str=None, metal_profile=None,
                  metal_profile_str=None, ion_profile=None, ion_profile_str=None, chain_chain_profile=None,
                  chain_chain_profile_str=None, stored=False, database_id=None, homomers=None, homomers_str=None, atom_count=None,
-                 IAmap = None, interfaces = None):
+                 IAmap = None, interfaces = None, chain_names = None):
         self.pdb_id = pdb_id
         self.chains = {}  # {One-letter-chain-id:chaintype} ; possible chaintypes: 'Protein','DNA','RNA,'Peptide'
         self.chainlist = None
@@ -35,6 +35,10 @@ class Complex(Slotted_obj):
         self.metal_profile = metal_profile
         self.ion_profile = ion_profile
         self.chain_chain_profile = chain_chain_profile
+        if chain_names is None:
+            self.chain_names = {}
+        else:
+            self.chain_names = chain_names
         if homomers is None:
             self.homomers = {}
         else:
@@ -68,6 +72,7 @@ class Complex(Slotted_obj):
         if chain_chain_profile_str is not None:
             self.chain_chain_profile = self.parseProfileStr(chain_chain_profile_str)
 
+    """
     def __serialize__(self) -> list[any]:
         serialized_complex: list[any] = []
         for slot_number, attribute_name in enumerate(self.__slots__):
@@ -76,7 +81,8 @@ class Complex(Slotted_obj):
             else:
                 serialized_complex.append(None)
         return serialized_complex
-
+    """
+        
     def deconstruct(self):
         del self.chain_chain_profile
         del self.ion_profile
@@ -256,6 +262,8 @@ class Complex(Slotted_obj):
                 print(self.interfaces[chain_1][chain_2].residues)
 
     def getPage(self, config, self_update=False):
+        if config.verbosity >= 4:
+            print(f'Call of getPage in complex obj {self.pdb_id=} {self_update=} {(self.page is None)=}')
         if self_update:
             if config.model_db_active:
                 if is_alphafold_model(self.pdb_id):
@@ -270,14 +278,20 @@ class Complex(Slotted_obj):
                 config.errorlog.add_error(f'pdbParser failed: {self.pdb_id}')
                 return
 
-            (template_page, interaction_partners, chain_type_map, _, _, chainlist, _) = parse_out
+            (interaction_partners, chain_type_map, _, _, chainlist, _, _, _, _, _, _) = parse_out
 
-            print(f'In complex object getPage - self_update: interaction_partners: {interaction_partners}')
+            if config.verbosity >= 5:
+                print(f'In complex object getPage - self_update: interaction_partners: {interaction_partners}')
 
-            self.page = template_page
+            #self.page = template_page
             self.interaction_partners = interaction_partners
             self.chains = chain_type_map
             self.chainlist = chainlist
+
+            resolution, homomer_dict, chain_names = pdbParser.getInfo(self.pdb_id, config.pdb_path)
+            self.resolution = resolution
+            self.homomers = homomer_dict
+            self.chain_names = chain_names
 
         if self.page is None:
             if config.model_db_active:
@@ -287,6 +301,19 @@ class Complex(Slotted_obj):
                     model_path = None
             else:
                 model_path = None
-            page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path, model_path = model_path)
+            page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path, model_path = model_path, return_bytes=True)
             self.page = page
+            if config.verbosity >= 7:
+                print(f'Result of getPage: {self.pdb_id=} {model_path=} {page=}')
         return self.page
+
+
+class _Complex(Complex):
+    slot_mask = [
+        True,  True,   True,
+        True,  True,   True,
+        True,  True,   True,
+        True,  True,   True,
+        True,  True,   True,
+        True    
+    ]

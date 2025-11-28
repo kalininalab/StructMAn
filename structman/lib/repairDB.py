@@ -7,6 +7,7 @@ import sys
 import traceback
 import sqlite3
 import time
+import ray
 
 from structman.lib.database.database_core_functions import binningSelect, select, remove, insert
 #from structman.base_utils.config_class import Config
@@ -16,7 +17,17 @@ from structman import _version
 table_names =    [
             'Protein', 'Gene', 'Position', 'Interface', 'SNV', 'Multi_Mutation',
             'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session', 'Alignment',
-            'Position_Position_Interaction', 'Protein_Protein_Interaction', 
+            'Position_Position_Interaction',
+            'Protein_Protein_Interaction_0', 
+            'Protein_Protein_Interaction_1', 
+            'Protein_Protein_Interaction_2', 
+            'Protein_Protein_Interaction_3', 
+            'Protein_Protein_Interaction_4', 
+            'Protein_Protein_Interaction_5', 
+            'Protein_Protein_Interaction_6', 
+            'Protein_Protein_Interaction_7', 
+            'Protein_Protein_Interaction_8', 
+            'Protein_Protein_Interaction_9', 
             'RS_Protein_Session', 'RS_Protein_GO_Term', 'RS_Position_Session',
             'RS_Position_Interface', 'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
             'RS_Indel_Session', 'RS_Protein_Pathway'
@@ -27,16 +38,48 @@ structure_table_names = [
         'RS_Residue_Residue', 'RS_Residue_Interface'
     ]
 
+session_tables = [
+    'Session', 
+    'RS_Protein_Session', 'RS_Position_Session',
+    'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
+    'RS_Indel_Session'
+]
+
 table_names_in_order = [
-            'Protein', 'Gene', 'Position', 'Interface', 'SNV', 'Multi_Mutation',
-            'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session',
-            'Complex', 'Structure', 'Alignment', 'Ligand', 'Residue',
-            'RS_Ligand_Structure', 'RS_Residue_Residue', 'RS_Residue_Interface',
-            'Position_Position_Interaction', 'Protein_Protein_Interaction', 
-            'RS_Protein_Session', 'RS_Protein_GO_Term', 'RS_Position_Session',
-            'RS_Position_Interface', 'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
-            'RS_Indel_Session', 'RS_Protein_Pathway'
+            [
+                'Gene', 'Complex', 'Structure', 'Session', 'GO_Term', 'Pathway', 'Ligand',
+            ],
+            [
+                'Protein', 'Interface', 'Residue', 'RS_Ligand_Structure', 
+            ],
+            [
+                'Alignment', 'RS_Residue_Interface',
+                'Position', 'Multi_Mutation',
+                'Protein_Protein_Interaction_0', 
+                'Protein_Protein_Interaction_1', 
+                'Protein_Protein_Interaction_2', 
+                'Protein_Protein_Interaction_3', 
+                'Protein_Protein_Interaction_4', 
+                'Protein_Protein_Interaction_5', 
+                'Protein_Protein_Interaction_6', 
+                'Protein_Protein_Interaction_7', 
+                'Protein_Protein_Interaction_8', 
+                'Protein_Protein_Interaction_9',
+                'RS_Protein_Session', 'Indel',
+                'RS_Protein_GO_Term', 'RS_Protein_Pathway', 
+            ],
+            [
+                'Position_Position_Interaction', 'SNV',
+                'RS_Residue_Residue', 
+                'RS_Position_Session',
+                'RS_Multi_Mutation_Session', 
+                'RS_Indel_Session', 'RS_Position_Interface',
+                'RS_Isoform'
+            ],
+            [
+                'RS_SNV_Session'
             ]
+        ]
 
 
 # Tries to reclassify all positions with no classification in the database
@@ -77,14 +120,9 @@ def remove_sessions(config):
         sql_commands =  ['SET FOREIGN_KEY_CHECKS=0;']
         truncate_command = "TRUNCATE"
 
-    sql_commands += [
-                    f'{truncate_command} Session;',
-                    f'{truncate_command} RS_Protein_Session;',
-                    f'{truncate_command} RS_Position_Session;',
-                    f'{truncate_command} RS_Indel_Session;',
-                    f'{truncate_command} RS_SNV_Session;',
-                    f'{truncate_command} RS_Multi_Mutation_Session;'
-                    ]
+
+    for table_name in session_tables:
+        sql_commands.append(f'{truncate_command} {table_name};')
 
     if sqlite:
         sql_commands.append('PRAGMA foreign_keys = 1;')
@@ -149,6 +187,15 @@ def reset(config, keep_structures=False):
             print("Error: ", e, f, g)
 
     db.close()
+
+
+def get_base_info(cursor):
+    cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_allowed_packet'")
+    max_package_size = cursor.fetchone()[1]
+
+    cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_connections'")
+    max_connections = cursor.fetchone()[1]
+    return max_package_size, max_connections
 
 
 def reduceToStructures(config, infile):
@@ -378,7 +425,6 @@ def load(config):
 
     insert_meta_data(config)
 
-
 def check_structman_version(config):
 
     meta = select(config, ['StructMAn_Version', 'PPI_Feature'], 'Database_Metadata')
@@ -445,8 +491,11 @@ def reroll(config):
         elif last_session < row[0]:
             last_session = row[0]
 
-    
-def clone_table(config: any, table_name: str, target_db: str) -> None:
+@ray.remote
+def r_clone_table(config: any, table_name: str, target_db: str) -> None:
+    clone_table_v2(config, table_name, target_db)
+
+def clone_table(config, table_name, target_db):
     t0 = time.time()
     print(f'Cloning {table_name}')
 
@@ -479,16 +528,53 @@ def clone_table(config: any, table_name: str, target_db: str) -> None:
     t2 = time.time()
     print(f'  Time for insert: {t2-t1}')
 
+def clone_table_v2(config, table_name, target_db):
+    t0 = time.time()
+    print(f'Cloning {table_name}')
+    db, cursor = config.getDB(server_connection=True)
+
+    sql = f'CREATE Table `{target_db}`.{table_name} LIKE `{config.db_name}`.{table_name};'
+
+    cursor.execute(sql)
+    db.commit()
+    t1 = time.time()
+    print(f'  Time for creating structure of {table_name}: {t1-t0}')
+
+    sql = f'INSERT INTO `{target_db}`.{table_name} SELECT * FROM `{config.db_name}`.{table_name};'
+
+    cursor.execute(sql)
+    db.commit()
+    t2 = time.time()
+    print(f'  Time for copying data of {table_name}: {t2-t1}')
+
+    db.close()
+
 
 def clone_db(config: any, target_db_name: str) -> None:
     t0 = time.time()
-    tables: list[str] = table_names_in_order
+    tables: list[list[str]] = table_names_in_order
 
     print('============ Database clone ===============')
     print(f'From {config.db_name} to {target_db_name}\n')
 
-    for table_name in tables:
-        clone_table(config, table_name, target_db_name)
+    conf_dump = ray.put(config)
+
+    
+    db, cursor = config.getDB(server_connection=True)
+    sql = f'CREATE DATABASE `{target_db_name}`'
+
+    cursor.execute(sql)
+    db.commit()
+
+    db.close()
+
+    for table_names in tables:
+        clone_proc_ids = []
+        for table_name in table_names:
+            clone_proc_ids.append(r_clone_table.remote(conf_dump, table_name, target_db_name))
+            #clone_table_v2(config, table_name, target_db_name)
+
+        ray.get(clone_proc_ids)
 
     t1 = time.time()
     print(f'Total time for cloning: {t1-t0}')

@@ -79,34 +79,30 @@ class Position(Slotted_obj):
             return True
 
     def fuse(self, position):
-        warn = False
         if self.pos != position.pos:
-            raise NameError('Cannot fuse positions with differing pos numbers')
+            return f'Cannot fuse positions with differing pos numbers {self.pos=} {position.pos=}'
 
         if self.pdb_res_nr != position.pdb_res_nr:
-            raise NameError('Cannot fuse positions with differing pdb_res_nr')
+            return f'Cannot fuse positions with differing pdb_res_nr {self.pdb_res_nr=} {position.pdb_res_nr=}'
 
         if self.wt_aa != position.wt_aa:
-            #print('Warning: fuse positions with different WT AAs:',self.pos,self.pdb_res_nr,self.wt_aa,position.wt_aa)
-            warn = True
+            return f'Cannot fuse positions with different WT AAs: {self.pos=} {self.pdb_res_nr=} {self.wt_aa=} {position.wt_aa=}'
 
-        try:
-            if self.pos_tags is not None and position.pos_tags is not None:
-                self.pos_tags = self.pos_tags | position.pos_tags
-            elif position.pos_tags is not None:
-                self.pos_tags = position.pos_tags
+        
+        if self.pos_tags is not None and position.pos_tags is not None:
+            self.pos_tags = self.pos_tags | position.pos_tags
+        elif position.pos_tags is not None:
+            self.pos_tags = position.pos_tags
 
-            for aa in position.mut_aas:
-                if aa not in self.mut_aas:
-                    self.mut_aas[aa] = position.mut_aas[aa].copy()
-                else:
-                    self.mut_aas[aa].fuse(position.mut_aas[aa])
-        except:
-            pass
+        for aa in position.mut_aas:
+            if aa not in self.mut_aas:
+                self.mut_aas[aa] = position.mut_aas[aa].copy()
+            else:
+                self.mut_aas[aa].fuse(position.mut_aas[aa])
+        
         position.deconstruct()
         #del position
-        return warn
-
+        return None
     def add_tags(self, tags):
         if self.pos_tags is not None:
             self.pos_tags = self.pos_tags | tags

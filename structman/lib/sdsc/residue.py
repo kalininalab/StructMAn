@@ -25,7 +25,7 @@ class Residue_Map(Slotted_obj, Generic[T]):
             except:
                 self.add_strkey_item(key, value)
 
-    def add_intkey_item(self, intkey, value):
+    def add_intkey_item(self, intkey: int, value: any) -> None:
         self.value_list.insert(intkey, value)
 
     def add_strkey_item(self, strkey, value):

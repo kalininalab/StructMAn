@@ -1,5 +1,6 @@
 import os
 import sys
+import gzip
 import traceback
 import math
 import igraph as ig
@@ -8,6 +9,8 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 import ray
+
+from itertools import cycle
 
 try:
     import biotite.sequence as seq
@@ -35,6 +38,7 @@ from structman.lib.lib_utils import fuse_multi_mutations, generate_multi_mutatio
 from structman.lib.output import out_generator, out_utils, massmodel
 from structman.base_utils.base_utils import resolve_path, calculate_chunksizes
 from structman.lib.sdsc.mutations import MultiMutation
+from structman.lib.sdsc.consts.residues import ONE_TO_THREE, THREE_TO_ONE
 
 class Gene:
 
@@ -143,8 +147,11 @@ def calcWeightedGI(isoforms, proteins, protein_list, wt_condition_tag, disease_c
         expression_d_condition_prot_a = prot_a.retrieve_tag_value(disease_condition_tag)
         if prot_a.primary_protein_id not in isoform_expressions:
             isoform_expressions[prot_a.primary_protein_id] = expression_wt_condition_prot_a, expression_d_condition_prot_a
+        
         expression_wt_condition_prot_b = prot_b.retrieve_tag_value(wt_condition_tag)
         expression_d_condition_prot_b = prot_b.retrieve_tag_value(disease_condition_tag)
+        if prot_b.primary_protein_id not in isoform_expressions:
+            isoform_expressions[prot_b.primary_protein_id] = expression_wt_condition_prot_b, expression_d_condition_prot_b
 
         if expression_wt_condition_prot_a is None:
             isoform_pair_scores[(prot_a.primary_protein_id, prot_b.primary_protein_id)] = 0.
@@ -356,7 +363,12 @@ def generate_new_multi_mutation(proteins, config, aligner_class, prot_a, prot_b)
 
 def calculate_gene_isoform_score_dict(session_id, config, proteins = None, create_gene_class = False, target_genes = None, return_prot_db_ids = False):
     if proteins is None:
-        proteins = database.proteinsFromDb(session_id, config, with_multi_mutations = True, with_mappings = True, with_alignments=True)
+        proteins = database.proteinsFromDb(
+            session_id, config,
+            with_multi_mutations = True,
+            with_mappings = True,
+            with_alignments=True,
+            input_id_is_majored = True)
 
     gene_isoform_map, gene_id_map = init_gene_maps(session_id, config, proteins)
 
@@ -388,15 +400,22 @@ def calculate_gene_isoform_score_dict(session_id, config, proteins = None, creat
                 isoform_prot_objs[prot_a.primary_protein_id] = prot_a
                 if return_prot_db_ids:
                     prot_db_ids.add(prot_a_db_id)
-            
+            if prot_b.primary_protein_id not in isoform_prot_objs:
+                isoform_prot_objs[prot_b.primary_protein_id] = prot_b
+                if return_prot_db_ids:
+                    prot_db_ids.add(prot_b_db_id)
 
         if config.verbosity >= 3:
             print(f'Call of calculateGeneIsoformScore for {gene_id} {len(isoforms)}\n')
 
-        gi_score, wt, weighted_gi_score, max_contribution_isoform, contribution_score, isoform_pair_scores, isoform_expressions = calculateGeneIsoformScore(isoforms, proteins, wt_condition_tag = config.condition_1_tag, disease_condition_tag = config.condition_2_tag)
+        (gi_score, wt, weighted_gi_score, 
+         max_contribution_isoform,
+         contribution_score,
+         isoform_pair_scores,
+         isoform_expressions) = calculateGeneIsoformScore(isoforms, proteins, wt_condition_tag = config.condition_1_tag, disease_condition_tag = config.condition_2_tag)
 
         if config.verbosity >= 3:
-            print(f'GI Score for {gene_id}: {gi_score} {len(isoform_pair_scores)}')
+            print(f'GI Score for {gene_id=}: {gi_score=} {len(isoform_pair_scores)=} {isoforms=}')
 
         if create_gene_class:
             gene_class = Gene(gene_id, gene_name, isoforms, isoform_pair_scores, isoform_expressions, isoform_prot_objs)
@@ -491,8 +510,11 @@ def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cm
     longest_isoform = None
     usage_plots = {}
     for isoform in gene_class.isoforms:
-
+        
         expression_wt_condition, expression_d_condition, prot_object = gene_class.isoforms[isoform]
+        if config.verbosity >= 3:
+            print(f'In isoform_relations_plot: {isoform=} {expression_wt_condition=} {expression_d_condition}')
+
         if (expression_d_condition == 0 and expression_wt_condition == 0) or expression_wt_condition is None or expression_d_condition is None:
             insignificant_isoforms.add(isoform)
             continue
@@ -579,7 +601,8 @@ def create_isoform_relations_plot(config, gene_name, gene_isoform_score_dict, cm
         if isoform not in top_4_isoforms:
             insignificant_isoforms.add(isoform)
 
-    #print(insignificant_isoforms)
+    if config.verbosity >= 3:
+        print(f'In isoform_relations_plot: {insignificant_isoforms=} {node_ids=}')
 
     node_colors = []
     for isoform in node_id_list:
@@ -1071,7 +1094,10 @@ def gene_report_preprocess(chunk, store):
         if config.verbosity >= 3:
             print(f'Creating Gene Report for {gene_class.gene_id} - {gene_class.name}')
 
-        path_to_isoform_relations_plot, longest_isoform, uninterresting_isoform_pairs, path_to_gene_expression_plot, usage_plots, insignificant_isoforms = create_isoform_relations_plot(config, target, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = config.condition_1_tag, condition_2_label = config.condition_2_tag)
+        (path_to_isoform_relations_plot,
+         longest_isoform, uninterresting_isoform_pairs, 
+         path_to_gene_expression_plot, 
+         usage_plots, insignificant_isoforms) = create_isoform_relations_plot(config, target, gene_isoform_score_dict, cmap, outfile_stem, condition_1_label = config.condition_1_tag, condition_2_label = config.condition_2_tag)
 
         uninterresting_isoform_pairs_dict[target] = (insignificant_isoforms, uninterresting_isoform_pairs)
 
@@ -1084,14 +1110,15 @@ def gene_report_preprocess(chunk, store):
             print(f'Input for sequence plot for {target}:\n{input_for_sequence_plot}')
 
         try:
-            paths_to_isoform_plot = create_isoform_plot(input_for_sequence_plot, out_f, session_name, target)
+            paths_to_isoform_plot, aligned_sequences = create_isoform_plot(input_for_sequence_plot, out_f, session_name, target)
         except:
             paths_to_isoform_plot = None
+            aligned_sequences = None
             [e, f, g] = sys.exc_info()
             g = traceback.format_exc()
             errors.append(f"Creating the isoform plot failed due to:\n{e}\n{f}\n{g}")
 
-        plot_dict[target] = (path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots)
+        plot_dict[target] = (path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots, aligned_sequences)
 
         #whole_graph = retrieve_sub_graph(gml_file, config, out_f, session_name, target, depth = 1, filtered = False, whole_graph = whole_graph, return_whole_graph=True)
     return plot_dict, uninterresting_isoform_pairs_dict, errors
@@ -1194,15 +1221,18 @@ def create_gene_report(session_id, target, config, out_f, session_name):
         blacklist = blacklist | insignificant_isoforms
 
     if config.verbosity >= 3:
-        print(f'Blacklist: {blacklist}')
+        print(f'Blacklist: {blacklist} {list(proteins.protein_map.keys())=}')
 
-    massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids, skip_individual_indel_mutants = True, blacklist = blacklist, update_proteins = proteins.protein_map)
+    #massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids, skip_individual_indel_mutants = True, blacklist = blacklist, update_proteins = proteins.protein_map)
+    complexes = massmodel.mass_model(session_id, config, out_f, with_multi_mutations = True, prot_db_ids = prot_db_ids, skip_individual_indel_mutants = True, blacklist = blacklist)
+
     md_lines = [f"# **--- Gene Report for {session_name} ---**\n\n\n"]
     for target in targets:
         gene_class = gene_isoform_score_dict[target][5]
         model_plot_dicts = {}
+        aligned_sequences = plot_dict[target][4]
         for isoform in gene_class.isoforms:
-           model_plot_dicts[isoform] = create_pymol_plot(config, out_f, isoform, uninterresting_isoform_pairs_dict[target][1])
+           model_plot_dicts[isoform] = create_pymol_plot(config, out_f, isoform, uninterresting_isoform_pairs_dict[target][1], aligned_sequences, complexes)
         if target in plot_dict:
             md_lines += create_markdown(config, out_f, model_plot_dicts, gene_class.name, target, plot_dict[target])
         else:
@@ -1334,8 +1364,251 @@ def retrieve_sub_graph(ggin_file, config, out_f, session_name, target, depth = 2
     if return_whole_graph:
         return g
 
+def parse_network(network_file, interaction_score_file, model_chain, seq_buffer):
+    f = gzip.open(interaction_score_file, 'r')
+    lines = f.readlines()
+    f.close()
 
-def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=200):
+    interfaces = {}
+
+    max_score = 0.
+
+    for line in lines[1:]:
+        try:
+            res_a, edge, res_b, score = line[:-1].decode('ascii').split()
+        except:
+            print(line.decode('ascii'))
+            continue
+        if edge[:6] != '(combi':
+            continue
+        score = float(score)
+        if score < 0.:
+            score = 0.
+        if score > max_score:
+            max_score = score
+
+        chain_a, pos_a, ins_code_a, tlc_a = res_a.split(':')
+        chain_b, pos_b, ins_code_b, tlc_b = res_b.split(':')
+
+        if chain_a == chain_b:
+            continue
+
+        if chain_a != model_chain and chain_b != model_chain:
+            continue
+
+        if chain_b == model_chain:
+            chain_a, pos_a, ins_code_a, tlc_a = res_b.split(':')
+            chain_b, pos_b, ins_code_b, tlc_b = res_a.split(':')
+
+        pos_a = int(pos_a) + seq_buffer
+
+        res_nr_a = pos_a
+        res_nr_b = f'{pos_b}{ins_code_b}'.replace('_','')
+
+        if not chain_b in interfaces:
+            interfaces[chain_b] = {}
+        if not res_nr_b in interfaces[chain_b]:
+            interfaces[chain_b][res_nr_b] = (tlc_b, {})
+        if not res_nr_a in interfaces[chain_b][res_nr_b][1]:
+            interfaces[chain_b][res_nr_b][1][res_nr_a] = tlc_a, score
+
+    return interfaces, max_score
+
+def make_alignment_dict(wt_prot, mut_prot, aligned_sequences):
+    al_wt_seq = aligned_sequences[wt_prot]
+    al_mut_seq = aligned_sequences[mut_prot]
+
+    wt_to_mut_map = [None]
+
+    mut_pos = 0
+
+    for seq_pos, aa in enumerate(al_wt_seq):
+        mut_aa = al_mut_seq[seq_pos]
+        if mut_aa != '-':
+            mut_pos += 1
+        if aa != '-':
+            wt_to_mut_map.append((mut_pos, mut_aa))
+    return wt_to_mut_map
+
+def superimpose_networks(wt_prot, target_network, target_interaction_scores, mut_prot, mut_network, mut_interaction_scores, model_chain, outfile, seq_buffer, aligned_sequences):
+    def add_node(residue_id, aa_three_letter_code, nodes_dict, nodes_list, node_colors, color, al_map = None, chain_id = '', flipped = False):
+        aa_one_letter_code = THREE_TO_ONE[aa_three_letter_code]
+        if al_map is not None:
+            res_pos = residue_id
+            mut_pos, mut_aa = al_map[res_pos]
+            if mut_aa == '-':
+                if flipped:
+                    node_id = f'{chain_id}-/{residue_id}{aa_one_letter_code}'
+                else:
+                    node_id = f'{chain_id}{residue_id}{aa_one_letter_code}/-'
+            elif mut_aa == aa_one_letter_code and mut_pos == res_pos:
+                node_id = f'{chain_id}{residue_id}{aa_one_letter_code}'
+            else:
+                if flipped:
+                    node_id = f'{chain_id}{mut_pos}{mut_aa}/{residue_id}{aa_one_letter_code}'
+                else:
+                    node_id = f'{chain_id}{residue_id}{aa_one_letter_code}/{mut_pos}{mut_aa}'
+
+        else:    
+            node_id = f'{chain_id}-{residue_id}{aa_one_letter_code}'
+        if node_id not in nodes_dict:
+            nodes_dict[node_id] = len(nodes_dict)
+            nodes_list.append(node_id)
+            node_colors.append(color)
+        return node_id
+
+    def add_edge(node_a, node_b, nodes_dict, edge_name_tuples, edge_list, edge_colors, color, edge_weights, score, max_score, mut_score = None):
+        
+        if mut_score is not None:
+            if abs((mut_score/max_score) - (score/max_score)) > 0.2:
+                edge_name_tuples.append((node_a, node_b))
+                edge_list.append((nodes_dict[node_a], nodes_dict[node_b]))
+                edge_colors.append('red')
+                ew = 5*(0.1 + (score/max_score))
+                edge_weights.append(ew)
+
+                edge_name_tuples.append((node_a, node_b))
+                edge_list.append((nodes_dict[node_a], nodes_dict[node_b]))
+                edge_colors.append('blue')
+                ew = 5*(0.1 + (mut_score/max_score))
+                edge_weights.append(ew)
+            else:
+                edge_name_tuples.append((node_a, node_b))
+                edge_list.append((nodes_dict[node_a], nodes_dict[node_b]))
+                edge_colors.append(color)
+                ew = 5*(0.1 + (score/max_score))
+                edge_weights.append(ew)
+
+        else:
+            edge_name_tuples.append((node_a, node_b))
+            edge_list.append((nodes_dict[node_a], nodes_dict[node_b]))
+            edge_colors.append(color)
+            ew = 5*(0.1 + (score/max_score))
+            edge_weights.append(ew)
+
+    if not os.path.isfile(target_network):
+        print(f'Call of superimpose_networks failed {target_network=} is not a file')
+        return
+    if not os.path.isfile(mut_network):
+        print(f'Call of superimpose_networks failed {mut_network=} is not a file')
+        return
+    
+    print(f'Call of superimpose_networks {seq_buffer=}:\n{wt_prot=} {target_network}\n{mut_prot=} {mut_network}\n{aligned_sequences=}')
+
+    wt_network, max_wt_score = parse_network(target_network, target_interaction_scores, model_chain, seq_buffer)
+    mut_network, max_mut_score = parse_network(mut_network, mut_interaction_scores, model_chain, seq_buffer)
+
+    wt_to_mut_map = make_alignment_dict(wt_prot, mut_prot, aligned_sequences)
+    mut_to_wt_map = make_alignment_dict(mut_prot, wt_prot, aligned_sequences)
+
+    #print(wt_network)
+    #print(mut_network)
+
+    superimposed_nodes = []
+    node_colors = []
+    chain_color_dict = {model_chain:'white'}
+    chain_colors = cycle(['red', 'grey','cyan', 'green', 'yellow', 'purple', 'orange'])
+    
+    nodes_dict = {}
+    superimposed_edges = []
+    edge_list = []
+    edge_colors = []
+    edge_weights = []
+
+    for ichain in wt_network:
+        #Complete interface is lost
+        if ichain not in chain_color_dict:
+            chain_color_dict[ichain] = next(chain_colors)
+        if ichain not in mut_network:
+            for ires in wt_network[ichain]:
+                itlc, tres_dict = wt_network[ichain][ires]
+                node_a = add_node(ires, itlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[ichain], chain_id=ichain)
+                
+                for tres in tres_dict:
+                    ttlc, score = tres_dict[tres]
+                    node_b = add_node(tres, ttlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[model_chain], al_map=wt_to_mut_map)
+                    add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'red', edge_weights, score, max_wt_score)
+
+        else:
+            for ires in wt_network[ichain]:
+                itlc, tres_dict = wt_network[ichain][ires]
+                node_a = add_node(ires, itlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[ichain], chain_id=ichain)
+                if not ires in mut_network[ichain]:
+                    for tres in tres_dict:
+                        ttlc, score = tres_dict[tres]
+                        node_b = add_node(tres, ttlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[model_chain], al_map=wt_to_mut_map)
+                        add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'red', edge_weights, score, max_wt_score)
+                else:
+                    for tres in tres_dict:
+                        ttlc, score = tres_dict[tres]
+                        mut_pos, mut_aa = wt_to_mut_map[tres]
+
+                        node_b = add_node(tres, ttlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[model_chain], al_map=wt_to_mut_map)
+                        if not mut_pos in mut_network[ichain][ires][1]:
+                            add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'red', edge_weights, score, max_wt_score)
+                        else:
+                            mut_score = mut_network[ichain][ires][1][mut_pos][1]
+                            add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'grey', edge_weights, score, max_wt_score, mut_score = mut_score)             
+
+    
+    for ichain in mut_network:
+        if ichain not in chain_color_dict:
+            chain_color_dict[ichain] = next(chain_colors)
+        if ichain not in wt_network:
+            for ires in mut_network[ichain]:
+                itlc, tres_dict = mut_network[ichain][ires]
+                node_a = add_node(ires, itlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[ichain], chain_id=ichain)
+                for tres in tres_dict:
+                    ttlc, score = tres_dict[tres]
+                    node_b = add_node(tres, ttlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[model_chain], al_map=mut_to_wt_map, flipped=True)
+                    add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'blue', edge_weights, score, max_mut_score)
+        else:
+            for ires in mut_network[ichain]:
+                itlc, tres_dict = mut_network[ichain][ires]
+                node_a = add_node(ires, itlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[ichain], chain_id=ichain)
+                if not ires in wt_network[ichain]:
+                    for tres in tres_dict:
+                        ttlc, score = tres_dict[tres]
+                        node_b = add_node(tres, ttlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[model_chain], al_map=mut_to_wt_map, flipped=True)
+                        add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'blue', edge_weights, score, max_mut_score)
+                else:
+                    for tres in tres_dict:
+                        mut_pos, mut_aa = mut_to_wt_map[tres]
+                        if not mut_pos in wt_network[ichain][ires][1]:
+                            ttlc, score = tres_dict[tres]
+                            node_b = add_node(tres, ttlc, nodes_dict, superimposed_nodes, node_colors, chain_color_dict[model_chain], al_map=mut_to_wt_map, flipped=True)
+                            add_edge(node_a, node_b, nodes_dict, superimposed_edges, edge_list, edge_colors, 'blue', edge_weights, score, max_mut_score)
+
+    for edge_nr, edge in enumerate(superimposed_edges):
+        print(f'{edge} {edge_colors[edge_nr]} {edge_weights[edge_nr]}')
+    g = ig.Graph(n = len(nodes_dict), edges = edge_list)
+
+    g.vs['name'] = superimposed_nodes
+    g.es['edge_colors'] = edge_colors
+
+    node_size = 40
+    margin = node_size // 2
+    graph_size = ((2.5*math.sqrt(len(superimposed_nodes))*node_size)) + 2*margin
+
+    layout = g.layout('fruchterman_reingold')
+    visual_style = {}
+    visual_style['layout'] = layout
+    visual_style['margin'] = margin
+    visual_style['bbox'] = (graph_size, graph_size)
+
+    visual_style['vertex_label'] = g.vs['name']
+    visual_style['vertex_label_size'] = node_size // 6
+    visual_style['vertex_size'] = node_size
+    visual_style['vertex_color'] = node_colors
+    
+    visual_style['edge_width'] = edge_weights
+    visual_style['edge_color'] = edge_colors
+
+    ig.plot(g, outfile, **visual_style)
+    return chain_color_dict
+
+
+def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, aligned_sequences, complexes, dpi=200):
     
     import structman.scripts.spectrumany as pymol_spectrumany
 
@@ -1359,6 +1632,9 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
     list_of_paths = model_summary['File location']
     prot_ids = model_summary['Wildtype protein']
     mut_prot_ids = model_summary['Additional Label']
+    template_ids = model_summary['Template PDB ID']
+    chains = model_summary['Model chain']
+    seq_buffers = model_summary['Sequence buffer']
     plot_dict = {}
     
     if not os.path.exists(pymol_out_f):
@@ -1374,6 +1650,15 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
         mut_prot_id = mut_prot_ids[pos]
         if (prot_id, mut_prot_id) in uninterresting_isoform_pairs:
             continue
+
+        target_network_file = f'{file[:-4]}.sif.gz'
+        target_interaction_score_file = f'{file[:-4]}_intsc.ea.gz'
+        folder_stem = os.path.dirname(target_network_file)
+        mutant_network_file = f'{folder_stem}/{mut_prot_id}-_{template_ids[pos]}:{chains[pos]}.sif.gz'
+        mutant_interaction_score_file = f'{folder_stem}/{mut_prot_id}-_{template_ids[pos]}:{chains[pos]}_intsc.ea.gz'
+        interface_edge_plot_file = f'{pymol_out_f}/interface_diff_{prot_id}_{mut_prot_id}_{template_ids[pos]}:{chains[pos]}.svg'
+        chain_color_dict = superimpose_networks(prot_id, target_network_file, target_interaction_score_file, mut_prot_id, mutant_network_file, mutant_interaction_score_file, chains[pos], interface_edge_plot_file, seq_buffers[pos], aligned_sequences)
+
         pymol_cmd.delete('all')
         pymol_cmd.load(file)
 
@@ -1383,6 +1668,7 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
         # if selection is set to all, change also in 1393, colors all interacting molecules by assigned b factor
         #pymol_cmd.spectrum("b", "blue_white_red", "n. ca", minimum=0.00, maximum=100.00)
         #pymol_spectrumany.spectrumany("b", "blue white cyan brightorange red", "n. ca", minimum=0.00, maximum=100.00)
+
         pymol_spectrumany.spectrumany("b", "black white cyan blue red", "n. ca", minimum=0.00, maximum=100.00)
         
         pymol_cmd.orient()
@@ -1471,7 +1757,13 @@ def create_pymol_plot(config, out_f, target, uninterresting_isoform_pairs, dpi=2
         # pymol_cmd.png(outfile, width=1200, dpi=300, ray=1)
         # pymol_cmd.delete('all')
 
-        plot_dict[mut_prot_id] = outfile
+        complexes[template_ids[pos]].getPage(config, self_update = True)
+        chain_names = complexes[template_ids[pos]].chain_names
+
+        if config.verbosity >= 3:
+            print(f'{target=} {template_ids[pos]} {chain_names=} {chain_color_dict=}')
+
+        plot_dict[mut_prot_id] = outfile, interface_edge_plot_file, template_ids[pos], chains[pos], chain_names, chain_color_dict
 
     return plot_dict
 
@@ -1482,7 +1774,7 @@ def create_markdown(config, out_f, model_plot_dicts, gene_name, target, plots):
     if config.verbosity >= 2:
         print(f'Calling of create_markdown: target {target}')
 
-    path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots = plots
+    path_to_isoform_relations_plot, paths_to_isoform_plot, path_to_gene_expression_plot, usage_plots, aligned_sequences = plots
     md_lines = []
     md_lines.append(f"\n\n# Report for {target} - {gene_name}\n\n")
     if paths_to_isoform_plot is not None:
@@ -1504,8 +1796,15 @@ def create_markdown(config, out_f, model_plot_dicts, gene_name, target, plots):
     for isoform in model_plot_dicts:
         md_lines.append(f'## Structure models for: {isoform}:\n')
         for mutant_isoform in model_plot_dicts[isoform]:
-            md_lines.append(f'### Difference to {mutant_isoform}:\n')
-            add_figure_to_md(md_lines, f'structure_{isoform}_{mutant_isoform}', model_plot_dicts[isoform][mutant_isoform])
+            model_path, interface_edge_plot_file, pdb_id, target_chain, chain_names, chain_color_dict = model_plot_dicts[isoform][mutant_isoform]
+            md_lines.append(f'### Difference to {mutant_isoform} - Template: {pdb_id}:{target_chain}\n')
+            add_figure_to_md(md_lines, f'structure_{isoform}_{mutant_isoform}', model_path)
+            for chain in chain_names:
+                if chain_color_dict is not None:
+                    if chain in chain_color_dict:
+                        md_lines.append(f'### {chain} ({chain_color_dict[chain]}): {chain_names[chain]}\n')
+            if os.path.isfile(interface_edge_plot_file):
+                add_figure_to_md(md_lines, f'interface_diff_plot_{isoform}_{mutant_isoform}', interface_edge_plot_file)
     md_lines.append('<div style="page-break-after: always;"></div>')
     return md_lines
 
@@ -1676,6 +1975,8 @@ def create_isoform_plot(obj, out_f, session_name, target):
     aligned_sequences = align_by_mutation_list(major_sequence_raw, isoform_sequences, isoforms, major_isoform_id)
     isoform_classifications[major_isoform_id] = classifications
 
+    #print(f'{aligned_sequences=}')
+
     all_classifications = {}
     #insert gaap classifications
    
@@ -1691,7 +1992,7 @@ def create_isoform_plot(obj, out_f, session_name, target):
             if char == '-':
                 all_classifications[isoform_id].append('gap')
             else:
-                if i in isoform_classifications[isoform_id]:
+                if i < len(isoform_classifications[isoform_id]):
                     original_classification = isoform_classifications[isoform_id][i]
                     if original_classification == "None":
                         all_classifications[isoform_id].append("NA")
@@ -1804,7 +2105,7 @@ def create_isoform_plot(obj, out_f, session_name, target):
                     chunked_positions.append('')
                     count += 1
             i += 1
-    return paths
+    return paths, aligned_sequences
 
 def plot_legend(legend, outfile):
     fig = legend.figure

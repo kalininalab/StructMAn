@@ -116,9 +116,9 @@ def parseHits(
             if not len(chain) > 1:
                 chain: str = hits[pdb_id][0]
                 oligos: set[str] = hits[pdb_id][1]
-                if not pdb_id in entries[prot_id]:
+                if pdb_id not in entries[prot_id]:
                     entries[prot_id][pdb_id] = {}
-                if not chain in entries[prot_id][pdb_id]:
+                if chain not in entries[prot_id][pdb_id]:
                     entries[prot_id][pdb_id][chain] = (seq_id, coverage, oligos, aln_length, target_len)
                 else:
                     if aln_length > entries[prot_id][pdb_id][chain][3]:
@@ -144,7 +144,7 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
 
     debug_store = False
 
-    if verbosity >= 4:
+    if verbosity >= 5:
         if len(small_proteins) == 0:
             cmds = [mmseqs2_path, 'easy-search', temp_fasta, search_db, temp_outfile, mmseqs_tmp_folder, '--format-output', out_format_str,
                     '--max-seqs', number_of_returned_hits, '--min-aln-len', '50', '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * gigs_of_ram)]
@@ -180,7 +180,7 @@ def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of
     if verbosity >= 3:
         print(f'MMseqs2 returned: {temp_outfile}')
 
-    if verbosity >= 6:
+    if verbosity >= 8:
         f = open(temp_outfile, 'r')
         print(f.read())
         f.close()

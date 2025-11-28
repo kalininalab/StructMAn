@@ -2,6 +2,7 @@ import sys
 from structman.lib.sdsc.consts import codons
 from structman.lib.sdsc.indel import Indel
 from structman.lib.sdsc.mutations import MultiMutation
+import structman.lib.sdsc.structure as structure_package
 from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol, Slotted_obj
 from structman.lib.sdsc.position import Position
 
@@ -14,8 +15,8 @@ class Protein(Slotted_obj):
         'sequence',                 'nucleotide_sequence',          'stored',
         'completely_stored',        'wildtype_protein',             'gene',
         'tags',                     'go_terms',                     'pathways',
-        'database_id',              'structure_annotations',        'mapped_complexes',    
-        'input_id',                 'multi_mutations',              'aggregated_contact_matrix',
+        'database_id',              'structure_annotations',        
+        'input_id',                 'multi_mutations',              
         'aggregated_interface_map', 'mutant_type',                  'sav_positions',
         'insertion_positions',      'deletion_flanks',              'number_of_mappings'
         ]
@@ -26,26 +27,26 @@ class Protein(Slotted_obj):
         True, True, True,
         False, True, True,
         True, True, True,
-        True, True, True,
-        True, True, True,
-        True, True, True,
+        False, False, False,
+        True, True,
+        True, False, 
         True, True, True,
         True, True, True      
     ]
 
     def __init__(self, errorlog = None, primary_protein_id=None, u_ac=None, u_id=None, ref_id=None, ref_nt_id = None, wildtype_protein=None, gene = None,
-                 pdb_id=None, positions=[], database_id=None, other_ids=[], input_id=None, sequence=None, aggregated_contact_matrix = {},
+                 pdb_id=None, positions=[], database_id=None, other_ids=[], input_id=None, sequence=None,
                  aggregated_interface_map = {}, mutant_type = None, sav_positions = None, insertion_positions = None, deletion_flanks = None,
                  tags = None
                 ):
-        self.primary_protein_id = primary_protein_id
-        self.u_ac = u_ac  # UNIPROT accession number
-        self.u_id = u_id  # UNIPROT ID
-        self.ref_id = ref_id  # RefSeq ID
-        self.ref_nt_id = ref_nt_id
-        self.pdb_id = pdb_id
-        self.input_id = input_id
-        self.positions = [None]
+        self.primary_protein_id: str | None = primary_protein_id
+        self.u_ac: str | None = u_ac  # UNIPROT accession number
+        self.u_id: str | None = u_id  # UNIPROT ID
+        self.ref_id: str | None = ref_id  # RefSeq ID
+        self.ref_nt_id: str | None = ref_nt_id
+        self.pdb_id: str | None = pdb_id
+        self.input_id: str | None = input_id
+        self.positions: list[Position] = [None]
         self.res_id_map = {}
         self.sequence = sequence
         self.nucleotide_sequence = None
@@ -56,10 +57,8 @@ class Protein(Slotted_obj):
         self.go_terms = {}
         self.pathways = {}
         self.structure_annotations = {}
-        self.mapped_complexes = set()
         self.multi_mutations = []
         self.wildtype_protein = wildtype_protein
-        self.aggregated_contact_matrix = aggregated_contact_matrix
         self.aggregated_interface_map = aggregated_interface_map
         self.mutant_type = mutant_type # Can be None, 'SAV', 'indel', or 'multi'
         self.sav_positions = sav_positions
@@ -134,7 +133,6 @@ class Protein(Slotted_obj):
         warns = []
         del_list = []
         for p, position in enumerate(positions):
-            warn = False
             if position.pos >= len(self.positions):
                 d = position.pos - len(self.positions)
                 for _ in range(d):
@@ -143,10 +141,10 @@ class Protein(Slotted_obj):
             elif self.positions[position.pos] is None:
                 self.positions[position.pos] = position
             elif position.pos is not None:
-                warn = self.positions[position.pos].fuse(position)
+                err = self.positions[position.pos].fuse(position)
                 del_list.append(p)
-                if warn:
-                    warns.append('Warning happened in add_positions fuse: %s %s' % (self.u_ac, self.pdb_id))
+                if err is not None:
+                    raise TypeError(f'Error happened in add_positions fuse: {self.primary_protein_id=} {self.pdb_id=}\n{err}')
 
         del_list = sorted(del_list, reverse=True)
 
@@ -182,13 +180,12 @@ class Protein(Slotted_obj):
     def add_residues(self, positions):
         warns = []
         for position in positions:
-            warn = False
             if position.pdb_res_nr not in self.res_id_map:
                 self.res_id_map[position.pdb_res_nr] = position
             else:
-                warn = self.res_id_map[position.pdb_res_nr].fuse(position)
-                if warn:
-                    warns.append('Warning happened in add_residues fuse: %s %s' % (self.u_ac, self.pdb_id))
+                err = self.res_id_map[position.pdb_res_nr].fuse(position)
+                if err is not None:
+                    raise TypeError(f'Error happened in add_positions fuse: {self.primary_protein_id=} {self.pdb_id=}\n{err}')
         if len(warns) == 0:
             return None
         else:
@@ -329,13 +326,23 @@ class Protein(Slotted_obj):
         self.deletion_flanks = wt_del_flanks
         return
 
-    def getAACList(self):
+    """
+    def getAACList(self) -> dict[str, int]:
         aaclist = {}
         for pos_obj in self.positions:
             if pos_obj is None:
                 continue
             aac_base = pos_obj.getAACBase()
             aaclist[aac_base] = pos_obj.get_database_id()
+        return aaclist
+    """
+    def getAACList(self) -> list[str]:
+        aaclist = []
+        for pos_obj in self.positions:
+            if pos_obj is None:
+                continue
+            aac_base = pos_obj.getAACBase()
+            aaclist.append(aac_base)
         return aaclist
 
     def get_aac_base(self, pos):
@@ -381,9 +388,6 @@ class Protein(Slotted_obj):
     def add_other_ids(self, id_id, other_id):
         self.other_ids[id_id] = other_id
 
-    def get_u_ac(self):
-        return self.u_ac
-
     def get_ref_id(self):
         return self.ref_id
 
@@ -400,14 +404,14 @@ class Protein(Slotted_obj):
         if not self.contains_position(pos):
             return False
         else:
-            return self.positions[pos].get_stored()
+            return self.positions[pos].stored
 
     def get_position(self, pos):
         if pos >= len(self.positions):
             return None
         return self.positions[pos]
 
-    def get_position_ids(self):
+    def get_position_ids(self) -> list[int]:
         return list(range(1,len(self.positions)))
 
     def set_position_stored(self, pos, stored_value):
@@ -461,15 +465,14 @@ class Protein(Slotted_obj):
         return tag_value
 
     def add_annotation(self, pdb_id, chain, anno_obj):
-        self.mapped_complexes.add(pdb_id)
         if pdb_id not in self.structure_annotations:
             self.structure_annotations[pdb_id] = {}
         self.structure_annotations[pdb_id][chain] = anno_obj
 
     def remove_annotation(self, pdb_id, chain):
-        if not pdb_id in self.structure_annotations:
+        if pdb_id not in self.structure_annotations:
             return
-        elif not chain in self.structure_annotations[pdb_id]:
+        elif chain not in self.structure_annotations[pdb_id]:
             return
         else:
             del self.structure_annotations[pdb_id][chain]
@@ -490,34 +493,14 @@ class Protein(Slotted_obj):
         return self.structure_annotations
 
     def is_annotation_stored(self, pdb_id, chain):
-        return self.structure_annotations[pdb_id][chain].get_stored()
-
-    def set_alignment(self, pdb_id, chain, value):
-        self.structure_annotations[pdb_id][chain].set_alignment(value)
-
-    def get_alignment(self, pdb_id, chain):
-        if not pdb_id in self.structure_annotations:
-            return 'Structure %s:%s not in annotation list of %s' % (pdb_id, chain, self.primary_protein_id)
-        if not chain in self.structure_annotations[pdb_id]:
-            return 'Structure %s:%s not in annotation list of %s' % (pdb_id, chain, self.primary_protein_id)
-
-        return self.structure_annotations[pdb_id][chain].get_alignment()
-
-    def pop_alignment(self, pdb_id, chain):
-        return self.structure_annotations[pdb_id][chain].pop_alignment()
+        return self.structure_annotations[pdb_id][chain].stored
 
     def set_coverage(self, pdb_id, chain, value):
         self.structure_annotations[pdb_id][chain].set_coverage(value)
         self.number_of_mappings += int(len(self.positions) * value)
 
-    def get_coverage(self, pdb_id, chain):
-        return self.structure_annotations[pdb_id][chain].get_coverage()
-
     def set_sequence_id(self, pdb_id, chain, value):
         self.structure_annotations[pdb_id][chain].set_sequence_id(value)
-
-    def get_sequence_id(self, pdb_id, chain):
-        return self.structure_annotations[pdb_id][chain].get_sequence_id()
 
     def set_annotation_db_id(self, pdb_id, chain, value):
         self.structure_annotations[pdb_id][chain].set_database_id(value)
@@ -528,18 +511,12 @@ class Protein(Slotted_obj):
     def get_sub_infos(self, pdb_id, chain):
         return self.structure_annotations[pdb_id][chain].get_sub_infos()
 
-    def set_backmap(self, structure_id, chain, backmap):
-        self.structure_annotations[structure_id][chain].set_backmap(backmap)
-
     def get_backmap(self, structure_id, chain):
         if structure_id not in self.structure_annotations:
             return {}
         if chain in self.structure_annotations[structure_id]:
             return {}
         return self.structure_annotations[structure_id][chain].get_backmap()
-
-    def set_aggregated_contact_matrix(self, aggregated_contact_matrix):
-        self.aggregated_contact_matrix = aggregated_contact_matrix
 
     def set_aggregated_interface_map(self, aggregated_interface_map):
         self.aggregated_interface_map = aggregated_interface_map
@@ -667,7 +644,7 @@ class Protein(Slotted_obj):
 
                 #print(f'After shifts: {mutant_positions}')
 
-                if mutant_positions[1] != None or mutant_positions[2] != None:
+                if mutant_positions[1] is not None or mutant_positions[2] is not None:
                     mut_protein = Protein(config.errorlog, primary_protein_id=protein_name, wildtype_protein=self.primary_protein_id, mutant_type = 'Multi', sav_positions = mutant_positions[0], insertion_positions = mutant_positions[1], deletion_flanks = mutant_positions[2])
                     proteins[protein_name] = mut_protein
                     if config.verbosity >= 4:
@@ -717,7 +694,7 @@ class Proteins(Slotted_obj):
         self.completely_stored_ids = set()
         self.not_stored_ids = set()
         self.id_map = {}
-        self.structures = {}
+        self.structures: dict[str, dict[str, structure_package.Structure]] = {}
         self.complexes = {}
         self.indels = {}
         self.multi_mutations = {}
@@ -819,7 +796,7 @@ class Proteins(Slotted_obj):
         return pdb_id in self.complexes
 
     def is_complex_stored(self, pdb_id):
-        return self.complexes[pdb_id].get_stored()
+        return self.complexes[pdb_id].stored
 
     def set_complex_db_id(self, pdb_id, value):
         self.complexes[pdb_id].set_database_id(value)
@@ -833,9 +810,6 @@ class Proteins(Slotted_obj):
     def get_IAmap(self, structure_id):
         return self.complexes[structure_id].get_IAmap()
 
-    def set_interfaces(self, structure_id, interfaces):
-        self.complexes[structure_id].set_interfaces(interfaces)
-
     def get_interfaces(self, structure_id):
         return self.complexes[structure_id].get_interfaces()
 
@@ -844,19 +818,11 @@ class Proteins(Slotted_obj):
             print(structure_id)
             self.complexes[structure_id].print_interfaces()
 
-    def set_backmap(self, protein_id, structure_id, chain, backmap):
-        #self.protein_map[protein_id].set_backmap(structure_id, chain, backmap)
-        self.structures[structure_id][chain].backmaps[protein_id] = backmap
-
     def get_backmap(self, protein_id, structure_id, chain):
         return self.protein_map[protein_id].get_backmap(structure_id, chain)
 
-    def set_aggregated_contact_matrix(self, protein_id, aggregated_contact_matrix):
-        self.protein_map[protein_id].set_aggregated_contact_matrix(aggregated_contact_matrix)
-
     def set_aggregated_interface_map(self, protein_id, aggregated_interface_map):
         self.protein_map[protein_id].set_aggregated_interface_map(aggregated_interface_map)
-
 
     def set_interaction_partners(self, pdb_id, value):
         self.complexes[pdb_id].set_interaction_partners(value)
@@ -873,13 +839,13 @@ class Proteins(Slotted_obj):
     def get_atom_count(self, pdb_id):
         return self.complexes[pdb_id].get_atom_count()
 
-    def get_complex_structures(self, pdb_id):
+    def get_complex_structures(self, pdb_id: str) -> dict[str, dict[str, structure_package.Structure]]:
         chains = self.get_complex_chains(pdb_id)
         structures = {pdb_id : {}}
         for chain in chains:
-            if not pdb_id in self.structures:
+            if pdb_id not in self.structures:
                 continue
-            if not chain in self.structures[pdb_id]:
+            if chain not in self.structures[pdb_id]:
                 continue
             structures[pdb_id][chain] = self.structures[pdb_id][chain]
         return structures
@@ -917,12 +883,12 @@ class Proteins(Slotted_obj):
         self.structures[pdb_id][chain].set_stored(value)
 
     def is_structure_stored(self, pdb_id, chain):
-        return self.structures[pdb_id][chain].get_stored()
+        return self.structures[pdb_id][chain].stored
 
     def contains_residue(self, pdb_id, chain, res_nr):
-        if not pdb_id in self.structures:
+        if pdb_id not in self.structures:
             return False
-        if not chain in self.structures[pdb_id]:
+        if chain not in self.structures[pdb_id]:
             return False
         return self.structures[pdb_id][chain].contains_residue(res_nr)
 
@@ -938,35 +904,17 @@ class Proteins(Slotted_obj):
     def is_annotation_stored(self, pdb_id, chain, u_ac):
         return self.protein_map[u_ac].is_annotation_stored(pdb_id, chain)
 
-    def set_alignment(self, u_ac, pdb_id, chain, alignment):
-        self.protein_map[u_ac].set_alignment(pdb_id, chain, alignment)
-
-    def set_alignment_by_db_id(self, prot_id, pdb_id, chain, value):
-        self.getByDbId(prot_id).set_alignment(pdb_id, chain, value)
-
-    def get_alignment(self, u_ac, pdb_id, chain):
-        return self.protein_map[u_ac].get_alignment(pdb_id, chain)
-
-    def pop_alignment(self, u_ac, pdb_id, chain):
-        return self.protein_map[u_ac].pop_alignment(pdb_id, chain)
-
     def set_coverage_by_db_id(self, prot_id, pdb_id, chain, value):
         self.getByDbId(prot_id).set_coverage(pdb_id, chain, value)
 
     def set_coverage(self, u_ac, pdb_id, chain, value):
         self.protein_map[u_ac].set_coverage(pdb_id, chain, value)
 
-    def get_coverage(self, u_ac, pdb_id, chain):
-        return self.protein_map[u_ac].get_coverage(pdb_id, chain)
-
     def set_sequence_id_by_db_id(self, prot_id, pdb_id, chain, value):
         self.getByDbId(prot_id).set_sequence_id(pdb_id, chain, value)
 
     def set_sequence_id(self, u_ac, pdb_id, chain, value):
         self.protein_map[u_ac].set_sequence_id(pdb_id, chain, value)
-
-    def get_sequence_id(self, u_ac, pdb_id, chain):
-        return self.protein_map[u_ac].get_sequence_id(pdb_id, chain)
 
     def is_sequence_set(self, u_ac):
         return self.protein_map[u_ac].is_sequence_set()
@@ -1100,15 +1048,18 @@ class Proteins(Slotted_obj):
     def get_structure_list(self):
         return set(self.structures.keys())
 
-    def getStoredStructureIds(self, exclude_interacting_chains = False):
-        stored_ids = {}
+    def getStoredStructureIds(self, exclude_interacting_chains: bool = False) -> dict[int, tuple[str, str]]:
+        stored_ids: dict[int, tuple[str, str]] = {}
+        pdb_id: str
+        chain: str
         for pdb_id in self.structures:
             for chain in self.structures[pdb_id]:
                 if exclude_interacting_chains:
                     if self.structures[pdb_id][chain].interacting_structure:
                         continue
-                if self.structures[pdb_id][chain].get_stored():
-                    stored_ids[self.structures[pdb_id][chain].get_database_id()] = (pdb_id, chain)
+                db_id = self.structures[pdb_id][chain].database_id
+                if db_id is not None:
+                    stored_ids[db_id] = (pdb_id, chain)
         return stored_ids
 
     def get_protein_database_id(self, u_ac):
@@ -1119,9 +1070,6 @@ class Proteins(Slotted_obj):
 
     def is_position_stored(self, u_ac, pos):
         return self.protein_map[u_ac].is_position_stored(pos)
-
-    def getAACList(self, u_ac):
-        return self.protein_map[u_ac].getAACList()
 
     def get_res_id(self, u_ac, pos):
         return self.protein_map[u_ac].get_res_id(pos)

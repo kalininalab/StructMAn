@@ -225,7 +225,7 @@ def para_indel_analysis(proteins, config):
 
         for prot_id in proteins.indels:
             seq = proteins.get_sequence(prot_id)
-            aaclist = proteins.getAACList(prot_id)
+            aaclist = proteins[prot_id].getAACList()
             prot_specific_mapping_dumps[prot_id] = ray.put((prot_id, seq, aaclist))
             del seq
             del aaclist
@@ -262,7 +262,7 @@ def para_indel_analysis(proteins, config):
                     structures_store_references.append(structures)
 
                     if not (pdb_id, tchain, indel_obj.wt_prot) in model_stack:
-                        alignment_tuple = proteins.get_alignment(indel_obj.wt_prot, pdb_id, tchain)
+                        alignment_tuple = proteins[indel_obj.wt_prot].structure_annotations[pdb_id][tchain].get_alignment(unpacked = True)
                         seq_id = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].sequence_identity
                         cov = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].coverage
                         modelling_result_ids.append(modelling.model.remote(conf_dump, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, indel_obj.wt_prot))
@@ -271,7 +271,7 @@ def para_indel_analysis(proteins, config):
 
                     # modelling the MUT for all recommend structures
                     if not (pdb_id, tchain, indel_obj.mut_prot) in model_stack:
-                        alignment_tuple = proteins.get_alignment(indel_obj.mut_prot, pdb_id, tchain)
+                        alignment_tuple = proteins[indel_obj.mut_prot].structure_annotations[pdb_id][tchain].get_alignment(unpacked = True)
                         seq_id = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].sequence_identity
                         cov = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].coverage
                         modelling_result_ids.append(modelling.model.remote(conf_dump, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, indel_obj.mut_prot))

@@ -1,7 +1,7 @@
 from structman.lib import globalAlignment, pdbParser
 from structman.lib.sdsc.sdsc_utils import process_alignment_data, doomsday_protocol, Slotted_obj
 from structman.lib.sdsc.residue import Residue_Map
-
+from structman.base_utils.base_utils import unpack
 
 class Structure(Slotted_obj):
     __slots__ = [
@@ -46,7 +46,7 @@ class Structure(Slotted_obj):
         self.seq_len = seq_len
         self.new_interacting_chain = new_interacting_chain
         self.interacting_structure = False
-        self.backmaps = {}
+        self.backmaps: dict[str, Residue_Map[int]] = {}
 
     def deconstruct(self):
         del self.mapped_proteins
@@ -56,8 +56,8 @@ class Structure(Slotted_obj):
         del self.backmaps
         doomsday_protocol(self)
 
-    def parse_page(self, page, config):
-        seq_res_map, seq, last_residue, first_residue = globalAlignment.createTemplateFasta(page, self.pdb_id, self.chain, config, seqAndMap=True, could_be_empty=True)
+    def parse_page(self, page: bytes, config):
+        seq_res_map, seq, last_residue, first_residue = globalAlignment.createTemplateFasta(page.split(b'\n'), self.pdb_id, self.chain.encode(), config, seqAndMap=True, could_be_empty=True)
         self.sequence = seq
         self.first_residue = first_residue
         self.last_residue = last_residue
@@ -105,10 +105,13 @@ class Structure(Slotted_obj):
             return self.sequence
         else:
             if complex_obj is None:
-                template_page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path)
+                template_page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path, return_bytes=True)
             else:
                 template_page = complex_obj.getPage(config)
-            seq_res_map, seq, last_residue, first_residue = globalAlignment.createTemplateFasta(template_page, self.pdb_id, self.chain, config, seqAndMap=True, for_modeller=for_modeller, could_be_empty=True, rare_residues=config.rare_residues)
+            seq_res_map, seq, last_residue, first_residue = globalAlignment.createTemplateFasta(template_page.split(b'\n'), self.pdb_id, self.chain.encode('ascii'), config, seqAndMap=True, for_modeller=for_modeller, could_be_empty=True, rare_residues=config.rare_residues)
+            
+            if config.verbosity >= 5:
+                print(f'In getSequence of {self.pdb_id=} {self.chain=} {len(seq)=}')
             self.sequence = seq
         return self.sequence
 
@@ -126,57 +129,47 @@ class StructureAnnotation(Slotted_obj):
     __slots__ = [
         'u_ac',         'pdb_id',   'chain',
         'alignment',    'coverage', 'sequence_identity',
-        'sub_infos',    'stored',   'database_id',
-        'backmap'
+        'sub_infos',    'stored',   'database_id'
         ]
 
     slot_mask = [
         True, True, True,
         False, True, True,
-        True, True, True,
-        True
+        True, True, True
         ]
 
-    def __init__(self, u_ac = None, pdb_id = None, chain = None, alignment=None, stored=False, backmap = None):
+    def __init__(self, u_ac = None, pdb_id = None, chain = None, alignment=None, stored=False):
         self.u_ac = u_ac
         self.pdb_id = pdb_id
         self.chain = chain
-        self.alignment = alignment
+        self.alignment: bytes | None = alignment
         self.coverage = None
         self.sequence_identity = None
         self.sub_infos = []  # {pos:(res_nr,res_aa,structure_sequence_number)}
         self.stored = stored
-        self.database_id = None
-        if backmap is None:
-            backmap = {}
-        self.backmap = backmap
+        self.database_id: int | None = None
 
     def deconstruct(self):
         del self.alignment
         del self.sub_infos
-        del self.backmap
         doomsday_protocol(self)
 
-    def set_alignment(self, value):
-        self.alignment = value
+    def get_alignment(self, unpacked = False) -> bytes | None | tuple[str, str]:   
+        if isinstance(self.alignment, bytes) and unpacked:
+            alignment = unpack(self.alignment)
+            return process_alignment_data(alignment)
+        return self.alignment
 
-    def get_alignment(self):
-        if isinstance(self.alignment, tuple):
-            return self.alignment
-        return process_alignment_data(self.alignment)
-
-    def pop_alignment(self):
+    def pop_alignment(self, unpacked = False) -> bytes | None | tuple[str, str]:
         aln = self.alignment
         self.alignment = None
-        if isinstance(aln, tuple):
-            return aln
-        return process_alignment_data(aln)
-
+        if isinstance(aln, bytes) and unpacked:
+            aln = unpack(aln)
+            return process_alignment_data(aln)
+        return aln
+        
     def set_coverage(self, value):
         self.coverage = value
-
-    def get_coverage(self):
-        return self.coverage
 
     def set_sequence_id(self, value):
         self.sequence_identity = value
@@ -186,9 +179,6 @@ class StructureAnnotation(Slotted_obj):
 
     def set_database_id(self, value):
         self.database_id = value
-
-    def get_stored(self):
-        return self.stored
 
     def set_sub_infos(self, value):
         self.sub_infos = value
@@ -201,12 +191,6 @@ class StructureAnnotation(Slotted_obj):
             return self.sub_infos[pos]
         except:
             return None
-
-    def set_backmap(self, backmap):
-        self.backmap = backmap
-
-    def get_backmap(self):
-        return self.backmap
 
     def is_covered(self, pos):
         if self.sub_infos[pos] is None:
@@ -226,7 +210,7 @@ class StructureAnnotation(Slotted_obj):
             return True
         if self.alignment is None:
             print('Alignment not found:', self.u_ac, self.pdb_id, self.chain)
-        target_seq, template_seq = process_alignment_data(self.alignment)
+        target_seq, template_seq = self.get_alignment()
         template_seq = template_seq.replace('-', '')
         if structure_sequence_number == len(template_seq):
             return True

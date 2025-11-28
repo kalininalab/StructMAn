@@ -1,6 +1,7 @@
 import gzip
 import os
 import sys
+import shutil
 import traceback
 import time
 
@@ -797,9 +798,9 @@ def lookup(
     runtimes = []
     t0 = time.time()
     if config.verbosity >= 4:
-        print(f'Call of rin.lookup: {structure_id=} {base_path=} {model_path=} {keep_tmp_files=}')
+        print(f'Call of rin.lookup: {structure_id=} {base_path=} {model_path=} {keep_tmp_files=} {config.custom_db_path=}')
 
-    folder_path, path_stem = get_entry_path(structure_id, config.rin_db_path, custom_db_path= config.custom_db_path, model_path=model_path, path_to_model_db=config.path_to_model_db, temp_folder=config.tmp_folder)
+    folder_path, path_stem, structure_id = get_entry_path(structure_id, config.rin_db_path, custom_db_path= config.custom_db_path, model_path=model_path, path_to_model_db=config.path_to_model_db, temp_folder=config.tmp_folder)
 
     if config.verbosity >= 4:
         print(f'Paths in rin.lookup: {structure_id=} {folder_path=} {path_stem=}')
@@ -808,10 +809,13 @@ def lookup(
 
     if not os.path.isfile(interaction_score_file):
         if config.verbosity >= 3:
-            print(f'Did not find RIN: {interaction_score_file}, folder path: {folder_path}' )
+            print(f'Did not find RIN: {interaction_score_file}, folder path: {folder_path=} {config.rin_db_path=} {config.custom_db_path=} {model_path=} {config.tmp_folder=}' )
 
         if not os.path.isdir(folder_path):
-            os.makedirs(folder_path)
+            try:
+                os.makedirs(folder_path)
+            except OSError:
+                return f'RIN not found and calculation of RIN failed for: {structure_id=}, {model_path=} {interaction_score_file=}'
 
         calcRIN(config, page.encode(), folder_path, path_stem, structure_id, config.rinerator_path, True, structure_path=model_path)
 
@@ -871,6 +875,17 @@ def lookup(
         os.remove(interaction_count_file)
         os.remove(residue_file)
         os.remove(centrality_file)
+    else:
+        if model_path is not None:
+            model_directory = os.path.dirname(model_path)
+            network_filename = os.path.basename(network_file)
+            target_path = f'{model_directory}/{network_filename}'
+            if network_file != target_path:
+                shutil.copyfile(network_file, target_path)
+            target_score_file = f'{model_directory}/{os.path.basename(interaction_score_file)}'
+            if interaction_score_file != target_score_file:
+                shutil.copyfile(interaction_score_file, target_score_file)
+
 
     t5 = time.time()
     runtimes.append(t5-t4)

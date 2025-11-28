@@ -27,7 +27,10 @@ def aggregate_positions(position_objects, config):
     if position_objects is None:
         return mappings, None, None
     for pos_obj in position_objects:
-        if isinstance(pos_obj.mappings, bytes):
+        try:
+            if isinstance(pos_obj.mappings, bytes):
+                continue
+        except AttributeError:
             continue
         pos_structural_features = pos_obj.mappings.structural_features
         pos_rin_based_features = pos_obj.mappings.rin_based_features

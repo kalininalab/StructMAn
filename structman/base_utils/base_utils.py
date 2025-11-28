@@ -100,21 +100,27 @@ def add_to_times(times: list[float], prev_timepoint: float) -> float:
     times.append(now - prev_timepoint)
     return now
 
-def aggregate_times(total_times, times):
+def aggregate_times(total_times: list[float | list[float]], times: list[float | list[float]]) -> list[float | list[float]]:
 
     if times is None:
         return total_times
     if len(total_times) == 0:
-        total_times = list(times)
+        total_times = list(times).copy()
         for p, t in enumerate(total_times):
             if isinstance(t, tuple):
-                total_times[p] = list(t)
+                total_times[p] = list(t).copy()
+            elif isinstance(t, list):
+                total_times[p] = t.copy()
     else:
         for pos, t in enumerate(times):
+            if pos == len(total_times):
+                total_times.append(0.)
             if isinstance(t, float):
                 total_times[pos] += t
             else:
                 for sub_pos, sub_t in enumerate(times[pos]):
+                    if sub_pos == len(total_times[pos]):
+                        total_times[pos].append(0.)
                     total_times[pos][sub_pos] += sub_t
     return total_times
 
@@ -123,10 +129,10 @@ def print_times(times, label = 'structural analysis'):
         print(f'empty times: {label}')
     for part, t in enumerate(times):
         if isinstance(t, float):
-            print(f'Accumulated {label} time part {part}: {t}')
+            print(f'Accumulated {label} time part {part}: {t:_}')
         else:
             for sub_part, sub_t in enumerate(times[part]):
-                print(f'  Accumulated {label} time part {part}.{sub_part}: {sub_t}')
+                print(f'  Accumulated {label} time part {part}.{sub_part}: {sub_t:_}')
 
 structure_id_types = [
     'PDB',
@@ -141,7 +147,7 @@ def identify_structure_id_type(structure_id):
     return structure_id_types[structe_id_type_key]
 
 
-def identify_structure_id_type_key(structure_id):
+def identify_structure_id_type_key(structure_id: str) -> int | None:
     l = len(structure_id)
     if l == 7:
         if structure_id[-3:] == '_AU':
@@ -158,6 +164,14 @@ def identify_structure_id_type_key(structure_id):
 def is_alphafold_model(structure_id):
     structe_id_type_key = identify_structure_id_type_key(structure_id)
     return (structe_id_type_key == 2)
+
+def get_af_model_folder(model_id, config):
+    uniprot_ac = model_id.split('-')[1]
+    topfolder_id = uniprot_ac[-2:]
+    subfolder_id = uniprot_ac[-4:]
+
+    folder_path = f'{config.path_to_model_db}/{topfolder_id}/{subfolder_id}'
+    return folder_path
 
 def alphafold_model_id_to_file_path(model_id, config):
     uniprot_ac = model_id.split('-')[1]
@@ -311,7 +325,7 @@ def compress(value):
     Returns: Compressed serialized bytes
 
     """
-    return zstd.compress(value, 9, 2)
+    return zstd.compress(value, 3, 2)
 
 def decompress(compressed_value):
     """Zstandard decompress and deserialize the compressed value

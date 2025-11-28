@@ -272,7 +272,7 @@ def calcRIN(
     except:
         [e, f, g] = sys.exc_info()
         g = traceback.format_exc()
-        print(f"\nRIN calc Error:\n{structure_id} {original_chains}\n{structure_path}\n{tmp_pdb}\n{out_path}\n{e}\n{f}\n{g}")
+        print(f"\nRIN calc Error:\n{structure_id=} {original_chains=}\n{structure_path=}\n{tmp_pdb=}\n{out_path=}\n{e}\n{f}\n{g}")
         if config.verbosity >= 5:
             print(page)
         if os.path.exists(reduce_file):
@@ -375,7 +375,7 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, ri
                 return
             (pdbgz_path, structure_id) = in_t
         try:
-            out_path, path_stem = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
+            out_path, path_stem, structure_id = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
             
             if not os.path.exists(out_path):
                 os.mkdir(out_path)
@@ -404,12 +404,13 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, ri
 def get_entry_path(structure_id: str, path_to_rindb: str, path_to_model_db: str | None = None, custom_db_path: str | None = None, model_path: str | None = None, temp_folder: str | None = None) -> tuple[str, str]:
 
     if model_path is not None: #First check, if this refering to a RIN of a custom model (structural analysis of models)
-        folder_path = temp_folder
+        #folder_path = temp_folder
         if model_path[-4:] == '.pdb':
             path_stem = model_path[:-4] # remove .pdb from the end of the model path
         else:
             path_stem = model_path[:-7] # .pdb.gz
-        #structure_id = path_stem.split('/')[-1].split('.')[0]
+        folder_path = os.path.dirname(path_stem)
+        structure_id = path_stem.split('/')[-1].split('.')[0]
     elif custom_db_path is not None: #This is for custom structure DBs
         folder_path = temp_folder
         #custom_files_list = os.listdir(config.temp_folder)     
@@ -421,17 +422,20 @@ def get_entry_path(structure_id: str, path_to_rindb: str, path_to_model_db: str 
         subfolder_id = uniprot_ac[-4:]
         folder_path = f'{path_to_model_db}/{topfolder_id}/{subfolder_id}'
         path_stem = f"{folder_path}/{structure_id}"
+    elif path_to_rindb == '':
+        folder_path = temp_folder
+        path_stem = f"{folder_path}/{structure_id}"
     else:
         pdb_id: str = structure_id.replace('_AU', '').lower().split('.')[0]
         pdb_id_middle_key = pdb_id[1:-1]
         folder_path = f"{path_to_rindb}/{pdb_id_middle_key}/{structure_id}"
         path_stem = f"{folder_path}/{structure_id}"
 
-    return folder_path, path_stem
+    return folder_path, path_stem, structure_id
 
 
 def check_entry(structure_id, path_to_model_db, path_to_rindb):
-    out_path, path_stem = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
+    out_path, path_stem, _ = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
     
     if not os.path.exists(out_path):
         return False
@@ -535,10 +539,6 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
 
     errorlog = f"{rin_db_path}/createRINdb_errorlog.txt"
 
-    lim = 100 * 1024 * 1024 * 1024
-
-    #resource.setrlimit(resource.RLIMIT_AS, (lim, lim))
-
     if not os.path.isfile(het_dict_path):
         print("%s not found" % het_dict_path)
         sys.exit(1)
@@ -593,7 +593,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                 bio_pdbs.add(pdb_id)
 
                 if recently_modified_structures is not None:
-                    if not pdb_id in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
+                    if pdb_id not in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
                         continue
 
                 in_queue.put((pdbgz_path, pdb_id))
@@ -615,7 +615,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                 pdb_id = fn[3:7]
 
                 if recently_modified_structures is not None:
-                    if not pdb_id in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
+                    if pdb_id not in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
                         continue
 
                 if pdb_id in bio_pdbs:

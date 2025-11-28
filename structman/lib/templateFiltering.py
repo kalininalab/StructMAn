@@ -6,6 +6,7 @@ import time
 import traceback
 import gc
 import psutil
+from itertools import cycle
 import numpy as np
 from numba import njit
 
@@ -13,7 +14,7 @@ import ray
 
 from structman.lib import pdbParser, rin
 from structman.lib.database.retrieval import getStoredResidues
-from structman.lib.database.insertion_lib import insertResidues, remote_insertResidues,insertClassifications, insertComplexes, insert_interface_residues, insert_interfaces
+from structman.lib.database.insertion_lib import remote_insertResidues, insertComplexes, insert_interfaces, remote_insert_interface_residues
 from structman.base_utils.base_utils import median, distance, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path, aggregate_times, print_times
 from structman.lib.sdsc.consts.residues import CORRECT_COUNT, THREE_TO_ONE, BLOSUM62, ONE_TO_THREE, RESIDUE_MAX_ACC, HYDROPATHY, METAL_ATOMS, ION_ATOMS
 from structman.lib.sdsc import sdsc_utils
@@ -474,9 +475,12 @@ def parsePDB(input_page: str) -> tuple[
     for chain_id in peptide_count:
         if chain_type_map[chain_id] == 'DNA' or chain_type_map[chain_id] == 'RNA':
             continue
+
+        #print(f'{chain_id} {peptide_count[chain_id]}')
+
         if peptide_count[chain_id][0] <= peptide_count[chain_id][1] * 2:
             chain_type_map[chain_id] = 'Peptide'
-        elif (peptide_count[chain_id][0] + peptide_count[chain_id][1]) < 500:  # Total number of atoms
+        elif (peptide_count[chain_id][0] + peptide_count[chain_id][1]) < 300:  # Total number of atoms
             chain_type_map[chain_id] = 'Peptide'
 
     return (coordinate_map, res_contig_map, ligands, metals, ions, box_map,
@@ -511,7 +515,12 @@ def get_atomic_coverage(coordinate_map: dict[str, tuple[residue_package.Residue_
 def getMinSubDist(
         coordinate_map: dict[str, tuple[residue_package.Residue_Map, residue_package.Residue_Map]],
         fuzzy_dist_matrix: dict[str, dict[str, residue_package.Residue_Map]],
-        target_res_id, res_chain, chain, distance_threshold=10.0):
+        target_res_id: int | str,
+        res_chain: str,
+        chain: str,
+        distance_threshold: float =10.0
+        ) -> tuple[float | None, int | str | None, int | None, str | None, residue_package.Residue_Map[float] | None]:
+    
     top20: list[tuple[int | str, float]] = []
     top: int = 20
     for res in coordinate_map[chain][0].get_keys():
@@ -533,15 +542,15 @@ def getMinSubDist(
             top20[top] = (res, d)
             top20 = sorted(top20, key=lambda x: x[1])
 
-    min_sub_d = None
-    min_res = None
-    min_atom_sub = None
-    min_atom_chain = None
+    min_sub_d: float | None = None
+    min_res: int | str | None = None
+    min_atom_sub: int | None = None
+    min_atom_chain: str | None = None
     atom_tuple = coordinate_map[res_chain][0].get_item(target_res_id)
     if atom_tuple is None:
         return min_sub_d, min_res, min_atom_sub, min_atom_chain, None
     atomlist: sdsc_utils.SparseArray = atom_tuple[1]
-    inside_sphere = {}
+    inside_sphere: residue_package.Residue_Map[float] = residue_package.Residue_Map()
     for (res, d) in top20:
         for atomnr in coordinate_map[chain][0].get_item(res)[1].get_keys():
             # exclude Hydrogens
@@ -554,10 +563,10 @@ def getMinSubDist(
                         if d < 1.2:
                             continue
                         if d < distance_threshold:
-                            if res not in inside_sphere:
-                                inside_sphere[res] = d
-                            elif d < inside_sphere[res]:
-                                inside_sphere[res] = d
+                            if not inside_sphere.contains(res):
+                                inside_sphere.add_item(res, d)
+                            elif d < inside_sphere.get_item(res):
+                                inside_sphere.add_item(res, d)
                         if min_sub_d is None or d < min_sub_d:
                             min_sub_d = d
                             min_res = res
@@ -735,8 +744,8 @@ def getMinDist(
         min_d = calc_min_dist_between_atomic_coordinates(atomic_coordinates_res_1, atomic_coordinates_res_2)
         return min_d
 
-def calculate_interfaces(IAmap, dssp_dict, chain_type_map, config):
-    interfaces = {}
+def calculate_interfaces(IAmap, chain_type_map) -> dict[str, dict[str, interface_package.Interface]]:
+    interfaces: dict[str, dict[str, interface_package.Interface]] = {}
 
     for chain, res, chain_b, res_b, btype, ctype, score in IAmap:
         if btype != 'combi':
@@ -754,9 +763,9 @@ def calculate_interfaces(IAmap, dssp_dict, chain_type_map, config):
             continue
         if chain == chain_b:
             continue
-        if not chain in interfaces:
+        if chain not in interfaces:
             interfaces[chain] = {}
-        if not chain_b in interfaces[chain]:
+        if chain_b not in interfaces[chain]:
             interfaces[chain][chain_b] = interface_package.Interface(chain, chain_b)
         
         interfaces[chain][chain_b].add_interaction(res, res_b, score)
@@ -816,14 +825,14 @@ def analysis_chain_package_wrapper(package, analysis_dump):
     analysis_dump = packed_analysis_dump
     for target_chain in package:
         results.append(analysis_chain(target_chain, config, profiles, centralities, analysis_dump))
-    return pack(results)
+    return results
 
 @ray.remote(max_calls = 1)
-def annotate_wrapper(conf_dump, chunk, structure_ids):
+def annotate_wrapper(conf_dump, chunk, structure_ids, db_lock):
     config = conf_dump
-    return annotate(config, chunk, structure_ids, locked = True)
+    return annotate(config, chunk, structure_ids, locked = True, db_lock=db_lock)
 
-def annotate(config, chunk, structure_ids, locked = False):
+def annotate(config, chunk, structure_ids: dict[str, dict[str, int]], locked = False, db_lock=None):
 
     outputs = []
     nested_outputs = []
@@ -832,6 +841,8 @@ def annotate(config, chunk, structure_ids, locked = False):
     total_nested_times = []
     total_serialized_times = []
     structural_analysis_list: list[tuple[str, dict[str, residue_package.Residue_Map]]] = []
+    interface_map: dict[str, dict[str, dict[str, interface_package.Interface]]] = {}
+    structure_db_dict: dict[int, tuple[str, str]] = {}
     for pdb_id, target_dict, nested_cores_limiter, nested_call in chunk:
         t0 = time.time()
         model_path = None
@@ -845,9 +856,14 @@ def annotate(config, chunk, structure_ids, locked = False):
         elif config.model_db_active:
             if is_alphafold_model(pdb_id):
                 model_path = alphafold_model_id_to_file_path(pdb_id, config)
+        interfaces: dict[str, dict[str, interface_package.Interface]]
         (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles,
-         chain_type_map, chainlist, nested_processes, interfaces, times, nested_times, serialized_times) = structuralAnalysis(pdb_id, config, target_dict=target_dict, nested_cores_limiter = nested_cores_limiter, nested_call = nested_call, model_path = model_path, chain_ids = structure_ids[pdb_id])
+         chain_type_map, chainlist, nested_processes,
+         interfaces,
+         times, nested_times, serialized_times) = structuralAnalysis(pdb_id, config, target_dict=target_dict, nested_cores_limiter = nested_cores_limiter, nested_call = nested_call, model_path = model_path, chain_ids = structure_ids[pdb_id])
         t1 = time.time()
+
+        interface_map[pdb_id] = interfaces
 
         total_times = aggregate_times(total_times, times)
         total_nested_times = aggregate_times(total_nested_times, nested_times)
@@ -856,18 +872,28 @@ def annotate(config, chunk, structure_ids, locked = False):
         if config.verbosity >= 5:
             print(f'Time for structural analysis of {pdb_id}: {t1 - t0}, nested call: {nested_call}')
 
+        for chain in structure_ids[pdb_id]:
+            db_id = structure_ids[pdb_id][chain]
+            structure_db_dict[db_id] = (pdb_id, chain)
+
         if nested_call:
             nested_outputs.append((pdb_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
             nested_processes_dump.append(nested_processes)
         else:
-            outputs.append((pdb_id, structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
+            outputs.append((pdb_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
             structural_analysis_list.append((pdb_id, structural_analysis_dict))
 
-    outputs = pack(outputs)
-    nested_outputs = pack(nested_outputs)
-
     if not nested_call:
-         background_process = remote_insertResidues(structural_analysis_list, structure_ids, config, locked=locked)
+        background_process = remote_insertResidues(structural_analysis_list, structure_ids, config, locked=locked)
+        structs_from_db: dict[str, dict[str, residue_package.Residue_Map[tuple[int, None]]]]
+        structs_from_db, _ = getStoredResidues(None, config,
+            custom_ids = structure_db_dict,
+            retrieve_only_db_ids=True,
+            exclude_interacting_chains = True,
+            skip_interfaces = True,
+            locked = locked,
+            db_lock = db_lock)
+        remote_insert_interface_residues(interface_map, structure_ids, structs_from_db, config)
 
     return (outputs, nested_outputs, nested_processes_dump, total_times, total_nested_times, total_serialized_times, background_process)
 
@@ -897,6 +923,8 @@ def analysis_chain(
 
     sub_loop_broken = False
 
+    target_res_id: int | str
+
     for target_res_id in target_residues[target_chain].get_keys():
         if not res_contig_map[target_chain].contains(target_res_id):
             #print(f'{pdb_id} {target_chain} {target_res_id}')
@@ -917,13 +945,13 @@ def analysis_chain(
         residue.aa = one_letter
 
         lig_dists = {}
-        min_chain_dists = {}
+        min_chain_dists: dict[str, tuple[float, ]] = {}
 
-        inter_chain_kds = []
-        inter_chain_dist_weighted_kds = []
-        inter_chain_rsas = []
-        inter_chain_dist_weighted_rsas = []
-        total_inter_dist_weights = 0.
+        inter_chain_kds: list[float] = []
+        inter_chain_dist_weighted_kds: list[float] = []
+        inter_chain_rsas: list[float] = []
+        inter_chain_dist_weighted_rsas: list[float] = []
+        total_inter_dist_weights: float = 0.
 
         inter_chain_interactions = []
         inter_chain_interactions_dw = []
@@ -933,22 +961,22 @@ def analysis_chain(
 
             #Sub - Chain - Calculations
             if chain != target_chain and len(coordinate_map[chain][0]) > 0:
+                inside_sphere: residue_package.Residue_Map[float] | None
                 min_chain_dist, min_res, atom_sub, atom_chain, inside_sphere = getMinSubDist(coordinate_map, fuzzy_dist_matrix, target_res_id,
                                                                                              target_chain, chain, distance_threshold=config.milieu_threshold)
                 min_chain_dists[chain] = (min_chain_dist, (atom_chain, atom_sub), min_res)
                 if chain_type_map[chain] == 'Protein':  # Filter DNA and RNA chains
-                    if inside_sphere is not None:
-                        for inter_chain_res in inside_sphere:
-                            if chain not in dssp_dict:
-                                continue
+                    if inside_sphere is not None and chain in dssp_dict:
+                        for inter_chain_res in inside_sphere.get_keys():
                             if not dssp_dict[chain].contains(inter_chain_res):
                                 continue
-                            dist = inside_sphere[inter_chain_res]
-                            total_inter_dist_weights += 1 / dist
                             if not res_contig_map[chain].contains(inter_chain_res):
                                 continue
-                            if not res_contig_map[chain].get_item(inter_chain_res)[1] in THREE_TO_ONE:
+                            if res_contig_map[chain].get_item(inter_chain_res)[1] not in THREE_TO_ONE:
                                 continue
+
+                            dist = inside_sphere.get_item(inter_chain_res)
+                            total_inter_dist_weights += 1 / dist
                             inter_chain_res_one_letter = THREE_TO_ONE[res_contig_map[chain].get_item(inter_chain_res)[1]][0]
                             kd = HYDROPATHY[inter_chain_res_one_letter]
                             inter_chain_kds.append(kd)
@@ -985,12 +1013,12 @@ def analysis_chain(
                         if config.verbosity >= 8:
                             print('Residue-Residue calc:', pdb_id, chain, target_res_id, 'inside the sphere:', len(inside_sphere))
 
-                        for intra_chain_res in inside_sphere:
+                        for intra_chain_res in inside_sphere.get_keys():
                             if not dssp_dict[chain].contains(intra_chain_res):
                                 continue
-                            if not res_contig_map[chain].get_item(intra_chain_res)[1] in THREE_TO_ONE:
+                            if res_contig_map[chain].get_item(intra_chain_res)[1] not in THREE_TO_ONE:
                                 continue
-                            dist = inside_sphere[intra_chain_res]
+                            dist = inside_sphere.get_item(intra_chain_res)
                             total_dist_weights += 1 / dist
                             intra_chain_res_one_letter = THREE_TO_ONE[res_contig_map[chain].get_item(intra_chain_res)[1]][0]
                             kd = HYDROPATHY[intra_chain_res_one_letter]
@@ -1015,10 +1043,10 @@ def analysis_chain(
                     intra_chain_interactions_dw = []
                     total_dist_weights = 0.
                     if inside_sphere is not None:
-                        for intra_chain_res in inside_sphere:
-                            dist = inside_sphere[intra_chain_res]
+                        for intra_chain_res in inside_sphere.get_keys():
+                            dist = inside_sphere.get_item(intra_chain_res)
                             total_dist_weights += 1 / dist
-                            if not chain in profiles:
+                            if chain not in profiles:
                                 errorlist.append('(2) target_chain not in profiles: %s %s %s' % (pdb_id, chain, list(profiles.keys())))
                                 sub_loop_broken = True
                                 break
@@ -1128,7 +1156,7 @@ def analysis_chain(
         else:
             residue.b_factor = avg_b_factor
 
-        structural_analysis_dict.add_item(target_res_id, residue)
+        structural_analysis_dict.add_item(target_res_id, [target_res_id, None, pack(residue.get_res_info())])
 
     if config.verbosity >= 5:
         if len(structural_analysis_dict) <= 10:
@@ -1155,7 +1183,7 @@ def structuralAnalysis(
     times = []
     t0 = time.time()
 
-    if verbosity >= 6:  
+    if verbosity >= 4:  
         print('Start structuralAnalysis of:', pdb_id)
 
     page, page_altered, path, _ = pdbParser.standardParsePDB(pdb_id, pdb_path, return_10k_bool=True, get_is_local=True, model_path=model_path)
@@ -1189,7 +1217,11 @@ def structuralAnalysis(
     elif isinstance(target_dict, list):
         target_residues = {}
         for chain in target_dict:
-            target_residues[chain] = res_contig_map[chain]
+            try:
+                target_residues[chain] = res_contig_map[chain]
+            except KeyError as e:
+                config.errorlog.add_error(f'KeyError {list(res_contig_map.keys())=} {chain=} {pdb_id=} {model_path=}:\n{e}\n{page}')
+                continue
 
     t3 = time.time()
     times.append(t3-t2)
@@ -1230,6 +1262,7 @@ def structuralAnalysis(
     times.append(t5-t4)
 
     profiles: dict[str, residue_package.Residue_Map[rin.Interaction_profile]] = {}
+    centralities = {}
     ligand_profiles = {}
     metal_profiles = {}
     ion_profiles = {}
@@ -1256,9 +1289,9 @@ def structuralAnalysis(
     times.append(t6-t5)
 
     if config.compute_ppi:
-        interfaces = calculate_interfaces(IAmap, dssp_dict, chain_type_map, config)
+        interfaces: dict[str, dict[str, interface_package.Interface]] = calculate_interfaces(IAmap, chain_type_map)
     else:
-        interfaces = {}
+        interfaces: dict[str, dict[str, interface_package.Interface]] = {}
 
     t7 = time.time()
     times.append(t7-t6)
@@ -1275,7 +1308,7 @@ def structuralAnalysis(
     if nested_cores_limiter is None:
         nested_cores_limiter = config.proc_n - 1
 
-    if nested_call and not config.low_mem_system:
+    if nested_call:
         nested_times = []
 
 
@@ -1375,9 +1408,10 @@ def trim_down_backmaps(config, proteins):
     for structure_id in proteins.complexes:
         chains_with_interfaces = set()
         for chain_a in proteins.complexes[structure_id].interfaces:
+            chains_with_interfaces.add(chain_a)
             if chain_a not in proteins.structures[structure_id]:
                 continue
-            chains_with_interfaces.add(chain_a)
+            
             for chain_b in proteins.complexes[structure_id].interfaces[chain_a]:
                 new_back_maps = {}
                 for res in proteins.complexes[structure_id].interfaces[chain_a][chain_b].residues:
@@ -1471,6 +1505,9 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
     nested_packages = set()
 
+    db_locks = [f'db_lock_{i}.lock' for i in range(10)]
+    cycle_locks = cycle(db_locks)
+
     input_procession_counter = 0
     for pdb_id, ac in size_list:
         input_procession_counter += 1
@@ -1485,7 +1522,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         chunk_cost += cost
         if chunk_cost >= chunksize:
             if config.proc_n > 1:
-                anno_result_ids.append(annotate_wrapper.remote(conf_dump, current_chunk, structure_ids))
+                anno_result_ids.append(annotate_wrapper.remote(conf_dump, current_chunk, structure_ids, next(cycle_locks)))
                 n_started += 1
                 started_cost += cost
             else:
@@ -1510,7 +1547,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
     if config.proc_n < 2 and len(current_chunk) > 0:
         anno_result_ids.append(annotate(config, current_chunk, structure_ids))
         current_chunk = []
-        structure_ids = {}
+        structure_ids: dict[str, dict[str, int]] = {}
         chunk_cost = 0
 
     if config.verbosity >= 2:
@@ -1518,7 +1555,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         print(f"Annotation Part 1.1: {t11 - t0} {n_started=} {input_procession_counter=}")
 
     #getStoredResidues(proteins, config, exclude_interacting_chains = not config.compute_ppi)  # has to be called after insertStructures
-    getStoredResidues(proteins, config, exclude_interacting_chains=True)
+    #getStoredResidues(proteins, config, exclude_interacting_chains=True)
 
     if config.verbosity >= 2:
         t1 = time.time()
@@ -1652,12 +1689,10 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
             for chunk_struct_out, nested_struct_outs, nested_processes_list, times, nested_times, serialized_times, background_insert_residues_process in chunk_struct_outs:
                 n_started -= 1  # finished chunks free 1 cost
                 t_pickle_0 += time.time()
-                chunk_struct_out = unpack(chunk_struct_out)
-                nested_struct_outs = unpack(nested_struct_outs)
                 t_pickle_1 += time.time()
                 for struct_out in chunk_struct_out:
                     t_integrate_0 += time.time()
-                    (ret_pdb_id, structural_analysis_dict, errorlist, ligand_profiles, metal_profiles,
+                    (ret_pdb_id, errorlist, ligand_profiles, metal_profiles,
                         ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, comp_time) = struct_out
 
                     returned_pdbs.append(ret_pdb_id)
@@ -1687,12 +1722,12 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     if ret_pdb_id not in total_structural_analysis:
                         total_structural_analysis[ret_pdb_id] = {}
 
-                    for chain in structural_analysis_dict:
-                        if config.verbosity >= 5:
-                            print(f'Received structural analysis results (3) from: {ret_pdb_id} {chain} {len(structural_analysis_dict[chain])}')
-                        proteins.structures[ret_pdb_id][chain].residues = structural_analysis_dict[chain]
-                        total_structural_analysis[ret_pdb_id][chain] = structural_analysis_dict[chain]
-                        amount_of_chains_in_analysis_dict += 1
+                    #for chain in structural_analysis_dict:
+                    #    if config.verbosity >= 5:
+                    #        print(f'Received structural analysis results (3) from: {ret_pdb_id} {chain} {len(structural_analysis_dict[chain])}')
+                        
+                    #    total_structural_analysis[ret_pdb_id][chain] = structural_analysis_dict[chain]
+                    #    amount_of_chains_in_analysis_dict += 1
 
                     t_integrate_2 += time.time()
 
@@ -1701,22 +1736,12 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     proteins.complexes[ret_pdb_id].metal_profile = metal_profiles
                     proteins.complexes[ret_pdb_id].chain_chain_profile = chain_chain_profiles
                     #proteins.set_IAmap(ret_pdb_id, IAmap)
-                    proteins.set_interfaces(ret_pdb_id, interfaces)
+                    proteins.complexes[ret_pdb_id].set_interfaces(interfaces)
 
                     t_integrate_3 += time.time()
 
                     proteins.set_chain_type_map(ret_pdb_id, chain_type_map, chainlist)
                     del chain_type_map
-
-                    if config.low_mem_system:
-                        if amount_of_chains_in_analysis_dict > 2 * (config.chunksize):
-                            if background_insert_residues_process is not None:
-                                background_insert_residues_process.join()
-                            
-                            background_insert_residues_process = insertResidues(total_structural_analysis, proteins, config)
-                            total_structural_analysis = {}
-                            amount_of_chains_in_analysis_dict = 0
-                            gc.collect()
 
                     t_integrate_4 += time.time()
 
@@ -1777,13 +1802,14 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                         for error_text in errorlist:
                             config.errorlog.add_warning(error_text)
 
+                    """
                     if ret_pdb_id not in total_structural_analysis:
                         total_structural_analysis[ret_pdb_id] = {}
                     for chain in structural_analysis_dict:
-                        proteins.structures[ret_pdb_id][chain].residues = structural_analysis_dict[chain]
                         total_structural_analysis[ret_pdb_id][chain] = structural_analysis_dict[chain]
                         amount_of_chains_in_analysis_dict += 1
-
+                    """
+                        
                     t_integrate_2 += time.time()
 
                     proteins.set_lig_profile(ret_pdb_id, ligand_profiles)
@@ -1791,7 +1817,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     proteins.set_metal_profile(ret_pdb_id, metal_profiles)
                     proteins.set_chain_chain_profile(ret_pdb_id, chain_chain_profiles)
                     #proteins.set_IAmap(ret_pdb_id, IAmap)
-                    proteins.set_interfaces(ret_pdb_id, interfaces)
+                    proteins.complexes[ret_pdb_id].set_interfaces(interfaces)
 
                     
 
@@ -1800,15 +1826,6 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                     proteins.set_chain_type_map(ret_pdb_id, chain_type_map, chainlist)
                     del chain_type_map
 
-                    if config.low_mem_system:
-                        if amount_of_chains_in_analysis_dict > 2 * (config.chunksize):
-                            if background_insert_residues_process is not None:
-                                background_insert_residues_process.join()
-
-                            background_insert_residues_process = insertResidues(total_structural_analysis, proteins, config)
-                            total_structural_analysis = {}
-                            amount_of_chains_in_analysis_dict = 0
-                            gc.collect()
                     t_integrate_4 += time.time()
             t_2 = time.time()
 
@@ -1842,7 +1859,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
             chunk_cost += cost
             if chunk_cost >= chunksize:
                 if config.proc_n > 1:
-                    new_anno_result_ids.append(annotate_wrapper.remote(conf_dump, current_chunk, structure_ids))
+                    new_anno_result_ids.append(annotate_wrapper.remote(conf_dump, current_chunk, structure_ids, next(cycle_locks)))
                     n_started += 1
                     started_cost += cost
                 else:
@@ -1855,7 +1872,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
         if (input_procession_counter >= len(size_list)) and (len(current_chunk) > 0):
             if config.proc_n > 1:
-                new_anno_result_ids.append(annotate_wrapper.remote(conf_dump, current_chunk, structure_ids))
+                new_anno_result_ids.append(annotate_wrapper.remote(conf_dump, current_chunk, structure_ids, next(cycle_locks)))
                 n_started += 1
                 started_cost += cost
             else:
@@ -1886,6 +1903,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
     del conf_dump
     t_1_5 = time.time()
     #gc.enable()
+
 
     if config.verbosity >= 3:
         print_times(total_times)
@@ -1924,28 +1942,43 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         t34 = time.time()
         print('Annotation Part 3.3:', t34 - t33)
 
-    trim_down_backmaps(config, proteins)
+    #trim_down_backmaps(config, proteins)
+    #getStoredResidues(proteins, config, exclude_interacting_chains=True, retrieve_only_db_ids=True, skip_interfaces=True)
 
     if config.verbosity >= 2:
         t35 = time.time()
         print('Annotation Part 3.4:', t35 - t34)
 
+    #insert_interface_residues(proteins, config)
+
     if config.verbosity >= 2:
         t3 = time.time()
         print("Annotation Part 3: %s" % (str(t3 - t2)))
 
+    if config.verbosity >= 2:
+        t41 = time.time()
+
     if not config.fast_pdb_annotation:
         classification(proteins, config, background_insert_residues_process)
     elif background_insert_residues_process is not None:
-        if config.verbosity >= 2:
-            t41 = time.time()
+        
         background_insert_residues_process.join()
         background_insert_residues_process.close()
         background_insert_residues_process = None
+
+    if config.fast_pdb_annotation:
+        structure_ids_for_residue_retrieval = {}
+        for structure_id in proteins.complexes:
+            for chain in proteins.complexes[structure_id].chains:
+                if proteins.complexes[structure_id].chains[chain] == 'Protein' and structure_id in proteins.structures:
+                    if chain in proteins.structures[structure_id]:
+                        structure_ids_for_residue_retrieval[proteins.structures[structure_id][chain].database_id] = (structure_id, chain)
+        getStoredResidues(proteins, config, custom_ids = structure_ids_for_residue_retrieval, retrieve_only_db_ids = True, exclude_interacting_chains=True)
+
         if config.verbosity >= 2:
             t42 = time.time()
             print(f'Annotation Part 4.1, pdb fast annotation, bg inserst residues: {t42-t41}')
-        insert_interfaces(proteins, config)
+        #insert_interfaces(proteins, config)
         if config.verbosity >= 2:
             t43 = time.time()
             print(f'Annotation Part 4.2, pdb fast annotation, insert interfaces: {t43-t42}')
@@ -1953,8 +1986,6 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
     if config.verbosity >= 2:
         t4 = time.time()
         print(f'Annotation Part 4: {t4-t3}')
-
-    insert_interface_residues(proteins, config)
 
     if config.verbosity >= 2:
         t5 = time.time()
@@ -1967,8 +1998,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         #    proteins.remove_protein_annotations(protein_id)
         proteins.semi_deconstruct()
 
-    if not config.fast_pdb_annotation:
-        insertClassifications(proteins, config)
+    #if not config.fast_pdb_annotation:
+    #    insertClassifications(proteins, config)
 
     if config.verbosity >= 2:
         t6 = time.time()

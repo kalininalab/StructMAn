@@ -95,6 +95,15 @@ def parse_indel_analysis_file(filename, query_tags = []):
             indel_tag_map[indel_type][tag][important_class] += 1
     return indel_map, indel_tag_map
 
+def get_function_type_from_tags(tags):
+    ft = 'OrganismalFitness'
+    tag_list = tags.split(',')
+    for tag in tag_list:
+        if tag[:13] != 'function_type':
+            continue
+        ft = tag.split('=')[1]
+    return ft
+
 def parse_annotation_file(annotationfile, by_conf=False, rin_classes=False):
     f = open(annotationfile, 'r')
     lines = f.readlines()

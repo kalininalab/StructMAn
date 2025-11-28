@@ -56,7 +56,11 @@ def get_pdb_file_path(pdb_id, config):
         return None
     return path
 
-def mm_lookup(pdb_id, config, n_sub_procs = 1):
+def mm_lookup(
+        pdb_id: str,
+        config,
+        n_sub_procs = 1
+        )-> tuple[dict[str, dict[str | int, list[int | float | None]]], list[str]]:
     if pdb_id[-3:] == '_AU':
         pdb_id = pdb_id[0:4]
 
@@ -71,6 +75,8 @@ def mm_lookup(pdb_id, config, n_sub_procs = 1):
         apply_microminer(config, microminer_search_db, pdb_file_path, outfolder, config.microminer_identity, kmer_matching_rate = config.microminer_kmer_matching_rate, fragment_length = config.microminer_fragment_length, n_procs = n_sub_procs)
         mm_post_procession(outfolder, mmdb_raw_entry, mmdb_aggregated_entry)
 
+    feature_dict: dict[str, dict[str | int, list[int | float | None]]]
+    feature_names: list[str]
     if os.path.isfile(mmdb_aggregated_entry):
         feature_dict, feature_names = parse_processed_mmdb_entry(mmdb_aggregated_entry)
     else:
@@ -120,7 +126,10 @@ def get_mmdb_entry_path(pdb_id, mmdb_path, identity = 0.6, kmer_matching_rate = 
             os.mkdir(subfolder)
         entry_folder = f'{subfolder}/{pdb_id}'
         if not os.path.isdir(entry_folder):
-            os.mkdir(entry_folder)
+            try:
+                os.makedirs(entry_folder)
+            except FileExistsError:
+                pass
         mmdb_entry_path_stem = f'{entry_folder}/{pdb_id}_i{int(identity*100)}_kmr_{int(kmer_matching_rate*100)}_f_{fragment_length}_k_{k}'
 
     else:
@@ -380,17 +389,19 @@ def write_aggregated_dict(aggregated_dict, outfile):
     f.write(''.join(lines))
     f.close()
 
-def parse_processed_mmdb_entry(mmdb_aggregated_entry):
+def parse_processed_mmdb_entry(
+        mmdb_aggregated_entry: str
+        )-> tuple[dict[str, dict[str | int, list[int | float | None]]], list[str]]:
 
     f = open(mmdb_aggregated_entry, 'r')
     lines = f.readlines()
     f.close()
 
-    feature_dict = {}
+    feature_dict: dict[str, dict[str | int, list[int | float | None]]] = {}
 
     headers = lines[0][:-1].split('\t')
 
-    feature_names = headers[2:]
+    feature_names: list[str] = headers[2:]
     feature_type_code_list = []
     for featname in feature_names:
         if featname[:4] == 'nof_':

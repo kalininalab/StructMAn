@@ -57,7 +57,11 @@ def createTemplateFasta(
     dotted_res_name: bytes | None = None
 
     for line in lines:
-        record_name: bytes = line[0:6].rstrip()
+        try:
+            record_name: bytes = line[0:6].rstrip()
+        except TypeError:
+            config.errorlog.add_error(f'Error in createTemplateFasta: {line=}\n{lines=}')
+            return
 
         if record_name.count(b'ATOM') > 0 and record_name != b'ATOM':  # 100k atom bug fix
             record_name = b'ATOM'
@@ -88,7 +92,7 @@ def createTemplateFasta(
             if record_name == b"ATOM" or record_name == b'HETATM':
                 if record_name == b'HETATM':
                     last_residue = res_nr
-                    if (res_name not in residue_consts.BIN_THREE_TO_ONE) and (res_name not in rare_residues):
+                    if (res_name not in residue_consts.BIN_THREE_TO_ONE) and (res_name not in rare_residues) and (res_name not in residue_consts.BIN_METAL_ATOMS):
                         continue
                 if for_modeller:
                     if res_nr not in used_res:
@@ -104,7 +108,8 @@ def createTemplateFasta(
                         if record_name == b"ATOM":
                             aa = toOne(res_name, only_natural=True).decode('ascii')
                         else:
-                            aa = '.'
+                            #aa = '.'
+                            aa = ''
                             dotted_res_name = res_name
 
                         res_atom_count += 1
@@ -183,11 +188,19 @@ def mutate_aligned_sequence(aligned_seq, pos, new_aa):
     return mutated_aligned_seq
 
 # gets also called by serializedPipeline
-def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, aaclist, seq_res_map, ignore_gaps=False, lock=None):
+def getSubPos(config,
+              u_ac: str,
+              target_aligned_sequence: str,
+              template_aligned_sequence: str,
+              aaclist,
+              seq_res_map,
+              ignore_gaps: bool = False,
+              lock=None
+              ) -> tuple[list, list, Residue_Map[int]]:
     target_aligned_sequence = target_aligned_sequence.replace("\n", "")
     template_aligned_sequence = template_aligned_sequence.replace("\n", "")
 
-    backmap = Residue_Map()
+    backmap: Residue_Map[int] = Residue_Map()
 
     errors = []
     align_map = [None]
@@ -207,13 +220,14 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
             else:
                 if tem_n - 1 >= len(seq_res_map):
                     return ("Seq_res_map too short: %s, %s, %s" % (u_ac, tem_n, len(seq_res_map)))
+                #seqres = seq_res_map[tem_n - 1]
                 align_map.append(((seq_res_map[tem_n - 1], tem_char, tem_n), char))
                 backmap.add_item(seq_res_map[tem_n - 1], tar_n)
 
 
     error_count = 0
     error_example = None
-    sub_infos = [None] * len(align_map)
+    sub_infos: list = [None] * len(align_map)
 
     for aac_base in aaclist:
         target_pos = int(aac_base[1:])
@@ -241,6 +255,8 @@ def getSubPos(config, u_ac, target_aligned_sequence, template_aligned_sequence, 
 
     if error_count > 0:
         config.errorlog.add_warning(f'{error_count} number of warnings happed during getSubPos, representing warning message:\n{error_example}', lock=lock)
+
+    #print(len(backmap))
 
     return (sub_infos, aaclist, backmap)
 
@@ -292,7 +308,7 @@ def call_biopython_alignment(target_seq, template_seq, aligner_class = None):
 
 def BPalign(config, u_ac, target_seq, template_seq, aaclist, seq_res_map, ignore_gaps=False, lock=None, aligner_class = None):
     #target_seq = target_seq.replace('U', 'C').replace('O', 'K').replace('J', 'I')
-    if config.verbosity >= 6:
+    if config.verbosity >= 8:
         print('Aligning:')
         print(target_seq)
         print(template_seq)
@@ -455,7 +471,7 @@ def truncateSequences(aseq, bseq, flank_buffer = 0, remap_positions = None):
     bseq = bseq
 
     if remap_positions is None:
-        return (aseq, bseq)
+        return (aseq, bseq, buffered_left)
     else:
 
         sav_positions, insertion_positions,  deletion_flanks = remap_positions
@@ -494,7 +510,7 @@ def truncateSequences(aseq, bseq, flank_buffer = 0, remap_positions = None):
 
         remapped_positions = [remapped_sav_positions, remapped_insertion_positions, remapped_deletion_flanks]
 
-        return aseq, bseq, remapped_positions
+        return aseq, bseq, buffered_left, remapped_positions
 
 
 def createAlignmentPir(target_name, target_aligned_sequence, template_name, template_aligned_sequence, chain, startres, endres, outfile=''):
@@ -503,12 +519,17 @@ def createAlignmentPir(target_name, target_aligned_sequence, template_name, temp
 
 
 # called by serializedPipeline
-def alignBioPython(config, target_name, wildtype_sequence, template_name, template_page, chain, aaclist, ignore_gaps=False, lock=None, rare_residues=None, aligner_class = None):
+def alignBioPython(config, target_name, wildtype_sequence, template_name, template_page, chain, aaclist, seq_info=None, ignore_gaps=False, lock=None, rare_residues=None, aligner_class = None):
     # preparing the alignment of the target and the template, by:
     t0 = time.time()
-    (seq_res_map, template_seq, last_residue, first_residue) = createTemplateFasta(template_page, template_name, chain.encode('ascii'), config, seqAndMap=True, rare_residues=rare_residues)
-    if len(seq_res_map) == 0:
-        return 'Unable to create template fasta %s %s %s' % (target_name, template_name, chain)
+    if seq_info is None:
+        (seq_res_map, template_seq, last_residue, first_residue) = createTemplateFasta(template_page, template_name, chain.encode('ascii'), config, seqAndMap=True, rare_residues=rare_residues)
+        if len(seq_res_map) == 0:
+            return 'Unable to create template fasta %s %s %s' % (target_name, template_name, chain)
+    else:
+        seq_res_map, template_seq = seq_info
+        first_residue = None
+        last_residue = None
     startres = seq_res_map[0]
     endres = seq_res_map[-1]
 
@@ -521,7 +542,7 @@ def alignBioPython(config, target_name, wildtype_sequence, template_name, templa
     (target_aligned_sequence, template_aligned_sequence, sub_infos, aaclist, backmap) = align_out
     t2 = time.time()
     # write the alignment into the pir format, which can be used by the modeller
-    (truncated_target_sequence, truncated_template_sequence) = truncateSequences(target_aligned_sequence, template_aligned_sequence)
+    (truncated_target_sequence, truncated_template_sequence, _) = truncateSequences(target_aligned_sequence, template_aligned_sequence)
     t3 = time.time()
     (aln_length, seq_id) = getCovSI(len(target_aligned_sequence), truncated_target_sequence, truncated_template_sequence)
     t4 = time.time()

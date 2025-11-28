@@ -7,27 +7,33 @@ from structman.lib import templateFiltering
 
 class Model:
     __slots__ = ['path', 'template_structure', 'target_protein', 'model_id', 'truncated_prot_id', 'structural_analysis_dict', 'ligand_profiles',
-                 'metal_profiles', 'ion_profiles', 'chain_chain_profiles', 'chain_type_map', 'chainlist', 'chain_id_map',
-                 'template_resolution', 'sequence_identity', 'coverage', 'tmp_folder', 'template_contig_map', 'label_add']
+                 'metal_profiles', 'ion_profiles', 'chain_chain_profiles', 'chain_type_map', 'chainlist', 'chain_id_map', 'chain_backmap',
+                 'template_resolution', 'sequence_identity', 'coverage', 'tmp_folder', 'template_contig_map', 'label_add', 'buffer']
 
     def __init__(self, path='', template_structure=None, target_protein=None, model_id=None, chain_id_map=None, truncated_prot_id=None,
-                 template_resolution=None, sequence_identity=None, coverage=None, tmp_folder=None, template_contig_map=None, label_add = ''):
+                 template_resolution=None, sequence_identity=None, coverage=None, tmp_folder=None, template_contig_map=None, label_add = '', buffer = 0):
         self.path = path
         self.template_structure = template_structure  # tuple of template pdb id and target chain
         self.target_protein = target_protein
         self.model_id = model_id
         self.truncated_prot_id = truncated_prot_id
         self.chain_id_map = chain_id_map  # maps the template chain ids to the model chain ids
+        self.chain_backmap = {}
+        if self.chain_id_map is not None:
+            for chain in self.chain_id_map:
+                mod_chain = self.chain_id_map[chain]
+                self.chain_backmap[mod_chain] = chain
         self.template_resolution = template_resolution
         self.sequence_identity = sequence_identity
         self.coverage = coverage
         self.tmp_folder = tmp_folder
         self.template_contig_map = template_contig_map
         self.label_add = label_add
+        self.buffer = buffer
 
     def analyze(self, config, highlight_mutant_residue = None, target_path= None):
         config.n_of_chain_thresh = 1000  # Hinder structuralAnalysis to spawn processes, since this function is already called by a remote
-        model_target_chain = self.chain_id_map[self.template_structure[1]]
+        model_target_chain = self.template_structure[1]
 
         if config.verbosity >= 3:
             print('Start model self analysis:', self.model_id, self.path, highlight_mutant_residue)
@@ -46,7 +52,16 @@ class Model:
                 return
 
         try:
-            (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, _, _) = templateFiltering.structuralAnalysis(self.model_id, config, model_path=self.path, target_dict=[model_target_chain], keep_rin_files=True)
+            (structural_analysis_dict,
+             errorlist, ligand_profiles,
+             metal_profiles, ion_profiles,
+             chain_chain_profiles, chain_type_map,
+             chainlist, _, _, _, _, _) = templateFiltering.structuralAnalysis(
+                 self.model_id,
+                 config,
+                 model_path=self.path,
+                 target_dict=[model_target_chain],
+                 keep_rin_files=True)
         except:
             [e, f, g] = sys.exc_info()
             g = traceback.format_exc()
@@ -115,6 +130,8 @@ class Model:
         #print(highlight_mutant_residue)
         #print(self.template_structure, self.chain_id_map)
 
+        already_called = self.path[-12:] == '_refined.pdb'
+
         if highlight_mutant_residue is not None:
             converted_highlight_map = {}
             for chain in highlight_mutant_residue:
@@ -134,6 +151,10 @@ class Model:
                 record_name = line[0:6].rstrip()
                 if record_name == "ATOM" or record_name == 'HETATM':
                     chain_id = line[21]
+                    if not already_called:
+                        original_chain = self.chain_backmap[chain_id]
+                    else:
+                        original_chain = chain_id
                     res_nr = line[22:26].strip()  # without insertion code
                     # reset res_id counter for every new chain
                     if current_chain != chain_id:
@@ -145,13 +166,13 @@ class Model:
                         digit_res_str = str(current_new_res_nr)
                         current_res_str = '%s%s' % (' ' * (4 - len(digit_res_str)), digit_res_str)
 
-                    newline = f'{line[:22]}{current_res_str}{line[26:]}'
+                    newline = f'{line[:21]}{original_chain}{current_res_str}{line[26:]}'
 
                     if highlight_mutant_residue is not None:
                         if chain_id in converted_highlight_map:
                             b_factor = self.check_highlights(digit_res_str, converted_highlight_map[chain_id])
                         else:
-                            b_factor = '25.00'
+                            b_factor = ' 25.00'
                         newline = f'{newline[:60]}{b_factor}{newline[66:]}'
 
                     new_lines.append(newline)
@@ -161,11 +182,9 @@ class Model:
             else:
                 new_lines.append(line)
 
-        stem = self.path[:-4].replace('.', '_')
-        if stem[-12:] != '_refined.pdb':
-            refined_path = f'{stem}_refined.pdb'
-        else:
-            refined_path = f'{stem}.pdb'
+        stem = self.path[:-4].replace('.', '_').replace('_refined','')
+        refined_path = f'{stem}_refined.pdb'
+        
 
         if target_path is not None:
             f = open(target_path, 'w')
@@ -176,7 +195,7 @@ class Model:
         f.write(''.join(new_lines))
         f.close()
 
-        if self.path != refined_path:
+        if self.path != refined_path and os.path.isfile(self.path):
             os.remove(self.path)
 
         self.path = refined_path

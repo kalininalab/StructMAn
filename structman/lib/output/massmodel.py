@@ -6,7 +6,10 @@ import traceback
 import ray
 
 from structman.lib.database import database
+from structman.base_utils.base_utils import pack
 from structman.lib.globalAlignment import mutate_aligned_sequence
+from structman.lib.sdsc.complex import Complex
+from structman.lib.sdsc import structure as structure_package
 from structman.lib.sdsc.sdsc_utils import invert_deletion_flanks, invert_insertion_positions
 try:
     from structman.lib import modelling
@@ -45,6 +48,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                 prot_db_ids = None, model_wts = False, skip_individual_indel_mutants = False, blacklist = None, update_proteins = None):
     current_chunk = 1
     proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True, with_mappings = True,
+                                                        get_stable_objs = True, input_id_is_majored=True,
                                        with_snvs=True, mutate_snvs=include_snvs, with_alignments=True, with_multi_mutations = with_multi_mutations,
                                        with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_ids)
 
@@ -53,6 +57,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
     if blacklist is None:
         blacklist = set([])
+
+    complexes = proteins.complexes
     while proteins is not None:
 
         print(f'Mass Modelling Pipeline, tss: {template_selection_scheme}\n####################### Processing Chunk {current_chunk} ########################################\n')
@@ -99,7 +105,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                     continue
             pdb_id, tchain = rec_struct.split(':')
             compl_obj = proteins.complexes[pdb_id]
-            structures = proteins.get_complex_structures(pdb_id)
+            structures: dict[str, dict[str, structure_package.Structure]] = proteins.get_complex_structures(pdb_id)
 
             print(f'Recommended structure: {pdb_id}:{tchain}, Mutant Type: {proteins[prot_id].mutant_type}')
 
@@ -185,7 +191,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                 mm_position_dict = proteins[prot_id].get_mutation_positions_by_mm()
 
                 if config.verbosity >= 3:
-                    print(f'mm_position_dict for {prot_id}\n{mm_position_dict}\n')
+                    print(f'mm_position_dict for {prot_id}\n{mm_position_dict=} {blacklist=}\n')
 
                 for mut_prot_id in mm_position_dict:
                     if mut_prot_id in blacklist:
@@ -202,6 +208,9 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
                     mm_rec_struct = proteins[wildtype_protein].get_recommended_structure(scheme = template_selection_scheme, prefer_mutation_positions = True, custom_mutations = (sav_pos, inv_inserts, inv_del_flanks), functionally_weighted = True)
 
+                    if config.verbosity >= 3:
+                        print(f'In mass_model: {prot_id=} {mut_prot_id=} {mm_rec_struct=}')
+
                     if mm_rec_struct is not None:
                         rec_struct = mm_rec_struct
 
@@ -209,7 +218,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                         compl_obj = proteins.complexes[pdb_id]
                         structures = proteins.get_complex_structures(pdb_id)
                         try:
-                            alignment_tuple = proteins.get_alignment(prot_id, pdb_id, tchain)
+                            alignment_tuple = proteins[prot_id].structure_annotations[pdb_id][tchain].get_alignment(unpacked=True)
                             seq_id = proteins[prot_id].structure_annotations[pdb_id][tchain].sequence_identity
                             cov = proteins[prot_id].structure_annotations[pdb_id][tchain].coverage
                         except:
@@ -227,6 +236,16 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
                     model_jobs[prot_id][pdb_id].append([compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, sav_pos, inv_inserts, inv_del_flanks, mut_prot_id])
 
+                    mut_alignment_tuple = proteins[mut_prot_id].structure_annotations[pdb_id][tchain].get_alignment(unpacked=True)
+                    mut_seq_id = proteins[mut_prot_id].structure_annotations[pdb_id][tchain].sequence_identity
+                    mut_cov = proteins[mut_prot_id].structure_annotations[pdb_id][tchain].coverage
+
+                    if mut_prot_id not in model_jobs:
+                        model_jobs[mut_prot_id] = {}
+                    if not pdb_id in model_jobs[mut_prot_id]:
+                        model_jobs[mut_prot_id][pdb_id] = []
+
+                    model_jobs[mut_prot_id][pdb_id].append([compl_obj, structures, mut_alignment_tuple, mut_seq_id, mut_cov, pdb_id, tchain, mut_prot_id, [], [], [], ''])
 
             if prot_id not in model_jobs or model_wts:
                 model_jobs[prot_id] = {}
@@ -251,7 +270,9 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                     print('Modelling of:', prot_id, pdb_id, tchain, label_add)
 
                     if para:
-                        modelling_result_ids.append(modelling.model_remote_wrapper.remote(conf_dump, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, label_add = label_add, skip_analysis=True, force_modelling = config.force_modelling, mutation_positions = [sav_positions, insertion_positions, deletion_flanks], target_path = model_database))
+                        compl_obj.deactivate_slot_mask()
+                        #print(f'{compl_obj.pdb_id=} {compl_obj.slot_mask=} {Complex.slot_mask=}')
+                        modelling_result_ids.append(modelling.model_remote_wrapper.remote(conf_dump, pack(compl_obj), pack(structures), alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, label_add = label_add, skip_analysis=True, force_modelling = config.force_modelling, mutation_positions = [sav_positions, insertion_positions, deletion_flanks], target_path = model_database))
                     else:
                         models.append(modelling.model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, label_add = label_add, skip_analysis=True, force_modelling = config.force_modelling, mutation_positions = [sav_positions, insertion_positions, deletion_flanks], target_path = model_database))
         if para:
@@ -261,8 +282,8 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
             print('No models got produced :(')
             current_chunk += 1
             proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True,
-                                       with_snvs=True, mutate_snvs=include_snvs, with_alignments=True,
-                                       with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_id_dict)
+                                       with_snvs=True, mutate_snvs=include_snvs, with_alignments=True, input_id_is_majored= True,
+                                       with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_ids)
             if update_proteins is not None:
                 proteins.protein_map.update(update_proteins)
             continue
@@ -272,7 +293,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
         if current_chunk == 1:
             model_output = out_generator.OutputGenerator()
-            headers = ['Input ID', 'Wildtype protein', 'Protein ID', 'Additional Label', 'Template PDB ID', 'Template chain',
+            headers = ['Input ID', 'Wildtype protein', 'Protein ID', 'Additional Label', 'Template PDB ID', 'Template chain', 'Sequence buffer',
                        'Model chain', 'Template resolution', 'Sequence identity', 'Coverage', 'File location']
             model_output.add_headers(headers)
             f = open(summary_file, 'a')
@@ -287,7 +308,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
                 # model.clear_tmp()
                 pdb_id, tchain = model.template_structure
-                model_chain = model.chain_id_map[tchain]
+                model_chain = tchain
                 label_add = model.label_add
 
                 target_file_name = f'{model.truncated_prot_id}-{label_add}_{pdb_id}:{tchain}.pdb'
@@ -296,6 +317,14 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                 if not os.path.isfile(model.path):
                     continue
                 shutil.copy(model.path, target_path)
+
+                network_file_path = f'{model.path[:-4]}.sif.gz'
+                target_network_path = f'{model_database}/{model.truncated_prot_id}-{label_add}_{pdb_id}:{tchain}.sif.gz'
+                shutil.copy(network_file_path, target_network_path)
+
+                interaction_score_path = f'{model.path[:-4]}_intsc.ea.gz'
+                target_score_path = f'{model_database}/{model.truncated_prot_id}-{label_add}_{pdb_id}:{tchain}_intsc.ea.gz'
+                shutil.copy(interaction_score_path, target_score_path)
 
                 input_id = proteins[model.target_protein].input_id
                 if input_id is None:
@@ -307,6 +336,7 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                 model_output.add_value('Additional Label', model.label_add)
                 model_output.add_value('Template PDB ID', pdb_id)
                 model_output.add_value('Template chain', tchain)
+                model_output.add_value('Sequence buffer', model.buffer)
                 model_output.add_value('Model chain', model_chain)
                 model_output.add_value('Template resolution', model.template_resolution)
                 model_output.add_value('Sequence identity', model.sequence_identity)
@@ -318,10 +348,13 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
         f.close()
 
         current_chunk += 1
-        proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True,
+        proteins, prot_db_id_dict = database.proteinsFromDb(session_id, config, with_residues=True, input_id_is_majored=True,
                                        with_snvs=True, mutate_snvs=include_snvs, with_alignments=True,
                                        with_complexes=True, keep_ray_alive=True, current_chunk = current_chunk, prot_db_id_dict = prot_db_id_dict)
         if update_proteins is not None and proteins is not None:
             proteins.protein_map.update(update_proteins)
+        if proteins is not None:
+            complexes.update(proteins.complexes)
     ray.shutdown()
+    return complexes
 

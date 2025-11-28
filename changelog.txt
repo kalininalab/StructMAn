@@ -1,3 +1,10 @@
+Version 2.2.0
+    - Reorganized database inserts and selects, now are mostly scheduled in ray remote functions using filelocks to prevent collisions
+    - Improvements on the installer
+    - Packaged the position-position interaction table into the compressed blobs as part of the protein-protein tables
+        Means that they can only retrieved for all positions of a protein
+        
+
 Version 2.1.1
     - Improvement of memory and cpu consumption
     - Small bug fixes

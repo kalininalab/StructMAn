@@ -67,12 +67,19 @@ def main(infiles, out_folder, config):
             if out_folder is None:
                 out_folder = resolve_path(os.path.join(trunk, "Output"))
         else:
-            config.errorlog.add_error('Invalid input file path: {infile}')
+            config.errorlog.add_error(f'Invalid input file path: {infile}')
 
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
 
+        session_name = infilename.rsplit('.', 1)[0]
 
+        outpath = os.path.join(out_folder, session_name)
+
+        if not os.path.exists(outpath):
+            os.makedirs(outpath)
+
+        config.outpath = outpath
         # run the main pipeline
         
         if session_id is None:
@@ -82,17 +89,12 @@ def main(infiles, out_folder, config):
 
 
         # run the output scripts
-        session_name = infilename.rsplit('.', 1)[0]
         months = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
         time_struct = time.gmtime()
         year = str(time_struct[0])
         month = months[time_struct[1]]
         day = str(time_struct[2])
         date = f"{day}{month}{year}"
-        outpath = os.path.join(out_folder, session_name)
-
-        if not os.path.exists(outpath):
-            os.makedirs(outpath)
         
         out_returncode = output.main(session_id, outpath, config)
 
@@ -403,7 +405,7 @@ def structman_cli():
             'model_indel_structures', 'ignore_local_pdb', 'ignore_local_rindb', 'ignore_local_mapping_db',
             'skip_main_output_generation', 'ray_local_mode', 'compute_ppi', 'structure_limiter=',
             'force_modelling', 'target=', 'custom_db', 'update_source=', 'condition_1=', 'condition_2=',
-            'local_db=', 'read_only', 'read_hybrid', 'fast_pdb_annotation', 'target_db='
+            'local_db=', 'read_only', 'read_hybrid', 'fast_pdb_annotation', 'target_db=', 'get_msas'
         ]
         opts, args = getopt.getopt(argv, "c:i:n:o:hp:", long_paras)
 
@@ -444,6 +446,7 @@ def structman_cli():
     structure_limiter = None
     fast_pdb_annotation = None
     target_db = None
+    provide_msas = False
 
     '''
     #mmcif mode flag is added
@@ -564,6 +567,9 @@ def structman_cli():
         if opt == '--target_db':
             target_db = arg
 
+        if opt == '--get_msas':
+            provide_msas = True
+
     if not output_util and not util_mode:
         if infile == '' and len(single_line_inputs) == 0:
             input_folder = '/structman/input_data/'
@@ -635,6 +641,7 @@ def structman_cli():
     config.structure_limiter = structure_limiter
     config.condition_1_tag = condition_1_tag
     config.condition_2_tag = condition_2_tag
+    config.provide_msas = provide_msas
     
     if read_only is not None:
         config.read_only_mode = read_only
@@ -842,8 +849,11 @@ def structman_cli():
             print(f'{config.db_address=} {config.db_name=}')
             db, cursor = config.getDB()
             if db is not None:
+                max_package_size, max_connections = repairDB.get_base_info(cursor)
                 db.close()
                 print('DB connection was successful!')
+                print(f'{max_package_size=}')
+                print(f'{max_connections=}')
             sys.exit(0)
         if conf_update_pdb_path is not None:
             config.config_parser_obj.set('user', 'pdb_path', conf_update_pdb_path)

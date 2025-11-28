@@ -5,8 +5,13 @@ SCRIPT=$(readlink -f $0)
 # Absolute path this script is in.
 SCRIPTPATH=$(dirname "$SCRIPT")
 
+all_good=true
+
+# Stop script on errors
+#set -euo pipefail
+
 #Init constants
-current_python_version="3.11"
+current_python_version="3.12"
 username=$(whoami)
 
 #Init default arguments
@@ -21,7 +26,8 @@ verbose=false
 
 installer_temp_folder=$(mktemp -d -t structman.XXXXXXX)
 trap 'rm -rf -- "$installer_temp_folder"' EXIT
-path_to_dssp_binary="$SCRIPTPATH"/structman/resources/smssp
+path_to_dssp_build_script="$SCRIPTPATH"/build_smssp/build.sh
+path_to_dssp_binary="$SCRIPTPATH"/smssp
 
 #Parse arguments
 while getopts e:m:d:p:f:s:c:v flag
@@ -54,7 +60,10 @@ env_list_result=$(conda env list | grep -w "$env_name")
 if [ -z "$env_list_result" ]
 then
     echo "Conda environment with name $env_name not in current environment list, setting up new environment ..."
-    conda create -n "$env_name" python=$current_python_version -y >&$verbose_stdout
+    if ! conda create -n "$env_name" python=$current_python_version -y >&$verbose_stdout; then
+        echo "Installation failed"
+        exit 1
+    fi
 else
     echo "Conda environment with name $env_name already in environment list."
 fi
@@ -63,18 +72,34 @@ fi
 conda_base_path=$(conda info --base)
 conda_bash_path="$conda_base_path"/etc/profile.d/conda.sh
 
+current_env=$(conda info | grep 'active environment' | awk '{sub(/^[ \t\r\n]+active environment.:./,""); print}')
+if ! [ "$current_env" = "base" ]
+then
+    echo "Conda needs to be in base environment, but is $current_env"
+    echo "Please call 'conda deactivate'."
+    echo "exiting installer ..."
+    exit 1
+fi
+
+
 #activate the environment
 {
     echo "Activating environment inside shell ..."
     source "$conda_bash_path"
-    #current_env=$(conda info | grep 'active environment' | awk '{sub(/active environment.:./,""); print}')
-
-    #if ! [ "$current_env" = "base" ]
-    #then
-    #    conda deactivate
-    #fi
 
     new_env_path=$(conda env list | awk -v name="$env_name" '/^[^#]/{ if ($1 == name) {print $2} }')
+
+    #Installing custom DSSP binary
+
+    if ! $path_to_dssp_build_script; then
+        echo "Installation failed in building smssp"
+        exit 1
+    fi
+    if ! mv "$path_to_dssp_binary" "$new_env_path"/bin/smssp; then
+        echo "Installation failed"
+        exit 1
+    fi
+
     conda activate "$env_name"
     echo "$env_name" activated
 } >&$verbose_stdout
@@ -95,20 +120,21 @@ mamba update pip -y -c conda-forge >&$verbose_stdout
 
 #install dependencies
 {
-    echo "Installing package charset-normalizer ..."
-    mamba install -y charset-normalizer==2.0.4
-    echo "Installing package harfbuzz ..."
-    mamba install -y harfbuzz==8.2.1 -c conda-forge
     echo "Installing package cairo ..."
-    mamba install -y cairo==1.18.0 -c conda-forge
-    
+    mamba install -y cairo==1.18.4 -c conda-forge
     export PKG_CONFIG_PATH="$new_env_path"/envs/"$env_name"/lib/pkgconfig:"$PKG_CONFIG_PATH"
     echo "Installing package pycairo ..."
-    mamba install -y pycairo==1.23.0
+    if ! mamba install -y pycairo==1.28.0 -c conda-forge; then
+        echo "Installation failed"
+        exit 1
+    fi
     echo "Installing package importlib-metadata ..."
     mamba install -y importlib-metadata
     echo "Installing package keyring ..."
-    mamba install -y keyring
+    if ! mamba install -y keyring -c conda-forge; then
+        echo "Installation failed"
+        exit 1
+    fi
     echo "Installing package pkginfo ..."
     mamba install -y pkginfo
     echo "Installing package requests-toolbelt ..."
@@ -118,7 +144,21 @@ mamba update pip -y -c conda-forge >&$verbose_stdout
     echo "Installing package gawk ..."    
     mamba install -y gawk
     echo "Installing package sqlite ..."
-    mamba install -y sqlite>=3.45.3 -c conda-forge
+    if ! mamba install -y -c conda-forge libsqlite --force-reinstall; then
+        echo "Mamba failed, try to fallback to conda..."
+        if ! conda install -y -c conda-forge libsqlite --force-reinstall; then
+            echo "Installation failed"
+            exit 1
+        fi
+    fi
+    mamba update -y -c conda-forge libsqlite
+    if ! mamba install -y sqlite -c conda-forge --force-reinstall; then
+        echo "Installation failed"
+        exit 1
+    fi
+    mamba update -y sqlite -c conda-forge
+    echo "Installing package openbabel ..."    
+    mamba install -y openbabel -c conda-forge
 } >&$verbose_stdout
 
 
@@ -135,7 +175,10 @@ fi
 
 #install the main package
 echo "Installing StructMAn source code using pip ..."
-pip install "$SCRIPTPATH" >&$verbose_stdout
+if ! pip install "$SCRIPTPATH" >&$verbose_stdout; then
+    echo "Installation failed"
+    exit 1
+fi
 
 #install mmseqs2
 echo "Installing MMseqs2 ..."
@@ -187,11 +230,23 @@ else
     local_database_folder=$(realpath "$local_database_folder")
 fi
 
-#Installing custom DSSP binary
-cp "$path_to_dssp_binary" "$new_env_path"/bin/smssp
-
 #Installing specific boost
-mamba install -y libboost==1.82 -c conda-forge >&$verbose_stdout
+if ! mamba install -y zlib==1.3.1 -c conda-forge >&$verbose_stdout; then
+    echo "Installation failed"
+    exit 1
+fi
+
+if ! mamba install -y libfreetype6==2.13.3 -c conda-forge >&$verbose_stdout; then
+    echo "Installation failed"
+    exit 1
+fi
+
+if ! mamba install -y libboost==1.84 -c conda-forge >&$verbose_stdout; then
+    echo "Installation failed"
+    exit 1
+fi
+
+
 
 #Installing grpc
 pip install grpcio >$verbose_stdout
@@ -202,7 +257,10 @@ cp "$SCRIPTPATH/config_template.txt" "$structman_config_path"
 echo "Setting up personal structman config file:"
 echo "    $structman_config_path"
 {
-    structman config mmseqs_tmp_folder "$tmp_folder_path" -c "$structman_config_path"
+    if ! structman config mmseqs_tmp_folder "$tmp_folder_path" -c "$structman_config_path"; then
+        echo "Installation failed"
+        exit 1
+    fi
     structman config dssp_path smssp -c "$structman_config_path"
     structman config mmseqs2_db_path "$storage_folder"/pdbba_mmseqs2_search_db
 } >&$verbose_stdout 2>&$verbose_stderr
@@ -238,7 +296,10 @@ else
     local_database_path="$local_database_folder"/local_structman_database.db
     {
         echo Setting up local database here: "$local_database_path"
-        structman config local_db_path "$local_database_path" -c "$structman_config_path"
+        if ! structman config local_db_path "$local_database_path" -c "$structman_config_path"; then
+            echo "Installation failed"
+            exit 1
+        fi
         structman config db_name "$database_name" -c "$structman_config_path"
         structman config db_address "-"
         structman database create --compute_ppi
@@ -247,8 +308,12 @@ fi
 
 structman update check_search_db >&$verbose_stdout 2>&$verbose_stderr
 
-
-echo "StructMAn successfully installed, please activate the right conda environment before using it:"
-echo "    conda activate $env_name"
-
-exit 0
+if $all_good;
+then
+    echo "StructMAn successfully installed, please activate the right conda environment before using it:"
+    echo "    conda activate $env_name"
+    exit 0
+else
+    echo "Installation failed"
+    exit 1
+fi

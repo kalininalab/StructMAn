@@ -34,7 +34,8 @@ CREATE TABLE `Alignment` (
   `Structure` int(11) UNSIGNED NOT NULL,
   `Sequence_Identity` float DEFAULT NULL,
   `Coverage` float DEFAULT NULL,
-  `Alignment` BLOB(65535) DEFAULT NULL
+  `Alignment` BLOB(65535) DEFAULT NULL,
+  `Backmap` BLOB(65535) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- --------------------------------------------------------
@@ -65,36 +66,175 @@ CREATE TABLE `Interface` (
   `Interface_Id` int(11) UNSIGNED NOT NULL,
   `Protein` int(10) UNSIGNED NOT NULL,
   `Structure_Recommendation` varchar(32) NOT NULL,
-  `First_Position` int(8) UNSIGNED NOT NULL,
-  `Last_Position` int(8) UNSIGNED NOT NULL,
-  `Mean_Position` int(8) UNSIGNED NOT NULL,
-  `Interface_Size` int(8) UNSIGNED NOT NULL
+  `Hash` bigint(20) UNSIGNED NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- --------------------------------------------------------
 
 --
--- Tabellenstruktur für Tabelle `Protein_Protein_Interaction`
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_0`
 --
 
-CREATE TABLE `Protein_Protein_Interaction` (
-  `Protein_Protein_Interaction_Id` int(11) UNSIGNED NOT NULL,
-  `Interface_A` int(10) UNSIGNED NOT NULL,
-  `Interface_B` int(10) UNSIGNED NOT NULL,
+CREATE TABLE `Protein_Protein_Interaction_0` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
   `Complex` int(11) UNSIGNED NOT NULL,
   `Chain_A` char(1) DEFAULT NULL,
   `Chain_B` char(1) DEFAULT NULL,
-  `Interaction_Score` float DEFAULT NULL
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_1`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_1` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_2`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_2` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_3`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_3` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_4`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_4` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_5`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_5` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_6`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_6` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_7`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_7` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_8`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_8` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `Protein_Protein_Interaction_9`
+--
+
+CREATE TABLE `Protein_Protein_Interaction_9` (
+  `Protein_A` int(10) UNSIGNED NOT NULL,
+  `Protein_B` int(10) UNSIGNED NOT NULL,
+  `Complex` int(11) UNSIGNED NOT NULL,
+  `Chain_A` char(1) DEFAULT NULL,
+  `Chain_B` char(1) DEFAULT NULL,
+  `Interaction_Score` float DEFAULT NULL,
+  `Pos_Pos_Data` mediumblob DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 --
 -- Tabellenstruktur für Tabelle `Position_Position_Interaction`
 --
 
 CREATE TABLE `Position_Position_Interaction` (
-  `Position_Position_Interaction_Id` int(11) NOT NULL,
+  `Position_Position_Interaction_Id` bigint(20) NOT NULL,
   `Position_A` int(11) NOT NULL,
   `Position_B` int(11) NOT NULL,
   `Residue_A` int(11) UNSIGNED NOT NULL,
@@ -482,13 +622,74 @@ ALTER TABLE `Interface`
   ADD KEY `Protein` (`Protein`);
 
 --
--- Indizes für die Tabelle `Protein_Protein_Interaction`
+-- Indizes für die Tabelle `Protein_Protein_Interaction_0`
 --
-ALTER TABLE `Protein_Protein_Interaction`
-  ADD PRIMARY KEY (`Protein_Protein_Interaction_Id`),
-  ADD KEY `Interface_A` (`Interface_A`),
-  ADD KEY `Interface_B` (`Interface_B`),
-  ADD KEY `Complex` (`Complex`);
+ALTER TABLE `Protein_Protein_Interaction_0`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_1`
+--
+ALTER TABLE `Protein_Protein_Interaction_1`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_2`
+--
+ALTER TABLE `Protein_Protein_Interaction_2`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_3`
+--
+ALTER TABLE `Protein_Protein_Interaction_3`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_4`
+--
+ALTER TABLE `Protein_Protein_Interaction_4`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_5`
+--
+ALTER TABLE `Protein_Protein_Interaction_5`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_6`
+--
+ALTER TABLE `Protein_Protein_Interaction_6`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_7`
+--
+ALTER TABLE `Protein_Protein_Interaction_7`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_8`
+--
+ALTER TABLE `Protein_Protein_Interaction_8`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
+
+--
+-- Indizes für die Tabelle `Protein_Protein_Interaction_9`
+--
+ALTER TABLE `Protein_Protein_Interaction_9`
+  ADD KEY `Protein_A` (`Protein_A`),
+  ADD KEY `Protein_B` (`Protein_B`);
 
 
 --
@@ -539,6 +740,7 @@ ALTER TABLE `Position`
 --
 ALTER TABLE `Position_Position_Interaction`
   ADD PRIMARY KEY (`Position_Position_Interaction_Id`),
+  ADD UNIQUE KEY `Pos_Pos` (`Position_A`,`Position_B`),
   ADD KEY `Position_A` (`Position_A`),
   ADD KEY `Position_B` (`Position_B`),
   ADD KEY `Residue_A` (`Residue_A`),
@@ -704,12 +906,6 @@ ALTER TABLE `Interface`
   MODIFY `Interface_Id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT für Tabelle `Protein_Protein_Interaction`
---
-ALTER TABLE `Protein_Protein_Interaction`
-  MODIFY `Protein_Protein_Interaction_Id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT für Tabelle `GO_Term`
 --
 ALTER TABLE `GO_Term`
@@ -800,12 +996,76 @@ ALTER TABLE `Protein`
 
 
 --
--- Constraints der Tabelle `Protein_Protein_Interaction`
+-- Constraints der Tabelle `Protein_Protein_Interaction_0`
 --
-ALTER TABLE `Protein_Protein_Interaction`
-  ADD CONSTRAINT `Interface_A_ibfk_1` FOREIGN KEY (`Interface_A`) REFERENCES `Interface` (`Interface_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  ADD CONSTRAINT `Interface_B_ibfk_2` FOREIGN KEY (`Interface_B`) REFERENCES `Interface` (`Interface_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  ADD CONSTRAINT `Complex_ibfk_3` FOREIGN KEY (`Complex`) REFERENCES `Complex` (`Complex_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `Protein_Protein_Interaction_0`
+  ADD CONSTRAINT `Interface_A_0_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_0_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_1`
+--
+ALTER TABLE `Protein_Protein_Interaction_1`
+  ADD CONSTRAINT `Interface_A_1_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_1_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_2`
+--
+ALTER TABLE `Protein_Protein_Interaction_2`
+  ADD CONSTRAINT `Interface_A_2_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_2_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_3`
+--
+ALTER TABLE `Protein_Protein_Interaction_3`
+  ADD CONSTRAINT `Interface_A_3_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_3_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_4`
+--
+ALTER TABLE `Protein_Protein_Interaction_4`
+  ADD CONSTRAINT `Interface_A_4_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_4_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_5`
+--
+ALTER TABLE `Protein_Protein_Interaction_5`
+  ADD CONSTRAINT `Interface_A_5_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_5_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_6`
+--
+ALTER TABLE `Protein_Protein_Interaction_6`
+  ADD CONSTRAINT `Interface_A_6_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_6_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_7`
+--
+ALTER TABLE `Protein_Protein_Interaction_7`
+  ADD CONSTRAINT `Interface_A_7_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_7_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_8`
+--
+ALTER TABLE `Protein_Protein_Interaction_8`
+  ADD CONSTRAINT `Interface_A_8_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_8_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+--
+-- Constraints der Tabelle `Protein_Protein_Interaction_9`
+--
+ALTER TABLE `Protein_Protein_Interaction_9`
+  ADD CONSTRAINT `Interface_A_9_ibfk_1` FOREIGN KEY (`Protein_A`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `Interface_B_9_ibfk_2` FOREIGN KEY (`Protein_B`) REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
 
 --
 -- Constraints der Tabelle `Indel`

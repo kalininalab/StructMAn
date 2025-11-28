@@ -13,8 +13,10 @@ try:
 except:
     pass
 
+from structman.base_utils.base_utils import unpack
 from structman.lib import globalAlignment, pdbParser, serializedPipeline, templateFiltering
 from structman.lib.sdsc import structure as structure_package
+from structman.lib.sdsc import complex as complex_package
 from structman.lib import model as model_class
 from structman.lib.sdsc.consts import residues as residue_consts
 
@@ -30,6 +32,8 @@ def create_chain_map(chains):
         mod_chain = modeller_chains_order[pos]
         mod_chains.append(mod_chain)
         chain_map[chain] = mod_chain
+        #mod_chains.append(chain)
+        #chain_map[chain] = chain
     return chain_map, mod_chains
 
 
@@ -79,9 +83,9 @@ def createFullAlignment(config, pdb_id, prot_id, first_residue, last_residue, ch
         print(f'Protein aligned sequence before truncate:\n{protein_aligned_sequence}')
 
     if mutation_positions is not None:
-        protein_aligned_sequence, template_aligned_sequence, remapped_positions = globalAlignment.truncateSequences(protein_aligned_sequence, template_aligned_sequence, flank_buffer = 5, remap_positions = mutation_positions)
+        protein_aligned_sequence, template_aligned_sequence, buffer, remapped_positions = globalAlignment.truncateSequences(protein_aligned_sequence, template_aligned_sequence, flank_buffer = 5, remap_positions = mutation_positions)
     else:
-        protein_aligned_sequence, template_aligned_sequence = globalAlignment.truncateSequences(protein_aligned_sequence, template_aligned_sequence, flank_buffer = 5)
+        protein_aligned_sequence, template_aligned_sequence, buffer = globalAlignment.truncateSequences(protein_aligned_sequence, template_aligned_sequence, flank_buffer = 5)
         remapped_positions = None
 
     pdb_id = pdb_id.lower()
@@ -105,6 +109,8 @@ def createFullAlignment(config, pdb_id, prot_id, first_residue, last_residue, ch
     prot_seq_lines = []
     total_prot_len = 0
     for chain in chains:
+        if config.verbosity >= 5:
+            print(f'{chain} {sequences[chain]=}')
         lc = ligand_counts[chain]
         if chain in removed_ligands:
             lc -= removed_ligands[chain]
@@ -146,14 +152,18 @@ def createFullAlignment(config, pdb_id, prot_id, first_residue, last_residue, ch
 
     modeller_alignment = '%s%s\n%s%s' % (template_header, template_seq, protein_header, protein_seq)
 
-    return modeller_alignment, remapped_positions
+    return modeller_alignment, remapped_positions, buffer
 
 
 @ray.remote(num_cpus = 1, max_calls = 1)
 def model_remote_wrapper(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=False, force_modelling=False, mutation_positions = None, label_add = '', target_path = None):
-    return model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=skip_analysis, force_modelling=force_modelling, mutation_positions = mutation_positions, label_add = label_add, target_path = target_path)
+    #print(complex_package.Complex.slot_mask)
+    return model(config, unpack(compl_obj), unpack(structures), alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=skip_analysis, force_modelling=force_modelling, mutation_positions = mutation_positions, label_add = label_add, target_path = target_path)
 
-def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=False, force_modelling=False, mutation_positions = None, label_add = '', target_path = None):
+def model(
+        config,
+        compl_obj: complex_package.Complex,
+        structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=False, force_modelling=False, mutation_positions = None, label_add = '', target_path = None):
     def model_core():
         env = modeller.Environ()
         env.io.atom_files_directory = [process_folder]
@@ -248,10 +258,16 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
     # Step one: create full alignment: get sequences of all chains
     #template_page = compl_obj.getPage(config)
 
+    if config.verbosity >= 5:
+        print(f'State of interaction partners of {compl_obj.pdb_id=}: {compl_obj.interaction_partners=}')
+
     if compl_obj.interaction_partners is None:
-        template_page = compl_obj.getPage(config, self_update=True)
+        template_page_b = compl_obj.getPage(config, self_update=True)
+    elif len(compl_obj.interaction_partners) == 0:
+        template_page_b = compl_obj.getPage(config, self_update=True)
     else:
-        template_page = compl_obj.getPage(config)
+        template_page_b = compl_obj.getPage(config)
+    template_page = template_page_b.decode('ascii')
 
     (_, res_contig_map, _, _, _, box_map, _, _, _, _, _, _, _, _) = templateFiltering.parsePDB(template_page)
 
@@ -283,6 +299,9 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
     chains = reduced_chains
     chain_map_out = create_chain_map(chains)
 
+    if config.verbosity >= 3:
+        print(f'{model_id=} {chains=} {compl_obj.chainlist=} {chain_map_out=}')
+
     if chain_map_out is None:
         return 'Too many chains for %s %s %s %s' % (prot_id, pdb_id, tchain, str(chains))
 
@@ -295,18 +314,31 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
 
         # adding structure objects for not directly mapped chains
         for chain in chains:
-            if not (pdb_id, chain) in structures:
+            if not pdb_id in structures:
+                structures[pdb_id] = {}
+            if not chain in structures[pdb_id]:
                 struct = structure_package.Structure(pdb_id, chain)
-                struct.parse_page(template_page, config)
-                structures[(pdb_id, chain)] = struct
+                struct.parse_page(template_page_b, config)
+                if config.verbosity >= 4:
+                    print(f'Adding additional structure object {chain=} to {pdb_id=}\n{struct.sequence=}')
+                structures[pdb_id][chain] = struct
 
-        first_residue = structures[(pdb_id, chains[0])].first_residue
-        last_residue = structures[(pdb_id, chains[-1])].last_residue
+        try:
+            first_residue = structures[pdb_id][chains[0]].first_residue.decode('ascii')
+        except AttributeError:
+            first_residue = structures[pdb_id][chains[0]].first_residue
+        try:
+            last_residue = structures[pdb_id][chains[-1]].last_residue.decode('ascii')
+        except AttributeError:
+            last_residue = structures[pdb_id][chains[-1]].last_residue
+
         sequences = {}
         ligand_counts = {}
         for chain in chains:
-            sequences[chain] = structures[(pdb_id, chain)].getSequence(config, complex_obj=compl_obj, for_modeller=True)
+            sequences[chain] = structures[pdb_id][chain].getSequence(config, complex_obj=compl_obj, for_modeller=True)
             ligand_counts[chain] = compl_obj.countLigands(chain)
+            if config.verbosity >= 4:
+                print(f'Getting sequence for structure object {chain=} of {pdb_id=} {compl_obj=}  {ligand_counts[chain]=} - {sequences[chain]=}')
 
         if config.verbosity >=5:
             print(f'Complex IAP {compl_obj.interaction_partners}')
@@ -315,6 +347,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
         for base_chain in compl_obj.homomers:
             if base_chain not in modeller_chain_id_map:
                 continue
+            compl_obj.homomers[base_chain] = list(compl_obj.homomers[base_chain])
             del_positions = []
             for pos, homo_chain in enumerate(compl_obj.homomers[base_chain]):
                 if homo_chain not in modeller_chain_id_map:
@@ -324,11 +357,13 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
                 elif sequences[homo_chain] != sequences[base_chain]:
                     del_positions.append(pos)
 
+            #if base_chain in target_chains:
+            #    continue
             for pos in reversed(del_positions):
                 if config.verbosity >= 2:
                     print(f'Had to remove homomer information for {pdb_id}: {base_chain} - {compl_obj.homomers[base_chain][pos]} due to non-identic sequences')
                 del compl_obj.homomers[base_chain][pos]
-
+        
         target_chains = compl_obj.homomers[tchain]
 
         if alignment_tuple is None:
@@ -355,7 +390,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
         f.write(template_page)
         f.close()
 
-        modeller_alignment, remapped_positions = createFullAlignment(config, pdb_id, truncated_prot_id, first_residue, last_residue, chains, sequences, tchain, target_chains, ligand_counts, protein_aligned_sequence, template_aligned_sequence, removed_ligands, mutation_positions = mutation_positions)
+        modeller_alignment, remapped_positions, buffer = createFullAlignment(config, pdb_id, truncated_prot_id, first_residue, last_residue, chains, sequences, tchain, target_chains, ligand_counts, protein_aligned_sequence, template_aligned_sequence, removed_ligands, mutation_positions = mutation_positions)
 
         if remapped_positions is not None:
             highlight_mutant_residue = {}
@@ -415,7 +450,7 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
                 config.errorlog.add_error('Alignment not found: %s %s:%s' % (prot_id, pdb_id, tchain))
 
             protein_aligned_sequence, template_aligned_sequence = alignment_tuple
-            protein_aligned_sequence, template_aligned_sequence, remapped_positions = globalAlignment.truncateSequences(protein_aligned_sequence, template_aligned_sequence, flank_buffer = 5, remap_positions = mutation_positions)
+            protein_aligned_sequence, template_aligned_sequence, buffer, remapped_positions = globalAlignment.truncateSequences(protein_aligned_sequence, template_aligned_sequence, flank_buffer = 5, remap_positions = mutation_positions)
 
             highlight_mutant_residue = {}
             target_chains = compl_obj.homomers[tchain]
@@ -426,7 +461,8 @@ def model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, t
 
     structman_model_obj = model_class.Model(model_id=model_id, path=model_path, tmp_folder=process_folder, template_structure=(pdb_id, tchain),
                                             target_protein=prot_id, label_add=label_add, chain_id_map=modeller_chain_id_map, truncated_prot_id = truncated_prot_id,
-                                            template_resolution=compl_obj.resolution, sequence_identity=seq_id, coverage=cov, template_contig_map = res_contig_map)
+                                            template_resolution=compl_obj.resolution, sequence_identity=seq_id, coverage=cov, template_contig_map = res_contig_map,
+                                            buffer=buffer)
 
     structman_model_obj.analyze(config, highlight_mutant_residue =  highlight_mutant_residue, target_path = f'{target_path}/{model_id}.pdb')
 
