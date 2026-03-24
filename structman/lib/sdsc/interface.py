@@ -1,7 +1,7 @@
 import ray
 from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
 from structman.lib.sdsc.residue import Residue_Map
-from structman.lib.database.retrieval import getBackmaps
+from structman.lib.database.retrieval_2 import getBackmaps
 from structman.base_utils.base_utils import unpack
 
 def calc_interface_annotation_score(seq_id, coverage, interactions):

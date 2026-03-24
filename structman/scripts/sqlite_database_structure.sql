@@ -15,7 +15,7 @@ CREATE TABLE `Alignment` (
 
 CREATE TABLE `Complex` (
   `Complex_Id` integer  NOT NULL PRIMARY KEY AUTOINCREMENT,
-  `PDB` varchar(16) NOT NULL,
+  `PDB` varchar(64) NOT NULL,
   `Resolution` float DEFAULT NULL,
   `Chains` text,
   `Homooligomers` text,
@@ -314,7 +314,7 @@ CREATE TABLE `Session` (
 
 CREATE TABLE `Structure` (
   `Structure_Id` integer  NOT NULL PRIMARY KEY AUTOINCREMENT,
-  `PDB` varchar(16) NOT NULL,
+  `PDB` varchar(64) NOT NULL,
   `Chain` char(1) NOT NULL,
   `Homooligomer` varchar(256) DEFAULT NULL
 );

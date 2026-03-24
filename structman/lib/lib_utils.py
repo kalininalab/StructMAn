@@ -1,64 +1,32 @@
 import sys
 import re
 import os
-import shutil
 import traceback
 import subprocess
 import random
 import string
-import wget
-import requests
 
 from bisect import bisect_left
 from more_itertools import consecutive_groups
 
-from filelock import FileLock
-from structman.lib.sdsc.consts import codons, residues
+from structman.lib.sdsc.consts import residues
 from structman.lib.sdsc import indel as indel_package
 from structman.lib.sdsc import mutations as mutation_package
 from structman.lib.sdsc import position as position_package
-from structman.lib.sdsc.sdsc_utils import is_connected
 from structman.lib.globalAlignment import call_biopython_alignment
-from structman.base_utils.base_utils import get_af_model_folder
+from structman.base_utils.base_utils import get_af_model_folder, fetch_af_msa
+from structman.base_utils.config_class import Config
+from structman.lib.database.retrieval import get_afdb_msa
 
-def fetch_af_msa(config, model_id, folder_path, current_afdb_version = 'v6'):
-    full_id = None
-    for fn in os.listdir(folder_path):
-        if fn.count(model_id) == 1 and fn.count('-model') > 0:
-            full_id = fn.split('-model')[0]
-            break
+def truncate_af_msa(infile, outfile, overwrite_query_label = None, page: str | None = None):
+    print(f'Call of truncate_af_msa: {infile=} {outfile=} {overwrite_query_label=} {page is None=}')
 
-    if full_id is None:
-        config.errorlog.add_warning(f'Did not find file {model_id} in alphafold model db: {config.path_to_model_db}')
-        return None
-
-    af_msa_filename = f'{full_id}-msa_{current_afdb_version}.a3m'
-
-    if config.verbosity >= 3:
-        print(f'Fetching MSA for {model_id} from AFDB')
-
- 
-    url = f'https://alphafold.ebi.ac.uk/files/msa/{af_msa_filename}'
-    connected, error = is_connected(url)
-    if not connected:
-        config.errorlog.add_warning(f'Did not find file {model_id} in online alphafold model db: {url} {error=}')
-        return None
-    r = requests.head(url)
-    if r.status_code < 300:
-        wget.download(url, out=folder_path)
+    if page is None:
+        f = open(infile, 'r')
+        lines = f.readlines()
+        f.close()
     else:
-        config.errorlog.add_warning(f'Invalid http code {r.status_code} trying to fetch {model_id} msa in online alphafold model db: {url}')
-        return None
-
-    os.rename(f'{folder_path}/{af_msa_filename}', f'{folder_path}/{model_id}_msa.fasta')
-
-
-def truncate_af_msa(infile, outfile, overwrite_query_label = None):
-    print(f'Call of truncate_af_msa: {infile=} {outfile=} {overwrite_query_label=}')
-
-    f = open(infile, 'r')
-    lines = f.readlines()
-    f.close()
+        lines = page.splitlines(keepends=True)
 
     if overwrite_query_label is not None:
         outlines = [f'>{overwrite_query_label}\n', lines[1]]
@@ -87,8 +55,9 @@ def truncate_af_msa(infile, outfile, overwrite_query_label = None):
     f.write(''.join(outlines))
     f.close()
 
-def use_mafft_add(msa_file, outfile, work_folder, prot_id, seq, num_of_threads):
-    print(f'Call of use_mafft_add: {msa_file=} {outfile=} {work_folder=} {prot_id=} {len(seq)=} {num_of_threads=}')
+def use_mafft_add(config, msa_file, outfile, work_folder, prot_id, seq, num_of_threads):
+    if config.verbosity >= 3:
+        config.logger.info(f'Call of use_mafft_add: {msa_file=} {outfile=} {work_folder=} {prot_id=} {len(seq)=} {num_of_threads=}')
     random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     add_file = f'{work_folder}/{prot_id}_{random_string}.fasta'
 
@@ -106,13 +75,14 @@ def use_mafft_add(msa_file, outfile, work_folder, prot_id, seq, num_of_threads):
         f'"{msa_file}"'
         ])
     
-    print(f'{os.stat(msa_file)=} {os.path.isfile(msa_file)=} {add_file=} {os.path.isfile(add_file)=}')
+    if config.verbosity >= 3:
+        config.logger.info(f'{os.stat(msa_file)=} {os.path.isfile(msa_file)=} {add_file=} {os.path.isfile(add_file)=} {outfile=} {cmds=}')
 
     with open(outfile, 'w') as target:
         p = subprocess.Popen(cmds, shell=True, stdout=target)
         p.wait()
 
-    #os.remove(add_file)
+    os.remove(add_file)
 
     f = open(outfile, 'r')
     lines = f.readlines()
@@ -202,32 +172,45 @@ def check_msa_file(infile, seq):
 
     return True
 
-def fetch_msa(config, model_id, prot_id, seq, seq_identity, num_of_threads):
+def fetch_msa(config: Config, model_id: str, prot_id: str, seq: str, seq_identity: float, num_of_threads: int):
     folder_path = get_af_model_folder(model_id, config)
     msa_file = f'{folder_path}/{model_id}_msa.fasta'
-    if not os.path.isfile(msa_file):
-        fetch_af_msa(config, model_id, folder_path)
 
-    if not os.path.isfile(msa_file):
-        return None
-    
+    if config.verbosity >= 4:
+        config.logger.info(f'Call of fetch_msa: {msa_file=}')
+
     msa_outfolder = f'{config.outpath}/msas/{prot_id}'
-
+    cleaned_prot_id = clean_prot_id(prot_id)
     if not os.path.isdir(msa_outfolder):
         os.makedirs(msa_outfolder)
 
-    cleaned_prot_id = clean_prot_id(prot_id)
+    if config.afdb is not None:
+        afdb_msa_page = get_afdb_msa(model_id, config)
+    else:
+        afdb_msa_page = None
 
+    if not os.path.isfile(msa_file) and not config.read_only_mode and afdb_msa_page is None:
+        fetch_af_msa(config, model_id, folder_path)
+    elif config.read_only_mode and afdb_msa_page is None:
+        msa_file = f'{msa_outfolder}/{cleaned_prot_id}_{model_id}_msa_raw_tmp.fasta'
+        fetch_af_msa(config, model_id, folder_path, tmp_target=msa_file)
+
+    if not os.path.isfile(msa_file) and afdb_msa_page is None:
+        return None
+    
     target_file = f'{msa_outfolder}/{cleaned_prot_id}_{model_id}_msa.fasta'
     if seq_identity < 1.0:
         target_file_precursor = f'{msa_outfolder}/{cleaned_prot_id}_{model_id}_msa_precursor.fasta'
-        truncate_af_msa(msa_file, target_file_precursor, overwrite_query_label = model_id)
-        use_mafft_add(target_file_precursor, target_file, msa_outfolder, cleaned_prot_id, seq, num_of_threads)
+        truncate_af_msa(msa_file, target_file_precursor, overwrite_query_label = model_id, page = afdb_msa_page)
+        use_mafft_add(config, target_file_precursor, target_file, msa_outfolder, cleaned_prot_id, seq, num_of_threads)
 
-        #os.remove(target_file_precursor)
+        os.remove(target_file_precursor)
 
     else:
-        truncate_af_msa(msa_file, target_file, overwrite_query_label = cleaned_prot_id)
+        truncate_af_msa(msa_file, target_file, overwrite_query_label = cleaned_prot_id, page = afdb_msa_page)
+
+    if config.read_only_mode:
+        os.remove(msa_file)
 
 
 

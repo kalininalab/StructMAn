@@ -6,10 +6,12 @@ import traceback
 import time
 
 from structman.base_utils.config_class import Config
+from structman.base_utils.base_utils import is_alphafold_model
 from structman.lib.createRINdb import calcRIN, get_entry_path
 from structman.lib.sdsc.consts import residues, ligands
 from structman.lib.sdsc.sdsc_utils import Slotted_obj
 from structman.lib.sdsc import residue as residue_package
+from structman.lib.database.retrieval import get_afdb_rin_and_cent
 
 
 class Interaction_type(Slotted_obj):
@@ -458,12 +460,16 @@ def parse_rinerator_interaction_score_file(
         struct_ligands: set[tuple[str, str | int]],
         metals: set[tuple[str, str | int]],
         ions: set[tuple[str, str | int]],
-        chain_type_map, res_contig_map
+        chain_type_map, res_contig_map,
+        page: str | None = None,
         ) -> tuple[list[tuple[str, int | str, str, int | str, str, str , float]], dict[str, residue_package.Residue_Map[Interaction_profile]]]:
     
-    f = gzip.open(interaction_score_file, 'rt')
-    lines = f.readlines()
-    f.close()
+    if page is None:
+        f = gzip.open(interaction_score_file, 'rt')
+        lines = f.readlines()
+        f.close()
+    else:
+        lines = page.splitlines(keepends=True)
 
     interactions: list[tuple[str, int | str, str, int | str, str, str , float]] = []
 
@@ -540,11 +546,14 @@ def float_or_none(string : str) -> float | None:
     except:
         return None
 
-def getCentMap(centrality_file):
+def getCentMap(centrality_file: str, page: str | None = None):
 
-    f = gzip.open(centrality_file, 'rt')
-    lines = f.read().split('\n')
-    f.close()
+    if page is None:
+        f = gzip.open(centrality_file, 'rt')
+        lines = f.read().split('\n')
+        f.close()
+    else:
+        lines = page.split('\n')
 
     centrality_map = {}
 
@@ -805,9 +814,17 @@ def lookup(
     if config.verbosity >= 4:
         print(f'Paths in rin.lookup: {structure_id=} {folder_path=} {path_stem=}')
 
+    afdb_rin_page = None
+    afdb_cent_page = None
+    if is_alphafold_model(structure_id):
+        if config.afdb is not None:
+            afdb_rin_page, afdb_cent_page = get_afdb_rin_and_cent(structure_id, config)
+            afdb_rin_page = afdb_rin_page.decode('ascii')
+            afdb_cent_page = afdb_cent_page.decode('ascii')
+
     interaction_score_file = f"{path_stem}_intsc.ea.gz"
 
-    if not os.path.isfile(interaction_score_file):
+    if not os.path.isfile(interaction_score_file) and afdb_rin_page is None:
         if config.verbosity >= 3:
             print(f'Did not find RIN: {interaction_score_file}, folder path: {folder_path=} {config.rin_db_path=} {config.custom_db_path=} {model_path=} {config.tmp_folder=}' )
 
@@ -835,7 +852,7 @@ def lookup(
         print(f'Call of parse_rinerator_interaction_score_file: {structure_id} {interaction_score_file} {t1-t0}')
 
     profiles: dict[str, residue_package.Residue_Map[Interaction_profile]]
-    interaction_list, profiles, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles = parse_rinerator_interaction_score_file(interaction_score_file, ligands, metals, ions, chain_type_map, res_contig_map)
+    interaction_list, profiles, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles = parse_rinerator_interaction_score_file(interaction_score_file, ligands, metals, ions, chain_type_map, res_contig_map, page = afdb_rin_page)
 
     t2 = time.time()
     runtimes.append(t2-t1)
@@ -845,7 +862,7 @@ def lookup(
     centrality_map: dict[str, residue_package.Residue_Map[Centrality_scores]] = {}
 
     if os.path.isfile(centrality_file):
-        centrality_map = getCentMap(centrality_file)
+        centrality_map = getCentMap(centrality_file, page=afdb_cent_page)
     else:
         centrality_map = {}
 

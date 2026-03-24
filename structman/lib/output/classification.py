@@ -22,6 +22,7 @@ from structman.lib.output import out_generator
 from filelock import FileLock
 from structman.base_utils import base_utils
 from structman.base_utils import ray_utils
+from structman.base_utils.config_class import Config
 from structman.lib.output import out_utils
 
 def writeStatFile(out_file, mutation_dict, class_dict, tag_map, stat_dict=None):
@@ -186,7 +187,7 @@ def init_classification_table(class_file, obj_only = False):
 
     return classification_output, f
 
-def generate_multi_sav_table(config, outfile, session_id, snv_position_dict, position_dict, protein_dict):
+def generate_multi_sav_table(config: Config, outfile, session_id, snv_position_dict, position_dict, protein_dict):
     table = 'RS_Multi_Mutation_Session'
     columns = ['Multi_Mutation', 'Tags']
     eq_cols = {'Session': session_id}
@@ -216,14 +217,14 @@ def generate_multi_sav_table(config, outfile, session_id, snv_position_dict, pos
         snv_db_ids = snv_db_ids_str.split(',')
 
         indel_db_ids_str = row[2]
-        if indel_db_ids_str != None:
+        if indel_db_ids_str is not None:
             if indel_db_ids_str.count(',') > 0:
                 continue #Filter all Multi Mutations that contain non-SAV mutations (Indels)
 
         multi_sav_list.append((mm_db_id, snv_db_ids, row[3], row[4]))
 
     if config.verbosity >= 3:
-        print(f'Size of Multi Sav List: {len(multi_sav_list)}')
+        config.logger.info(f'Size of Multi Sav List: {len(multi_sav_list)}')
 
     lines = ['Protein ID\tSAVs\tTags\n']
 
@@ -251,7 +252,7 @@ def class_and_feature_table_main_loop(
         position_interface_map: dict,
         interface_dict: dict,
         snv_tag_map: dict,
-        config: any,
+        config: Config,
         classification_output: any,
         f: IO,
         interface_output: any,
@@ -276,18 +277,18 @@ def class_and_feature_table_main_loop(
         results = all_results[(main_loop_counter*max_rows_at_a_time):((main_loop_counter+1)*max_rows_at_a_time)]
 
         if config.verbosity >= 3:
-            print('Processing row', main_loop_counter*max_rows_at_a_time, 'till', (main_loop_counter+1)*max_rows_at_a_time)
+            config.logger.info(f'Processing row {main_loop_counter*max_rows_at_a_time} till {(main_loop_counter+1)*max_rows_at_a_time}')
 
         main_loop_counter += 1
 
         
         if config.verbosity >= 2:
             t5 = time.time()
-            print("Time for classificationOutput part 5: ", t5 - t4, main_loop_counter)
+            config.logger.info(f"Time for classificationOutput part 5: {t5 - t4} {main_loop_counter=}")
 
         if config.verbosity >= 7:
             if len(snv_map) > 0:
-                print(f'SNV map going into unpacked rows part:\n{snv_map}')
+                config.logger.info(f'SNV map going into unpacked rows part:\n{snv_map}')
 
         warn_count = 0
 
@@ -300,7 +301,7 @@ def class_and_feature_table_main_loop(
             position_dict[m] = (position_number, wt_aa, prot_db_id)
 
             if config.verbosity >= 6:
-                print(f'Processing in unpacked rows part: {m} {position_number} {wt_aa} {prot_db_id}')
+                config.logger.info(f'Processing in unpacked rows part: {m} {position_number} {wt_aa} {prot_db_id}')
 
             if row[4] is not None:
                 (recommended_structure_str, max_seq_structure_str) = base_utils.unpack(row[4])
@@ -312,7 +313,7 @@ def class_and_feature_table_main_loop(
                 mappings = mappings_package.Mappings(init_none = True)
                 microminer_features = mappings_package.Microminer_features(init_none=True)
                 if config.verbosity >= 6:
-                    print(f'Position Data is None for Mutation db id {m} (Protein db id {prot_db_id})')
+                    config.logger.info(f'Position Data is None for Mutation db id {m} (Protein db id {prot_db_id})')
             else:
                 try:
                     packed_mappings, packed_mm_features = base_utils.unpack(row[5])
@@ -321,13 +322,13 @@ def class_and_feature_table_main_loop(
                     if microminer_features is None:
                         microminer_features = mappings_package.Microminer_features(init_none=True)
                         if config.verbosity >= 6:
-                            print(f'Microminer features are None for {m=} {prot_db_id=}')
+                            config.logger.info(f'Microminer features are None for {m=} {prot_db_id=}')
                     if mappings is None:
                         mappings = mappings_package.Mappings(init_none=True)
                 except:
                     warn_count += 1
                     if warn_count <= 10:
-                        print(f'Error in retrieving position data, couldnt unpack: {m} {position_number} {prot_db_id=}')
+                        config.logger.info(f'Error in retrieving position data, couldnt unpack: {m} {position_number} {prot_db_id=}')
                     continue
 
             rin_based_features = mappings.rin_based_features
@@ -337,7 +338,7 @@ def class_and_feature_table_main_loop(
             integrated_features = mappings.integrated_features
 
             if config.verbosity >= 6:
-                print(f'Position data unpacked rows part: {m} {position_number} {wt_aa} {prot_db_id}:\n{mappings}')
+                config.logger.info(f'Position data unpacked rows part: {m} {position_number} {wt_aa} {prot_db_id}:\n{mappings}')
 
             recommended_structure, seq_id, cov, resolution = sdsc_utils.process_recommend_structure_str(recommended_structure_str)
             max_seq_structure, max_seq_seq_id, max_seq_cov, max_seq_resolution = sdsc_utils.process_recommend_structure_str(max_seq_structure_str)
@@ -415,7 +416,7 @@ def class_and_feature_table_main_loop(
                 snv_tag_map[0] = tag_map[m]
             else:
                 if config.verbosity >= 6:
-                    print(f'Processing SNVs in unpacked rows part: {m} {wt_aa} {position_number} {prot_id}')
+                    config.logger.info(f'Processing SNVs in unpacked rows part: {m} {wt_aa} {position_number} {prot_id}')
 
             for snv_database_id in snv_map[m]:
                 new_aa = snv_map[m][snv_database_id]
@@ -444,7 +445,7 @@ def class_and_feature_table_main_loop(
                     KDmean = 0
                     warn_count += 1
                     if warn_count < 10:
-                        print(f'Calculating KDmean failed: Protein: {prot_id} Position: {position_number} WTAA: {wt_aa} MUTAA: {new_aa} SNV DB Id: {snv_database_id}')
+                        config.logger.info(f'Calculating KDmean failed: Protein: {prot_id} Position: {position_number} WTAA: {wt_aa} MUTAA: {new_aa} SNV DB Id: {snv_database_id}')
                 feature_output.add_value('KD mean', KDmean)
 
                 try:
@@ -487,11 +488,11 @@ def class_and_feature_table_main_loop(
                 feat_f.write(feature_output.pop_line())
 
         if warn_count >= 10:
-            print(f'In total {warn_count} warnings happened')
+            config.logger.info(f'In total {warn_count} warnings happened')
 
         if config.verbosity >= 2:
             t6 = time.time()
-            print("Time for classificationOutput part 5.2: ", t6 - t5)
+            config.logger.info(f"Time for classificationOutput part 5.2: {t6 - t5}")
 
     f.close()
     feat_f.close()
@@ -518,8 +519,6 @@ def process_pos_pos_table_entries(
     residue_ids: set[int] = set()
     session_less_position_ids: set[int] = set()
 
-    #print(results)
-
     for row in results:
         pos_a: int = row[0]
 
@@ -536,8 +535,8 @@ def process_pos_pos_table_entries(
         if pos_a not in pos_pos_map:
             pos_pos_map[pos_a] = {pos_b: (row[2], row[3], row[4])}
         else:
-            if pos_b in pos_pos_map[pos_a]:
-                print(f'Duplicate in pos pos table: {pos_a} {pos_b}')
+            #if pos_b in pos_pos_map[pos_a]:
+            #    print(f'Duplicate in pos pos table: {pos_a} {pos_b}')
             pos_pos_map[pos_a][pos_b] =  (row[2], row[3], row[4])
         
             
@@ -570,7 +569,7 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print("Time for classificationOutput part 1: ", t1 - t0)
+        config.logger.info(f"Time for classificationOutput part 1: {t1 - t0}")
 
     tag_map: dict[int, str] = {}
     for row in results:
@@ -579,7 +578,7 @@ def classificationOutput(
         tag_map[mut_id] = tags
 
     if config.verbosity >= 3:
-        print(f'Size of tag_map: {len(tag_map)}')
+        config.logger.info(f'Size of tag_map: {len(tag_map)}')
 
     table = 'RS_Protein_Session'
     cols = ['Protein', 'Tags']
@@ -588,7 +587,7 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print("Time for classificationOutput part 2: ", t2 - t1)
+        config.logger.info(f"Time for classificationOutput part 2: {t2 - t1}")
 
     table = 'RS_SNV_Session'
     columns = ['SNV', 'Tag']
@@ -617,7 +616,7 @@ def classificationOutput(
                     try:
                         snv_value_tag, value_str = snv_tag[1:].split('=')
                     except:
-                        print(f'Splitting of SNV value Tag failed for SNV: {row[0]}, value tag: {snv_tag}')
+                        config.logger.info(f'Splitting of SNV value Tag failed for SNV: {row[0]}, value tag: {snv_tag}')
                 if snv_value_tag not in snv_value_tags_count:
                     snv_value_tags_count[snv_value_tag] = 1
                 else:
@@ -635,7 +634,7 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t21 = time.time()
-        print("Time for classificationOutput part 2.1: ", t21 - t2)
+        config.logger.info(f"Time for classificationOutput part 2.1: {t21 - t2}")
 
 
     table = 'SNV'
@@ -646,13 +645,13 @@ def classificationOutput(
     snv_map = {}
     snv_position_dict = {}
     for row in results:
-        if not row[1] in snv_map:
+        if row[1] not in snv_map:
             snv_map[row[1]] = {}
         snv_map[row[1]][row[0]] = row[2]
         snv_position_dict[row[0]] = (row[1], row[2])
 
     if config.verbosity >= 7:
-        print(f'SNV map in classificationOutput:\n{snv_map}')
+        config.logger.info(f'SNV map in classificationOutput:\n{snv_map}')
 
     prot_id_set: set[int] = set()
     input_res_id_dict = {}
@@ -662,19 +661,19 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t22 = time.time()
-        print("Time for classificationOutput part 2.2: ", t22 - t21)
+        config.logger.info(f"Time for classificationOutput part 2.2: {t22 - t21}")
 
     protein_dict, gene_db_ids = database.getProteinDict(prot_id_set, session_id, config, includeSequence = True)
 
     if config.verbosity >= 2:
         t23 = time.time()
-        print("Time for classificationOutput part 2.3: ", t23 - t22)
+        config.logger.info(f"Time for classificationOutput part 2.3: {t23 - t22}")
 
     gene_id_map = database.retrieve_gene_id_map(gene_db_ids, config)
 
     if config.verbosity >= 2:
         t24 = time.time()
-        print("Time for classificationOutput part 2.4: ", t24 - t23)
+        config.logger.info(f"Time for classificationOutput part 2.4: {t24 - t23}")
 
     if config.compute_ppi:
         table = 'Interface'
@@ -699,7 +698,6 @@ def classificationOutput(
 
         results = binningSelect(list(tag_map.keys()), columns, table, config)
 
-
         interacting_interfaces = set()
         position_interface_map = {}
         for row in results:
@@ -708,9 +706,7 @@ def classificationOutput(
 
         if config.verbosity >= 2:
             t251 = time.time()
-            print("Time for classificationOutput part 2.5.1: ", t251 - t24)
-
-        
+            config.logger.info(f"Time for classificationOutput part 2.5.1: {t251 - t24}")
 
         prot_prot_file = out_utils.generate_ppi_filename(outfolder, session_name)
         network_file = f'{outfolder}/{session_name}_ppi.sif'
@@ -760,7 +756,7 @@ def classificationOutput(
             
         if config.verbosity >= 2:
             t252 = time.time()
-            print("Time for classificationOutput part 2.5.2: ", t252 - t251)
+            config.logger.info(f"Time for classificationOutput part 2.5.2: {t252 - t251}")
 
         if enhance_network:
             table = 'Interface'
@@ -775,14 +771,14 @@ def classificationOutput(
 
             if config.verbosity >= 2:
                 t253 = time.time()
-                print("Time for classificationOutput part 2.5.3: ", t253 - t252)
+                config.logger.info(f"Time for classificationOutput part 2.5.3: {t253 - t252}")
 
             expanded_protein_dict, expanded_gene_db_ids = database.getProteinDict(expanded_protein_ids, None, config)
 
 
             if config.verbosity >= 2:
                 t254 = time.time()
-                print("Time for classificationOutput part 2.5.4: ", t254 - t253)
+                config.logger.info(f"Time for classificationOutput part 2.5.4: {t254 - t253}")
 
             gene_id_map.update(database.retrieve_gene_id_map(expanded_gene_db_ids, config))
 
@@ -819,19 +815,19 @@ def classificationOutput(
 
         if config.verbosity >= 2:
             t255 = time.time()
-            print("Time for classificationOutput part 2.5.5: ", t255 - t254)
+            config.logger.info(f"Time for classificationOutput part 2.5.5: {t255 - t254}")
 
         
 
         if config.verbosity >= 2:
             t256 = time.time()
-            print("Time for classificationOutput part 2.5.6: ", t256 - t255)
+            config.logger.info(f"Time for classificationOutput part 2.5.6: {t256 - t255}")
 
        
 
         if config.verbosity >= 2:
             t257 = time.time()
-            print(f'Time for classificationOutput part 2.5.7: {t257 - t256}, {len(pos_pos_map)}')
+            config.logger.info(f'Time for classificationOutput part 2.5.7: {t257 - t256}, {len(pos_pos_map)}')
 
         #table = 'Residue'
         #columns = ['Residue_Id', 'Number', 'Structure']
@@ -846,7 +842,7 @@ def classificationOutput(
 
         if config.verbosity >= 2:
             t258 = time.time()
-            print("Time for classificationOutput part 2.5.8: ", t258 - t257)
+            config.logger.info(f"Time for classificationOutput part 2.5.8: {t258 - t257}")
 
         table = 'Position'
         columns = ['Position_Id', 'Position_Number', 'Wildtype_Residue']
@@ -869,14 +865,14 @@ def classificationOutput(
 
         if config.verbosity >= 2:
             t259 = time.time()
-            print("Time for classificationOutput part 2.5.9: ", t259 - t258)
+            config.logger.info(f"Time for classificationOutput part 2.5.9: {t259 - t258}")
     else:
         interface_dict = None
         position_interface_map = None
 
     if config.verbosity >= 2:
         t25 = time.time()
-        print("Time for classificationOutput part 2.5: ", t25 - t24)
+        config.logger.info(f"Time for classificationOutput part 2.5: {t25 - t24}")
 
     class_files = []
 
@@ -930,11 +926,11 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t26 = time.time()
-        print("Time for classificationOutput part 2.6: ", t26 - t25)
+        config.logger.info(f"Time for classificationOutput part 2.6: {t26 - t25}")
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print("Time for classificationOutput part 3: ", t3 - t2)
+        config.logger.info(f"Time for classificationOutput part 3: {t3 - t2}")
 
     columns = ['Position_Id', 'Position_Number', 'Wildtype_Residue', 'Protein', 'Recommended_Structure_Data', 'Position_Data']
 
@@ -943,8 +939,8 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t4 = time.time()
-        print("Time for classificationOutput part 4: ", t4 - t3)
-        print('Total number of positions:', len(all_results))
+        config.logger.info(f"Time for classificationOutput part 4: {t4 - t3}")
+        config.logger.info(f'Total number of positions: {len(all_results)}')
 
     classification_output, f = init_classification_table(class_file)
     feature_output, feat_f = init_feature_table(feature_file)
@@ -967,7 +963,7 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t5 = time.time()
-        print("Time for classificationOutput part 4.1: ", t5 - t4)
+        config.logger.info(f"Time for classificationOutput part 4.1: {t5 - t4}")
 
 
     position_dict: dict[int, tuple[int, str, int]]
@@ -1041,7 +1037,7 @@ def classificationOutput(
             prot_a_db_id = position_dict[pos_a_db_id][2]
 
             if pos_a_db_id not in position_interface_map:
-                print('This shouldnt actually happen, investigate deeper ...')
+                config.logger.info('This shouldnt actually happen, investigate deeper ...')
                 continue
 
             (prot_a_id, u_ac_a, _, _, _, _, input_id_a, _, gene_db_id_a, _) = protein_dict[prot_a_db_id]
@@ -1110,12 +1106,12 @@ def classificationOutput(
 
     if config.verbosity >= 2:
         t6 = time.time()
-        print("Time for classificationOutput part 6: ", t6 - t5)
+        config.logger.info(f"Time for classificationOutput part 6: {t6 - t5}")
 
     writeStatFile(stat_file, mutation_dict, {}, tag_map, stat_dict=stat_dict)
 
     if config.verbosity >= 2:
         t7 = time.time()
-        print("Time for classificationOutput part 7: ", t7 - t6)
-        print(f'=== Total time for classificationOutput: {t7-t0} ===')
+        config.logger.info(f"Time for classificationOutput part 7: {t7 - t6}")
+        config.logger.info(f'=== Total time for classificationOutput: {t7-t0} ===')
 

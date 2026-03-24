@@ -10,14 +10,15 @@ from ray.util.queue import Queue
 
 from structman.scripts.createMMDB import mm_lookup
 from structman.base_utils.base_utils import pack, unpack, aggregate_times, print_times, add_to_times
+from structman.base_utils.config_class import Config
 from structman.lib.sdsc import mappings as mappings_package
 from structman.lib.sdsc import interface as interface_package
 from structman.lib.sdsc import residue as residue_package
-from structman.lib.sdsc import structure as structure_package
 from structman.lib.sdsc import protein as protein_package
 from structman.lib.sdsc.sdsc_utils import get_shortest_distances, triple_locate, classify
 from structman.lib.database.insertion_lib import remote_insert_interfaces, remote_insert_classifications
-from structman.lib.database.retrieval import getStoredResidues, getBackmaps
+from structman.lib.database.retrieval import getStoredResidues
+from structman.lib.database.retrieval_2 import getBackmaps
 
 def qualityScore(resolution: float, coverage: float, seq_id: float, resolution_wf=0.25, coverage_wf=0.5, seq_id_wf=1.0, pLDDT:float | None = None) -> float:
 
@@ -39,7 +40,7 @@ def qualityScore(resolution: float, coverage: float, seq_id: float, resolution_w
     return quality
 
 @ray.remote(max_retries=100, max_calls = 1)
-def para_classify_remote_wrapper(config, complex_store, package, structure_db_dict, prot_db_id_map, packed_structures, backmap_store, com_queue, db_lock):
+def para_classify_remote_wrapper(config: Config, complex_store, package, structure_db_dict, prot_db_id_map, packed_structures, backmap_store, com_queue, db_lock):
     t0 = time.time()
     #structs_from_db, interface_map = unpack(packed_structures)
     #del packed_structures
@@ -60,7 +61,7 @@ def para_classify_remote_wrapper(config, complex_store, package, structure_db_di
 
 
 def para_classify(
-        config,
+        config: Config,
         complexes: dict[str, tuple[dict[str, str], float, int]],
         package: list[tuple[str, protein_package.Protein]],
         structure_db_dict: tuple[dict[int, tuple[str, str]], dict[int, tuple[str, str]]],
@@ -73,7 +74,7 @@ def para_classify(
     times = [unpacking_time]
 
     if config.verbosity >= 4:
-        print(f'Start of para_classify {len(package)=} {para=}')
+        config.logger.info(f'Start of para_classify {len(package)=} {para=}')
 
     if backmap_store is None:
         backmap_store = {}
@@ -136,9 +137,6 @@ def para_classify(
         structure_to_db_id[pdb_id][chain] = db_id
 
     ta = add_to_times(times, ta)
-    #print(structure_db_dict)
-
-    #print(complex_to_db_ids)
 
     for pdb_id in more_structs_from_db:
         
@@ -179,7 +177,7 @@ def para_classify(
             flush_struct_store = False
 
         if config.verbosity >= 4:
-            print(f"In para_classify: {protein_id=} {len(annotation_list)=} {len(positions)=}")
+            config.logger.info(f"In para_classify: {protein_id=} {len(annotation_list)=} {len(positions)=}")
 
         for pos in positions:
             
@@ -198,7 +196,7 @@ def para_classify(
 
                 except:
                     if config.verbosity >= 4:
-                        print('Skipped classification of', protein_id, 'due to pos', pos, 'was not in sub_infos')
+                        config.logger.info(f'Skipped classification of {protein_id} due to pos {pos} was not in sub_infos')
                     continue
 
                 if sub_info is None: #In this case the position is not mapped to any residue in the structure (gap in the alignment and getSubInfo called with ignore_gaps) 
@@ -213,7 +211,7 @@ def para_classify(
 
                 if seq_id is None:
                     if config.verbosity >= 4:
-                        print('Skipped classification of', protein_id, 'due to', pdb_id, 'got no sequence identity')
+                        config.logger.info(f'Skipped classification of {protein_id} due to {pdb_id} got no sequence identity')
                     continue
 
                 cov = protein_obj.structure_annotations[pdb_id][chain].coverage                
@@ -296,8 +294,6 @@ def para_classify(
 
                 identical_aa = res_aa == aa1
 
-                #print(f'{pdb_id} {pLDDT}')
-
                 gsd_return = get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances)
 
                 if gsd_return is None:
@@ -328,13 +324,10 @@ def para_classify(
                     'rin_class' : rin_class, 'rin_simple_class' : rin_simple_class
                 }
 
-                #print(structural_feature_dict)
-
                 rin_based_feature_dict = {
                     'profile' : profile,
                     'centralities' : centralities
                 }
-                #print(profile)
 
                 mapping = (qual, seq_id, cov, structural_feature_dict, rin_based_feature_dict, identical_aa, resolution, res_aa)
 
@@ -342,15 +335,15 @@ def para_classify(
          	
 
             if config.verbosity >= 4:
-                print(f"In para_classify: {protein_id=} before weighting of {pos=}")
+                config.logger.info(f"In para_classify: {protein_id=} before weighting of {pos=}")
 
             err = mappings_obj.weight_all(config)
             
             if err is not None and config.verbosity >= 4:
-                print(f'{protein_id} {pos}: {err}')
+                config.logger.info(f'{protein_id} {pos}: {err}')
 
             if config.verbosity >= 4:
-                print(f"In para_classify: {protein_id=} after weighting of {pos=}")
+                config.logger.info(f"In para_classify: {protein_id=} after weighting of {pos=}")
 
             recommendation_order: list[tuple[str, str, int | str]] = mappings_obj.recommendation_order
             mappings_obj.recommendation_order = None
@@ -372,13 +365,13 @@ def para_classify(
         ts = add_to_times(sub_times, ts)
 
         if config.verbosity >= 4:
-            print(f"In para_classify: {protein_id=} before calc_mm_features")
+            config.logger.info(f"In para_classify: {protein_id=} before calc_mm_features")
 
         mm_db_dict: dict[str, dict[str, dict[str | int, bytes]]]
         mm_db_dict, successful_mm_annotations = calc_mm_features(config, recommended_complexes)
 
         if config.verbosity >= 4:
-            print(f"In para_classify: {protein_id=} after calc_mm_features {len(mm_db_dict)=} {len(successful_mm_annotations)=}")
+            config.logger.info(f"In para_classify: {protein_id=} after calc_mm_features {len(mm_db_dict)=} {len(successful_mm_annotations)=}")
 
         ts = add_to_times(sub_times, ts)
 
@@ -390,7 +383,7 @@ def para_classify(
                 if res in mm_db_dict[complex_id][chain_id]:
                     packed_mm_feats = mm_db_dict[complex_id][chain_id][res]
                     if config.verbosity >= 6:
-                        print(f'Setting mm_feat_vec {pos} {complex_id} {chain_id} {res}')
+                        config.logger.info(f'Setting mm_feat_vec {pos} {complex_id} {chain_id} {res}')
                     position_value_dict[pos][3] = packed_mm_feats
 
         ts = add_to_times(sub_times, ts)
@@ -431,7 +424,7 @@ def para_classify(
             ts = add_to_times(sub_times, ts)
 
             if config.verbosity >= 5:
-                print(f'Len of aggregated_interfaces for {protein_id}: {len(aggregated_interfaces)}')
+                config.logger.info(f'Len of aggregated_interfaces for {protein_id}: {len(aggregated_interfaces)}')
 
             if len(aggregated_interfaces) > 0:
                 ins_times = remote_insert_interfaces(prot_db_id, aggregated_interfaces, structs_from_db, complexes, config, db_lock=db_lock)
@@ -460,7 +453,7 @@ def para_classify(
     del complex_to_db_ids
 
     if config.verbosity >= 4:
-        print(f'End of para_classify {len(package)=} {para=}')
+        config.logger.info(f'End of para_classify {len(package)=} {para=}')
 
     return times
 
@@ -477,7 +470,6 @@ def get_res_info(structures, pdb_id, chain, res_nr):
     if isinstance(residue_obj, tuple):
         res_id, res_db_id, packed_res_data = residue_obj
         return packed_res_data
-    #print(residue_obj)
     res_info = residue_obj.get_res_info()
     return res_info
 
@@ -500,11 +492,11 @@ def pack_packages(
         ):
     
     if config.verbosity >= 5:
-        print(f'Call of pack_packages with: {len(size_sorted)=}, {send_packages=}, {n_procs=}')
-        print('Current CPU load:', psutil.cpu_percent())
+        config.logger.info(f'Call of pack_packages with: {len(size_sorted)=}, {send_packages=}, {n_procs=}')
+        config.logger.info(f'Current CPU load: {psutil.cpu_percent()}')
     if config.verbosity >= 4:
         if len(size_sorted) == 0:
-            print('#############\ncalled pack packages with empty task\n##############')
+            config.logger.info('#############\ncalled pack packages with empty task\n##############')
 
     n_structs = 0
     structure_db_dict: tuple[dict[int, tuple[str, str]], dict[int, tuple[str, str]]] = ({}, {})
@@ -526,10 +518,7 @@ def pack_packages(
         ti = add_to_times(times, ti)
 
         for (structure_id, chain) in annotation_list:
-            #print((structure_id, chain))
-            #print(proteins.complexes[structure_id].chains)
-            #print(proteins.structures[structure_id].keys())
-            if not structure_id in complex_store:
+            if structure_id not in complex_store:
                 try:
                     complex_store[structure_id] = (proteins.complexes[structure_id].chains, proteins.complexes[structure_id].resolution, proteins.complexes[structure_id].database_id)
                 except:
@@ -556,14 +545,12 @@ def pack_packages(
                     if structure_database_id not in structure_db_dict[0] and structure_database_id not in structure_db_dict[1]:
                         structure_db_dict[1][structure_database_id] = (structure_id, c_chain)
 
-                #print(f'{structure_id} {chain=} {c_chain=} {structure_database_id} {structure_db_dict}')
-
         ti = add_to_times(times, ti)
 
         if n_structs >= 1000 and para:
 
             if config.verbosity >= 3:
-                print(f'Sending package: {len(structure_db_dict[0])=} {len(structure_db_dict[1])=}')
+                config.logger.info(f'Sending package: {len(structure_db_dict[0])=} {len(structure_db_dict[1])=}')
 
             package.append((u_ac, protein_obj))
             
@@ -573,10 +560,10 @@ def pack_packages(
 
             send_packages += 1
             if config.verbosity >= 5:
-                print(f'Start remote classifcation {u_ac} Amount of different proteins in the package: {len(package)}')
+                config.logger.info(f'Start remote classifcation {u_ac} Amount of different proteins in the package: {len(package)}')
                 
-                print('Pending processes:', send_packages)
-                print('RAM memory % used:', current_memory_load)
+                config.logger.info(f'Pending processes: {send_packages}')
+                config.logger.info(f'RAM memory % used: {current_memory_load}')
                 
             n_structs = 0
             package = []
@@ -610,7 +597,7 @@ def pack_packages(
         classification_results.append(para_classify_remote_wrapper.remote(config_store, pack(complex_store), pack(package), pack(structure_db_dict), prot_db_id_map, structure_store, backmap_store, com_queue, next(cycle_locks)))
         
         if config.verbosity >= 5:
-            print(f'Start final remote classifcation {u_ac} Amount of different proteins in the package: {len(package)=} {len(size_sorted)=}')
+            config.logger.info(f'Start final remote classifcation {u_ac} Amount of different proteins in the package: {len(package)=} {len(size_sorted)=}')
             
         send_packages += 1
         package = []
@@ -646,8 +633,6 @@ def group_proteins(config, size_sorted, proteins: protein_package.Proteins, max_
 
         structures = set(struct_tuple_list)
 
-        if config.verbosity >= 6:
-            print(protein_id, len(structures))
         if len(groups) == 0:
             groups.append([[(protein_id, size)], structures])
             group_order.append([0, len(structures)])
@@ -687,13 +672,11 @@ def group_proteins(config, size_sorted, proteins: protein_package.Proteins, max_
             else:
                 count_distribution[count] += 1
 
-    print(count_distribution)
+    config.logger.info(count_distribution)
     """
     
     if config.verbosity >= 4:
-        print(f'Group order: {group_order}')
-
-    #print(groups)
+        config.logger.info(f'Group order: {group_order}')
 
     return groups, group_dict, count_dict, complex_count
 
@@ -720,13 +703,12 @@ def group_structure_stores(groups, proteins):
         structure_stores.append(ray.put(pack((structures, complex_store))))
     return structure_stores
 
-def generate_classification_dump(size_sorted, config, proteins = None, protein_map = None, complexes = None, structures = None, unpacked = False):
+def generate_classification_dump(size_sorted, config, proteins = None, protein_map = None, complexes = None, unpacked = False):
     t0 = time.time()
     complex_store = {}
 
-    if not proteins is None:
+    if proteins is not None:
         complexes = proteins.complexes
-        structures: dict[str, dict[str, structure_package.Structure]] = proteins.structures
 
 
     total_number_of_backmaps = 0
@@ -744,8 +726,8 @@ def generate_classification_dump(size_sorted, config, proteins = None, protein_m
 
         for (structure_id, chain) in annotation_list:
 
-            if not structure_id in complex_store:
-                if not proteins is None:
+            if structure_id not in complex_store:
+                if proteins is not None:
                     try:
                         complex_store[structure_id] = (complexes[structure_id].chains, complexes[structure_id].resolution, complexes[structure_id].database_id)
                     except:
@@ -758,9 +740,9 @@ def generate_classification_dump(size_sorted, config, proteins = None, protein_m
     t1 = time.time()
     if config.verbosity >= 5:
         size_in_gb_of_complex_store = sys.getsizeof(complex_store) / 1024 / 1024
-        print(f'Time for cld part 1: {t1-t0}')
-        print(f'Number of backmaps: {total_number_of_backmaps}')
-        print(f'Data sizes: {size_in_gb_of_complex_store}')
+        config.logger.info(f'Time for cld part 1: {t1-t0}')
+        config.logger.info(f'Number of backmaps: {total_number_of_backmaps}')
+        config.logger.info(f'Data sizes: {size_in_gb_of_complex_store}')
 
     if unpacked:
         return False, (config, complex_store)
@@ -770,28 +752,28 @@ def generate_classification_dump(size_sorted, config, proteins = None, protein_m
 
     t2 = time.time()
     if config.verbosity >= 5:
-        print(f'Time for cld part 2: {t2-t1}')    
+        config.logger.info(f'Time for cld part 2: {t2-t1}')    
         size_in_gb_of_pcs = sys.getsizeof(pcs) / 1024 / 1024
-        print(f'packed data size: {size_in_gb_of_pcs}')
+        config.logger.info(f'packed data size: {size_in_gb_of_pcs}')
 
     store_reference =  ray.put((config, pcs))
 
     t3 = time.time()
     if config.verbosity >= 5:
-        print(f'Time for cld part 3: {t3-t2}')
+        config.logger.info(f'Time for cld part 3: {t3-t2}')
 
     return True, store_reference
 
-def process_classification_outputs(config, outs, proteins, recommended_complexes):
+def process_classification_outputs(config: Config, outs, proteins, recommended_complexes):
     for protein_id, pos_outs in outs:
         if config.verbosity >= 5:
-            print(f'Processing aggregation results: {protein_id} {len(pos_outs)}')
+            config.logger.info(f'Processing aggregation results: {protein_id} {len(pos_outs)}')
         
         if protein_id not in recommended_complexes:
             recommended_complexes[protein_id] = {}
         for pos, packed_mappings_obj, recommendation_order, packed_res_recommends in pos_outs:
             if config.verbosity >= 7:
-                print(f'In process_classification_outputs: {protein_id} {pos}')
+                config.logger.info(f'In process_classification_outputs: {protein_id} {pos}')
             proteins.protein_map[protein_id].positions[pos].mappings = packed_mappings_obj
             proteins.protein_map[protein_id].positions[pos].packed_res_recommends = packed_res_recommends
             recommended_complexes[protein_id][pos] = recommendation_order
@@ -809,12 +791,12 @@ def para_mm_lookup(package, store):
             for res_id in feature_dict[chain]:
                 microminer_features = mappings_package.Microminer_features()
                 microminer_features.set_values(feature_dict[chain][res_id])
-                if not res_id in complex_feature_dict_dict[complex_id][chain]:
+                if res_id not in complex_feature_dict_dict[complex_id][chain]:
                     complex_feature_dict_dict[complex_id][chain][res_id] = pack(microminer_features)
 
     return complex_feature_dict_dict
 
-def single_mm_lookup(package: set[str], config)-> dict[str, dict[str, dict[str | int, bytes]]]:
+def single_mm_lookup(package: set[str], config: Config)-> dict[str, dict[str, dict[str | int, bytes]]]:
     complex_feature_dict_dict: dict[str, dict[str, dict[str | int, bytes]]] = {}
     feature_dict: dict[str, dict[str | int, list[int | float | None]]]
     for complex_id in package:
@@ -826,7 +808,7 @@ def single_mm_lookup(package: set[str], config)-> dict[str, dict[str, dict[str |
             for res_id in feature_dict[chain]:
                 microminer_features = mappings_package.Microminer_features()
                 microminer_features.set_values(feature_dict[chain][res_id])
-                if not res_id in complex_feature_dict_dict[complex_id][chain]:
+                if res_id not in complex_feature_dict_dict[complex_id][chain]:
                     complex_feature_dict_dict[complex_id][chain][res_id] = pack(microminer_features)
     return complex_feature_dict_dict
 
@@ -864,14 +846,14 @@ def classification(proteins, config, background_insert_residues_process, custom_
         total_mappings += size
 
     if config.verbosity >= 3:
-        print(f'Total mappings: {total_mappings:_}')
+        config.logger.info(f'Total mappings: {total_mappings:_}')
 
     if config.verbosity >= 5:
-        print(f'{prot_db_id_map=}')
+        config.logger.info(f'{prot_db_id_map=}')
         if len(proteins.structures.keys()) <= 1000:
-            print(proteins.structures.keys())
+            config.logger.info(f'{proteins.structures.keys()=}')
         else:
-            print(f'Size of protein.structures: {len(proteins.structures)}')
+            config.logger.info(f'Size of protein.structures: {len(proteins.structures)}')
 
     size_sorted = sorted(size_sorted, reverse=True, key=lambda x: x[1])
 
@@ -882,12 +864,12 @@ def classification(proteins, config, background_insert_residues_process, custom_
     send_packages = 0
 
     if config.verbosity >= 3:
-        print(f'Begin of aggregation process, {para=}')
+        config.logger.info(f'Begin of aggregation process, {para=}')
 
     
     if config.verbosity >= 2:
         t1 = time.time()
-        print(f'Aggregation part 1: {t1-t0} {len(size_sorted)=}')
+        config.logger.info(f'Aggregation part 1: {t1-t0} {len(size_sorted)=}')
 
     if para:
         config_store = ray.put(config)
@@ -900,13 +882,13 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
         if config.verbosity >= 2:
             t21 = time.time()
-            print(f'Aggregation part 2.1: {t21-t1}')
+            config.logger.info(f'Aggregation part 2.1: {t21-t1}')
 
         groups, group_dict, count_dict, complex_count = group_proteins(config, size_sorted, proteins, max_number_of_groups = config.proc_n)
 
         if config.verbosity >= 2:
             t22 = time.time()
-            print(f'Aggregation part 2.2: {t22-t21} {len(groups)=}')
+            config.logger.info(f'Aggregation part 2.2: {t22-t21} {len(groups)=}')
 
         count_thresh = max([min([config.proc_n, len(size_sorted)])//150, 1])
         complex_count_thresh = max([min([config.proc_n, len(size_sorted)])//150, 1])
@@ -937,13 +919,13 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
         if config.verbosity >= 2:
             t23 = time.time()
-            print(f'Aggregation part 2.3: {t23-t22} {len(stored_structures)=} {len(backmap_store_db_ids)=} {count_thresh=} {complex_count_thresh=}')
+            config.logger.info(f'Aggregation part 2.3: {t23-t22} {len(stored_structures)=} {len(backmap_store_db_ids)=} {count_thresh=} {complex_count_thresh=}')
 
         structs_from_db, interface_map = getStoredResidues(None, config, custom_ids = structure_store_db_dict, exclude_interacting_chains = True)
 
         if config.verbosity >= 2:
             t24 = time.time()
-            print(f'Aggregation part 2.4: {t24-t23}')
+            config.logger.info(f'Aggregation part 2.4: {t24-t23}')
 
         structure_backmaps: dict[str, dict[str, dict[int, bytes]]] = getBackmaps(
                 backmap_store_db_ids,
@@ -958,7 +940,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
         if config.verbosity >= 2:
             t25 = time.time()
-            print(f'Aggregation part 2.5: {t25-t24}')
+            config.logger.info(f'Aggregation part 2.5: {t25-t24}')
 
         packed_structures = {}
         N = 0
@@ -978,7 +960,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
         if config.verbosity >= 2:
             t26 = time.time()
-            print(f'Aggregation part 2.6: {t26-t25} Packed structures: {N=}')
+            config.logger.info(f'Aggregation part 2.6: {t26-t25} Packed structures: {N=}')
 
         com_queue = Queue()
 
@@ -991,14 +973,14 @@ def classification(proteins, config, background_insert_residues_process, custom_
                                                                                  prot_db_id_map_store, cycle_locks,
                                                                                  stored_structures, structure_store,
                                                                                  backmap_store, com_queue)
-            #print(size_sorted)
+
             if send_packages >= config.proc_n:
                 break
             start_with += 1
 
         if config.verbosity >= 2:
             t27 = time.time()
-            print(f'Aggregation part 2.7: {t27-t26} {send_packages=} {group_number=} {len(size_sorted)=}')
+            config.logger.info(f'Aggregation part 2.7: {t27-t26} {send_packages=} {group_number=} {len(size_sorted)=}')
         
 
     else:
@@ -1008,12 +990,12 @@ def classification(proteins, config, background_insert_residues_process, custom_
         
         agg_times = para_classify(config, complex_store, package, structure_db_dict, prot_db_id_map)
         if config.verbosity >= 3:
-            print_times(agg_times, label='Serialized aggregation')
+            print_times(agg_times, label='Serialized aggregation', logger=config.logger)
 
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print(f'Time for aggregation part 2: {t2 - t1}, {para=}')
+        config.logger.info(f'Time for aggregation part 2: {t2 - t1}, {para=}')
 
     if para:
         total_times = []
@@ -1026,7 +1008,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
             loop_count += 1
             if loop_count >= 5000:
                 if config.verbosity >= 3:
-                    print(f'5k waits {len(classification_results)=}')
+                    config.logger.info(f'5k waits {len(classification_results)=}')
                     loop_count = 0
             ready, not_ready = ray.wait(classification_results, timeout = 0.1)
 
@@ -1040,7 +1022,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
                     agg_times = returned_package
                     total_agg_times = aggregate_times(total_agg_times, agg_times)
                     if config.verbosity >= 7:
-                        print_times(agg_times, label='Para aggregation')
+                        print_times(agg_times, label='Para aggregation', logger=config.logger)
 
                 classification_results = not_ready
             else:
@@ -1065,7 +1047,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
                                                                                                 config.proc_n, prot_db_id_map_store, cycle_locks,
                                                                                                 stored_structures, structure_store, backmap_store, com_queue)
                             if config.verbosity >= 6:
-                                print(f'Packaged new aggregation process {group_number=} {send_packages=} {len(size_sorted)=}')
+                                config.logger.info(f'Packaged new aggregation process {group_number=} {send_packages=} {len(size_sorted)=}')
                             if send_packages >= config.proc_n:
                                 break
                         start_with += 1
@@ -1076,8 +1058,8 @@ def classification(proteins, config, background_insert_residues_process, custom_
                 break
 
         if config.verbosity >= 3:
-            print_times(total_times, label = 'Processing and packaging')
-            print_times(total_agg_times, label='Para aggregation')
+            print_times(total_times, label = 'Processing and packaging', logger=config.logger)
+            print_times(total_agg_times, label='Para aggregation', logger=config.logger)
 
 
     else:
@@ -1086,7 +1068,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print('Time for classification part 2:', t2 - t1)
+        config.logger.info(f'Time for classification part 2: {t2 - t1}')
 
     if background_insert_residues_process is not None:
         background_insert_residues_process.join()
@@ -1095,7 +1077,7 @@ def classification(proteins, config, background_insert_residues_process, custom_
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print('Time for classification part 3:', t3 - t2)
+        config.logger.info(f'Time for classification part 3: {t3 - t2}')
 
 def calc_mm_features(
         config,
@@ -1143,7 +1125,7 @@ def calc_mm_features(
                                     stay_in_loop = False
                                 else:
                                     next_try += 1
-                            elif not complex_id in processed_complexes:
+                            elif complex_id not in processed_complexes:
                                 new_mm_inputs.add(complex_id)
                                 processed_complexes.add(complex_id)
                                 if complex_id not in rec_complex_pos_dict:
@@ -1175,7 +1157,7 @@ def calc_mm_features(
                                 if complex_id in mm_db_dict:
                                     successful_mm_annotations[pos] = complex_id, chain_id, res
                                     stay_in_loop = False
-                                elif not complex_id in processed_complexes:
+                                elif complex_id not in processed_complexes:
                                     new_mm_inputs.add(complex_id)
                                     processed_complexes.add(complex_id)
                                     if complex_id not in rec_complex_pos_dict:
@@ -1186,7 +1168,7 @@ def calc_mm_features(
                                     next_try += 1
 
             if config.verbosity >= 4:
-                print(f'MicroMiner-lookup succesful for {len(mm_inputs) - n_empty} Complexes.')
+                config.logger.info(f'MicroMiner-lookup succesful for {len(mm_inputs) - n_empty} Complexes.')
             
             mm_inputs = new_mm_inputs
             complex_feature_dict_dict = single_mm_lookup(mm_inputs, config)

@@ -22,6 +22,7 @@ from structman.lib.pdbParser import standardParsePDB, parse_chaintype_map
 from structman.base_utils import base_utils
 from structman.settings import HUMAN_INFO_MAP
 from structman.base_utils.base_utils import calculate_chunksizes
+from structman.base_utils.config_class import Config
 
 POLLING_INTERVAL = 3
 
@@ -79,7 +80,7 @@ def tag_update(tag_map, u_ac, new_entry):
     return tag_map
 
 # deactive, needs update
-def updateMappingDatabase(u_acs, db, config):
+def updateMappingDatabase(u_acs, db, config: Config):
     cursor = db.cursor()
     ac_id_values = []
     ac_ref_values = []
@@ -91,7 +92,7 @@ def updateMappingDatabase(u_acs, db, config):
 
         seq, refseqs, go_terms, pathways, u_id = seq_out
         if u_id is None:  # This can happen for uniprot entries, which got deleted from uniprot
-            print("Warning: Uniprot entry:", u_ac, " not found, most probably the entry got deleted from uniprot")
+            config.logger.info(f"Warning: Uniprot entry: {u_ac} not found, most probably the entry got deleted from uniprot")
             continue
         ac_id_values.append("('%s','%s','%s','%s')" % (u_ac, u_ac[-2:], u_id, u_id[:2]))
         for refseq in refseqs.split(','):
@@ -155,7 +156,7 @@ def u_ac_isoform_search(gene_sequence_map, stems, ref_stem_map, config):
 
 
 def integrate_protein(
-        config,
+        config: Config,
         proteins: dict[str, protein_package.Protein],
         genes: dict[str, gene_package.Gene],
         indel_map: dict[str, indel_package.Indel],
@@ -181,7 +182,7 @@ def integrate_protein(
 
     if config.verbosity >= 6:
         t1 = time.time()
-        print(f'Time for integrate_protein part 1: {t1-t0}, {primary_protein_id} {input_id} {gene_id} {len(other_ids)} {len(prot_map[input_id][0])}')
+        config.logger.info(f'Time for integrate_protein part 1: {t1-t0}, {primary_protein_id} {input_id} {gene_id} {len(other_ids)} {len(prot_map[input_id][0])}')
 
 
     if primary_protein_id not in proteins:
@@ -201,14 +202,14 @@ def integrate_protein(
 
     if config.verbosity >= 6:
         t2 = time.time()
-        print(f'Time for integrate_protein part 2: {t2-t1} {len(prot_map[input_id][1])}')
+        config.logger.info(f'Time for integrate_protein part 2: {t2-t1} {len(prot_map[input_id][1])}')
 
     if len(prot_map[input_id][1]) > 0:
         indel_insert(config, proteins, indel_map, prot_map[input_id][1], primary_protein_id)
 
     if config.verbosity >= 6:
         t3 = time.time()
-        print(f'Time for integrate_protein part 3: {t3-t2} {len(prot_map[input_id][2])}')
+        config.logger.info(f'Time for integrate_protein part 3: {t3-t2} {len(prot_map[input_id][2])}')
 
     for multi_mutation, mm_tags in prot_map[input_id][2]:
         if len(multi_mutation) > 1:
@@ -220,7 +221,7 @@ def integrate_protein(
 
     if config.verbosity >= 6:
         t4 = time.time()
-        print(f'Time for integrate_protein part 4: {t4-t3}')
+        config.logger.info(f'Time for integrate_protein part 4: {t4-t3}')
     return
 
 
@@ -272,7 +273,7 @@ def indel_insert(
 def fetch_chains(package, config):
     results = []
     for pdb_id in package:
-        page, _ = standardParsePDB(pdb_id, config.pdb_path, only_first_model = True)
+        page, _ = standardParsePDB(pdb_id, config, only_first_model = True)
         if page == '':
             continue
 
@@ -289,7 +290,7 @@ def fetch_chains(package, config):
 
 # called by serializedPipeline
 def IdMapping(
-        config,
+        config: Config,
         ac_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
         id_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
         np_map: dict[str, tuple[list[position_package.Position], list[tuple], list[tuple[list[tuple | indel_package.Indel]]]]],
@@ -303,18 +304,18 @@ def IdMapping(
 
     if config.verbosity >= 4:
         if len(prot_gene_map) < 100:
-            print(f'prot_gene_map at the start of IdMapping: {prot_gene_map}')
-            print(f'Size of ac_map: {len(ac_map)}')
+            config.logger.info(f'prot_gene_map at the start of IdMapping: {prot_gene_map}')
+            config.logger.info(f'Size of ac_map: {len(ac_map)}')
         else:
-            print(f'Size of prot_gene_map at the start of IdMapping: {len(prot_gene_map)}')
-            print(f'Size of ac_map: {len(ac_map)}')
-            print(f'Size of id_map: {len(id_map)}')
-            print(f'Size of np_map: {len(np_map)}')
-            print(f'Size of pdb_map: {len(pdb_map)}')            
-            print(f'Size of hgnc_map: {len(hgnc_map)}')
-            print(f'Size of nm_map: {len(nm_map)}')
-            print(f'Size of ensembl_map: {len(ensembl_map)}')
-            print(f'Size of prot_tags_map: {len(prot_tags_map)}')
+            config.logger.info(f'Size of prot_gene_map at the start of IdMapping: {len(prot_gene_map)}')
+            config.logger.info(f'Size of ac_map: {len(ac_map)}')
+            config.logger.info(f'Size of id_map: {len(id_map)}')
+            config.logger.info(f'Size of np_map: {len(np_map)}')
+            config.logger.info(f'Size of pdb_map: {len(pdb_map)}')            
+            config.logger.info(f'Size of hgnc_map: {len(hgnc_map)}')
+            config.logger.info(f'Size of nm_map: {len(nm_map)}')
+            config.logger.info(f'Size of ensembl_map: {len(ensembl_map)}')
+            config.logger.info(f'Size of prot_tags_map: {len(prot_tags_map)}')
 
     proteins: dict[str, protein_package.Protein] = {}
     indel_map: dict[str, indel_package.Indel] = {}
@@ -646,14 +647,14 @@ def IdMapping(
             else:
                 gene_id = None
             if pdb_tuple[-1] == '-':
-                page, _ = standardParsePDB(pdb_tuple[:4], config.pdb_path, only_first_model = True)
+                page, _ = standardParsePDB(pdb_tuple[:4], config, only_first_model = True)
                 if page == '':
                     continue
 
                 chain_type_map = parse_chaintype_map(page)
 
                 if config.verbosity >= 5:
-                    print(f'Chaintype map for {pdb_tuple}: {chain_type_map}')
+                    config.logger.info(f'Chaintype map for {pdb_tuple}: {chain_type_map}')
 
                 chains = []
                 for chain_id in chain_type_map:
@@ -808,19 +809,19 @@ def retrieve_transcript_metadata(server, transcript_ids, verbose = False):
 
         try:
             r = requests.post(rest_url, headers = headers, data = data)
-        except:
+        except requests.exceptions.MissingSchema:
             try_number += 1
             if try_number == 5:
                 [e, f, g] = sys.exc_info()
                 g = traceback.format_exc()
-                print(f'POST request failed: {e}\n{f}\n{g}')
+                print(f'POST request failed: {transcript_ids=} \n{e}\n{f}\n{g}')
                 break
             time.sleep(try_number**2)
             continue
 
         if not r.ok:
             r.raise_for_status()
-            print(f'Transcript metadata Retrieval failed')
+            print('Transcript metadata Retrieval failed')
             return None
 
         decoded = r.json()
@@ -871,7 +872,7 @@ def retrieve_gene_metadata(server, gene_ids, expand = False):
 
         try:
             r = requests.post(rest_url, headers = headers, data = data, params = {'expand' : int(expand)})
-        except:
+        except requests.exceptions.MissingSchema:
             try_number += 1
             if try_number == 5:
                 [e, f, g] = sys.exc_info()
@@ -883,7 +884,7 @@ def retrieve_gene_metadata(server, gene_ids, expand = False):
 
         if not r.ok:
             r.raise_for_status()
-            print(f'Transcript metadata Retrieval failed')
+            print('Transcript metadata Retrieval failed')
             return None
 
         decoded = r.json()
@@ -909,7 +910,8 @@ def retrieve_gene_metadata(server, gene_ids, expand = False):
     return gene_name_dict
 
 
-def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
+def retrieve_transcript_sequences(config: Config, transcript_ids, recursed = False):
+    server = config.ensembl_server
     rest_url = f'{server}/sequence/id'
 
     headers = { "Content-Type" : "application/json", "Accept" : "application/json"}
@@ -931,7 +933,7 @@ def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
             if try_number == 5:
                 [e, f, g] = sys.exc_info()
                 g = traceback.format_exc()
-                print(f'POST request failed: {e}\n{f}\n{g}')
+                config.logger.info(f'POST request failed: {e}\n{f}\n{g}')
                 break
             time.sleep(try_number**2)
             continue
@@ -940,11 +942,16 @@ def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
             try:
                 r.raise_for_status()
             except requests.exceptions.HTTPError as errh:
-                print(f'Transcript Sequence Retrieval failed: {data}\nError: {errh.response.status_code}\n{errh.response.text}')
+                if errh.response.text == '{"error":"No results found"}' and recursed:
+                    config.errorlog.add_warning(f'Fetch ensembl IDs failed: "{errh.response.text}", {transcript_ids=}')
+                    return {}, {transcript_ids[0]:None}
+                elif recursed:
+                    config.errorlog.add_error(f'Transcript Sequence Retrieval failed: {data}\nError: {errh.response.status_code=}\n{errh.response.text=} {type(errh.response.text)=}')
+                    return {}, {transcript_ids[0]:None}
             if recursed:
                 return {}, {transcript_ids[0]:None}
             for transcript_id in chunk:
-                seq_sub_dict, sub_empty_seqs = retrieve_transcript_sequences(server, [transcript_id], recursed=True)
+                seq_sub_dict, sub_empty_seqs = retrieve_transcript_sequences(config, [transcript_id], recursed=True)
                 transcript_seq_dict.update(seq_sub_dict)
                 empty_seqs.update(sub_empty_seqs)
             i += 1
@@ -966,7 +973,7 @@ def retrieve_transcript_sequences(server, transcript_ids, recursed = False):
 
     return transcript_seq_dict, empty_seqs
 
-def embl_database_lookup(config, transcript_ids):
+def embl_database_lookup(config: Config, transcript_ids):
     missing_ids = set(transcript_ids)
     results = select(config, ['EMBL_ID', 'Gene_ID', 'Name', 'Sequence'], 'EMBL', in_rows={'EMBL_ID': missing_ids}, from_mapping_db=True)
     sequence_map = {}
@@ -1001,7 +1008,7 @@ def embl_database_lookup(config, transcript_ids):
     if len(sequence_map) > 0:
         mean_seq_len = mean_seq_len / len(sequence_map)
     if config.verbosity >= 2:
-        print(f'Embl database lookup: {len(sequence_map)} sequences, mean length: {mean_seq_len}')
+        config.logger.info(f'Embl database lookup: {len(sequence_map)} sequences, mean length: {mean_seq_len}')
     return sequence_map, missing_ids, gene_id_map, broken_ids
 
 def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken_ids, new_no_seqs):
@@ -1041,7 +1048,7 @@ def embl_database_update(config, sequence_map, transcript_id_gene_id_map, broken
 
     update(config, 'EMBL', ['EMBL_ID', 'Gene_ID', 'Name', 'Sequence'], values, mapping_db = True)
 
-def get_ensembl_seqs(config, full_transcript_ids):
+def get_ensembl_seqs(config: Config, full_transcript_ids):
     aa_seqs = {}
     total_gene_id_map = {}
     chunksize = 5000
@@ -1052,17 +1059,17 @@ def get_ensembl_seqs(config, full_transcript_ids):
         transcript_ids = full_transcript_ids[l:r]
 
         if config.verbosity >= 2:
-            print(f'Get ensembl transcript sequences, iteration: {iter_number}, chunksize: {len(transcript_ids)}')
+            config.logger.info(f'Get ensembl transcript sequences, iteration: {iter_number}, chunksize: {len(transcript_ids)}')
 
         if config.mapping_db_is_set:
             if config.verbosity >= 2:
-                print(f'Calling embl_database_lookup with {len(transcript_ids)} number of transcript ids')
+                config.logger.info(f'Calling embl_database_lookup with {len(transcript_ids)} number of transcript ids')
                 t0 = time.time()
             sequence_map, missing_ids, gene_id_map, broken_ids = embl_database_lookup(config, transcript_ids)
             if config.verbosity >= 2:
                 t1 = time.time()
-                print(f'embl_database_lookup returned with {len(sequence_map)} number of sequences and {len(missing_ids)} number of still missing transcripts')
-                print(f'Time for embl_database_lookup: {t1-t0}')
+                config.logger.info(f'embl_database_lookup returned with {len(sequence_map)} number of sequences and {len(missing_ids)} number of still missing transcripts')
+                config.logger.info(f'Time for embl_database_lookup: {t1-t0}')
         else:
             sequence_map = {}
             gene_id_map = {}
@@ -1071,14 +1078,15 @@ def get_ensembl_seqs(config, full_transcript_ids):
         if len(missing_ids) > 0:
             if config.verbosity >= 2:
                 t2 = time.time()
-            fasta_sequences, new_no_seqs = retrieve_transcript_sequences(config.ensembl_server, missing_ids)
+            fasta_sequences, new_no_seqs = retrieve_transcript_sequences(config, missing_ids)
+            missing_ids = missing_ids - new_no_seqs.keys()
             if config.verbosity >= 2:
                 t3 = time.time()
-                print(f'Time for retrieve_transcript_sequences: {t3-t2}')
-            transcript_id_gene_id_map = retrieve_transcript_metadata(config.ensembl_server, missing_ids)
+                config.logger.info(f'Time for retrieve_transcript_sequences: {t3-t2}')
+            transcript_id_gene_id_map = retrieve_transcript_metadata(config, missing_ids)
             if config.verbosity >= 2:
                 t4 = time.time()
-                print(f'Time for retrieve_transcript_metadata: {t4-t3}')
+                config.logger.info(f'Time for retrieve_transcript_metadata: {t4-t3}')
             if config.mapping_db_is_set:
                 try:
                     embl_database_update(config, fasta_sequences, transcript_id_gene_id_map, broken_ids, new_no_seqs)
@@ -1086,10 +1094,10 @@ def get_ensembl_seqs(config, full_transcript_ids):
                     [e, f, g] = sys.exc_info()
                     g = traceback.format_exc()
                     if config.verbosity >= 3:
-                        print(f'Updating EMBL transcipt database failed:\n{e}\n{f}\n{g}')
+                        config.logger.info(f'Updating EMBL transcipt database failed:\n{e}\n{f}\n{g}')
                 if config.verbosity >= 2:
                     t5 = time.time()
-                    print(f'Time for updating embl mapping db: {t5-t4}')
+                    config.logger.info(f'Time for updating embl mapping db: {t5-t4}')
         else:
             fasta_sequences = {}
             transcript_id_gene_id_map = {}
@@ -1203,7 +1211,7 @@ def get_all_isoforms(u_ac_stems, config):
 # called by serializedPipeline
 
 
-def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_errors=True, skip_missing_routine=False):
+def getSequencesPlain(u_acs, config: Config, max_seq_len=None, filtering_db=None, save_errors=True, skip_missing_routine=False):
     gene_sequence_map: dict[str, str] = {}
     filtered_set = set()
 
@@ -1222,7 +1230,7 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
 
         if config.verbosity >= 2:
             t1 = time.time()
-            print("getSequencesPlain Part 1: ", str(t1 - t0))
+            config.logger.info(f"getSequencesPlain Part 1: {t1 - t0}")
 
         n = 0
         for row in results:
@@ -1247,11 +1255,11 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
             gene_sequence_map[u_ac] = seq
 
         if n > 0 and config.verbosity >= 2:
-            print('Filtered ', n, ' Sequences due to max length: ', max_seq_len)
+            config.logger.info(f'Filtered {n} sequences due to max length: {max_seq_len}')
 
         if config.verbosity >= 2:
             t2 = time.time()
-            print("getSequencesPlain Part 2: ", str(t2 - t1))
+            config.logger.info(f"getSequencesPlain Part 2:{t2 - t1}")
 
     else:
         missing_set = set(u_acs)
@@ -1280,14 +1288,14 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print("getSequencesPlain Part 3: ", str(t3 - t2))
+        config.logger.info(f"getSequencesPlain Part 3: {t3 - t2}")
 
     if not skip_missing_routine:
 
         if config.verbosity >= 2:
-            print('Size of missing set: ', len(missing_set))
+            config.logger.info(f'Size of missing set: {len(missing_set)}')
         if config.verbosity >= 3:
-            print(missing_set)
+            config.logger.info(f'{missing_set}')
 
         for u_ac in missing_set:
             seq_out = getSequence(u_ac, config)
@@ -1302,7 +1310,7 @@ def getSequencesPlain(u_acs, config, max_seq_len=None, filtering_db=None, save_e
 
         if config.verbosity >= 2:
             t4 = time.time()
-            print("getSequencesPlain Part 4: ", str(t4 - t3))
+            config.logger.info(f"getSequencesPlain Part 4: {t4 - t3}")
 
     if filtering_db is not None:
         return gene_sequence_map, in_db
@@ -1368,7 +1376,7 @@ def getSequences(proteins, config):
                 protein_map[iso_u_ac].go_terms = go_terms
                 protein_map[iso_u_ac].pathways = pathways
 
-def get_last_version(u_ac):
+def get_last_version(u_ac: str, config: Config):
     url = 'https://www.uniprot.org/uniprot/%s?version=*' % u_ac
     #sdsc_utils.connection_sleep_cycle(config.verbosity, url)
     try:
@@ -1379,29 +1387,29 @@ def get_last_version(u_ac):
         e, f, g = sys.exc_info()
         config.errorlog.add_error('Error trying to reach: %s\n%s\n%s' % (url, str(e), str(f)))
         return None
-    print(page)
+    config.logger.info(page)
 
-def get_obsolete_sequence(u_ac, config, return_id=False, tries = 0):
+def get_obsolete_sequence(u_ac: str, config: Config, return_id=False, tries = 0):
     uniparc_id_map = getUniprotIds(config, [u_ac], 'UniProtKB_AC', target_type="UniParc", timeout = 60 * (tries + 1))
-    if not u_ac in uniparc_id_map:
+    if u_ac not in uniparc_id_map:
         if tries < 3:
              return get_obsolete_sequence(u_ac, config, return_id=return_id, tries = (tries + 1))
         config.errorlog.add_warning(f'Couldnt find uniparc id for: {u_ac}, {uniparc_id_map}')
         return None
     uniparc_id = uniparc_id_map[u_ac]
     if config.verbosity >= 3:
-        print('Uniparc ID of potential obsolete uniprot entry (', u_ac, ') is:', uniparc_id)
+        config.logger.info(f'Uniparc ID of potential obsolete uniprot entry ({u_ac}) is {uniparc_id}')
     if uniparc_id is None:
         config.errorlog.add_warning(f'Uniparc id was None for: {u_ac}, {uniparc_id_map}')
         return None
     return getSequence(uniparc_id, config, return_id=return_id, obsolete_try = True)
 
-def getSequence(uniprot_ac, config, tries=0, return_id=False, obsolete_try = False):
+def getSequence(uniprot_ac: str, config: Config, tries=0, return_id=False, obsolete_try = False):
     if config.verbosity >= 3:
-        print(f'uniprot.getSequence for {uniprot_ac} {tries}')
+        config.logger.info(f'uniprot.getSequence for {uniprot_ac} {tries}')
 
     if uniprot_ac is None:
-        config.errorlog.add_error(f'Uniprot Ac is None')
+        config.errorlog.add_error('Uniprot Ac is None')
         return None
 
     if sdsc_utils.is_mutant_ac(uniprot_ac):
@@ -1428,9 +1436,9 @@ def getSequence(uniprot_ac, config, tries=0, return_id=False, obsolete_try = Fal
             return get_obsolete_sequence(uniprot_ac, config, return_id=return_id)
 
     if config.verbosity >= 3 and obsolete_try:
-        print('Obsolete entry try:', uniprot_ac, url)
+        config.logger.info(f'Obsolete entry try: {uniprot_ac} {url}')
         if config.verbosity >= 4:
-            print('Online return:\n', page)
+            config.logger.info(f'Online return:\n{page}')
 
     lines = page.split("\n")
 
@@ -1449,7 +1457,7 @@ def getSequence(uniprot_ac, config, tries=0, return_id=False, obsolete_try = Fal
         if obsolete_try: #Unless it could come to an endless loop
             return None
         if config.verbosity >= 3:
-            print('Try to search for obsolete uniprot entry:', uniprot_ac)
+            config.logger.info(f'Try to search for obsolete uniprot entry: {uniprot_ac}')
         return get_obsolete_sequence(uniprot_ac, config, return_id=return_id)
 
     if uniprot_ac[0:3] == 'UPI':
@@ -1482,7 +1490,7 @@ def getSequence(uniprot_ac, config, tries=0, return_id=False, obsolete_try = Fal
             continue
         words = line.split()
         if len(words) == 0:
-            print(uniprot_ac)
+            config.logger.info(uniprot_ac)
             return None
         if words[0] == 'ID':
             u_id = words[1]

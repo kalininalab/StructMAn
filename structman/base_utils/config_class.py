@@ -23,9 +23,10 @@ from structman.settings import (
     RESOURCES_DIR
     )
 
+
 class Config:
     def __init__(self, config_path, num_of_cores=1, output_path='', basic_util_mode=False, configure_mode=False, local_db = None, db_mode = None,
-                 util_mode=False, output_util=False, external_call=True, verbosity=None, dbname = None,
+                 util_mode=False, output_util=False, external_call=True, verbosity=None, dbname = None, force_db_name = None,
                  print_all_errors=False, print_all_warns=False, restartlog=False, compute_ppi = True):
         self.prog_start_time = time.time()
         # read config file, auto add section header so old config files work
@@ -112,10 +113,14 @@ class Config:
         self.path_to_model_db = cfg.get('path_to_model_db', fallback='')
         self.mmseqs2_db_path = cfg.get('mmseqs2_db_path', fallback='')
         self.mmseqs2_model_db_path = cfg.get('mmseqs2_model_db_path', fallback='')
+        self.complex_model_db_path = cfg.get('complex_model_db_path', fallback='')
+        self.mmseqs2_complex_model_db_path = cfg.get('mmseqs2_complex_model_db_path', fallback='')
 
         self.model_db_active = os.path.exists(self.mmseqs2_model_db_path)
         if not is_alphafold_db_valid(self):
             self.model_db_active = False
+
+        self.afdb = cfg.get('afdb', fallback=None)
 
         self.read_only_mode = cfg.getboolean('read_only_mode', fallback=False)
         self.read_hybrid_mode = cfg.getboolean('read_hybrid_mode', fallback=False)
@@ -277,6 +282,12 @@ class Config:
                 self.max_package_size = None
                 
             if db is not None and not basic_util_mode:
+                if dbname is not None:
+                    if not force_db_name:
+                        if dbname[:len(self.db_user_name)] != self.db_user_name:
+                            dbname = f'{self.db_user_name}_{dbname}'
+                    self.db_name = dbname
+
                 if self.db_address != '-':
                     try:
                         cursor.execute("SHOW VARIABLES WHERE variable_name = 'max_allowed_packet'")

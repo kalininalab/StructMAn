@@ -8,6 +8,7 @@ import traceback
 import ray
 
 from structman.base_utils.base_utils import calc_checksum, pack, unpack, calculate_chunksizes, is_alphafold_model
+from structman.base_utils.config_class import Config
 from structman.base_utils import ray_utils
 from structman.lib import pdbParser
 from structman.lib import rin
@@ -110,7 +111,7 @@ def geneCheck(genes, config):
     return
 
 # called from serializedPipeline
-def protCheck(proteins, genes, session_id, config):
+def protCheck(proteins, genes, session_id, config: Config):
     # Scan the database for stored Proteins
     if proteins.isEmpty():
         return {}, {}
@@ -118,7 +119,7 @@ def protCheck(proteins, genes, session_id, config):
     results = select(config, ['Protein_Id', 'Primary_Protein_Id', 'Sequence'], 'Protein')
 
     if config.verbosity >= 3:
-        print(f'Just after protCheck selection {len(proteins.protein_map)=} {len(results)=}')
+        config.logger.info(f'Just after protCheck selection {len(proteins.protein_map)=} {len(results)=}')
 
     prot_id_list = set([])
     prot_ids_mutants_excluded = set()
@@ -144,7 +145,7 @@ def protCheck(proteins, genes, session_id, config):
     proteins.set_stored_ids(prot_id_list, prot_ids_mutants_excluded)
 
     if config.verbosity >= 3:
-        print(f'In protCheck  {len(prot_id_list)=} {len(proteins.stored_ids)=}')
+        config.logger.info(f'In protCheck  {len(prot_id_list)=} {len(proteins.stored_ids)=}')
 
     prot_ids = proteins.get_protein_ids()
 
@@ -308,10 +309,10 @@ def getAAChange(mutation_id, db, cursor):
     return ""
 
 
-def insertMultiMutations(proteins, genes, session, config):
+def insertMultiMutations(proteins, genes, session, config: Config):
 
     if config.verbosity >= 3:
-        print(f'insertMultiMutations: {len(proteins.multi_mutations)}')
+        config.logger.info(f'insertMultiMutations: {len(proteins.multi_mutations)}')
 
     t0 = time.time()
     db_ids = []
@@ -327,7 +328,7 @@ def insertMultiMutations(proteins, genes, session, config):
 
         t11 = time.time()
         if config.verbosity >= 3:
-            print(f'insertMultiMutations part 1.1: {t11-t10}')
+            config.logger.info(f'insertMultiMutations part 1.1: {t11-t10}')
 
         for row in results:
             wt_database_id = row[0]
@@ -348,11 +349,11 @@ def insertMultiMutations(proteins, genes, session, config):
 
         t12 = time.time()
         if config.verbosity >= 3:
-            print(f'insertMultiMutations part 1.2: {t12-t11}')
+            config.logger.info(f'insertMultiMutations part 1.2: {t12-t11}')
 
     t1 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 1: {t1-t0}')
+        config.logger.info(f'insertMultiMutations part 1: {t1-t0}')
 
     obj_map = {}
     if config.read_only_mode:
@@ -389,7 +390,7 @@ def insertMultiMutations(proteins, genes, session, config):
 
     t2 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 2: {t2-t1}')
+        config.logger.info(f'insertMultiMutations part 2: {t2-t1}')
 
     columns = ['Wildtype_Protein', 'Multi_Mutation_Id', 'SNVs', 'Indels']
     table = 'Multi_Mutation'
@@ -398,7 +399,7 @@ def insertMultiMutations(proteins, genes, session, config):
 
     t3 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 3: {t3-t2}')
+        config.logger.info(f'insertMultiMutations part 3: {t3-t2}')
 
     for row in results:
         wt_db_id = row[0]
@@ -412,7 +413,7 @@ def insertMultiMutations(proteins, genes, session, config):
 
     t4 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 4: {t4-t3}')
+        config.logger.info(f'insertMultiMutations part 4: {t4-t3}')
 
     columns = ['Multi_Mutation', 'Session', 'Tags']
     table = 'RS_Multi_Mutation_Session'
@@ -435,21 +436,21 @@ def insertMultiMutations(proteins, genes, session, config):
 
     t5 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 5: {t5-t4}')
+        config.logger.info(f'insertMultiMutations part 5: {t5-t4}')
 
     if len(values) > 0:
         insert(table, columns, values, config)
 
     t6 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 6: {t6-t5}')
+        config.logger.info(f'insertMultiMutations part 6: {t6-t5}')
 
     if len(isoform_values) > 0:
         insert('RS_Isoform', ['Protein_A', 'Protein_B', 'Gene', 'Session', 'Multi_Mutation'], isoform_values, config)
 
     t7 = time.time()
     if config.verbosity >= 3:
-        print(f'insertMultiMutations part 1: {t7-t6}')
+        config.logger.info(f'insertMultiMutations part 1: {t7-t6}')
 
     return
 
@@ -519,7 +520,7 @@ def indelCheck(proteins, session, config):
 
 
 # called by serializedPipeline
-def positionCheck(proteins, database_session, config):
+def positionCheck(proteins, database_session, config: Config):
     # search for stored positions
     stored_positions = []
     pos_map = {}
@@ -559,7 +560,7 @@ def positionCheck(proteins, database_session, config):
         for row in results:
             prot_database_id, pos = pos_map[row[0]]
             prot_id = proteins.getU_acByDbId(prot_database_id)
-            if not row[1] in proteins[prot_id].positions[pos].mut_aas:
+            if row[1] not in proteins[prot_id].positions[pos].mut_aas:
                 continue
             proteins[prot_id].positions[pos].mut_aas[row[1]].database_id = row[2]
             proteins[prot_id].positions[pos].mut_aas[row[1]].stored = True
@@ -581,7 +582,7 @@ def positionCheck(proteins, database_session, config):
                 try:
                     aac_base = proteins[prot_id].get_aac_base(pos)
                 except AttributeError:
-                    print(f'AttributeError in positionCheck: {prot_id} {pos}')
+                    config.logger.info(f'AttributeError in positionCheck: {prot_id} {pos}')
                     aac_base = proteins[prot_id].get_aac_base(pos)
 
                 res_id = proteins.get_res_id(prot_id, pos)
@@ -633,7 +634,7 @@ def positionCheck(proteins, database_session, config):
                     values.append((pos_database_id, new_aa))
 
         if config.verbosity >= 6:
-            print(f'SNV values inserted into Database: {values}')
+            config.logger.info(f'SNV values inserted into Database: {values}')
         
         if len(values) > 0:
             table = 'SNV'
@@ -716,7 +717,6 @@ def getPDB(template_id, db, cursor):
         results = cursor.fetchall()
         db.commit()
     except:
-        print("NameError in getPDB")
         db.rollback()
 
     return results[0][0]
@@ -774,14 +774,14 @@ def insertSession(time, ori_filename, config):
 
     return session_id
 
-def getSessionId(infile, config):
+def getSessionId(infile: str, config: Config):
     checksum = calc_checksum(infile)
 
     table = 'Session'
     columns = ['Session_Id', 'Checksum']
 
     if config.verbosity >= 3:
-        print(f'Looking for infile {infile} with checksum {checksum} in getSessionId')
+        config.logger.info(f'Looking for infile {infile} with checksum {checksum} in getSessionId')
 
     results = select(config, columns, table, equals_rows={'Input_File': infile})
 
@@ -792,7 +792,7 @@ def getSessionId(infile, config):
         if checksum == row[1]:
             return row[0]
 
-    print(f'Error in getSessionId:\nChecksum of infile {infile} not found in database:\n{results}')
+    config.logger.info(f'Error in getSessionId:\nChecksum of infile {infile} not found in database:\n{results}')
 
     return None
 
@@ -996,20 +996,18 @@ def structureCheck(proteins, config):
     else:
         return
 
-    stored_complexes = set()
-
     for row in results:
         s_id = row[0]
         pdb_id = row[1]
         chain = row[2]
         if config.verbosity >= 6:
-            print(f'{pdb_id} {chain} processed in structureCheck')
+            config.logger.info(f'{pdb_id} {chain} processed in structureCheck')
         if not proteins.contains_structure(pdb_id, chain):
             continue
         proteins.set_structure_db_id(pdb_id, chain, s_id)
         proteins.set_structure_stored(pdb_id, chain, True)  # all structures, mapped or not go into this dictionary, this is important for not reinserting residues from interacting structures
         if config.verbosity >= 6:
-            print(f'{pdb_id} {chain} set as stored in structureCheck')
+            config.logger.info(f'{pdb_id} {chain} set as stored in structureCheck')
 
 def draw_complexes(config, proteins, stored_complexes=[], draw_all=False, get_stable_objs = False, update_infos = False):
     results = select(config, ['Complex_Id', 'PDB', 'Resolution', 'Chains', 'Ligand_Profile', 'Metal_Profile', 'Ion_Profile', 'Chain_Chain_Profile', 'Homooligomers'], 'Complex')
@@ -1084,16 +1082,16 @@ def insertStructures(structurelist: dict[str, set[str]], proteins, config):
             pdb_id = row[1]
             chain = row[2]
 
-            if not pdb_id in structurelist:
+            if pdb_id not in structurelist:
                 continue
-            if not chain in structurelist[pdb_id]:
+            if chain not in structurelist[pdb_id]:
                 continue
 
             proteins.set_structure_db_id(pdb_id, chain, s_id)
 
 
 # called by serializedPipeline
-def insertAlignments(values, config, db_lock = None):
+def insertAlignments(values, config: Config, db_lock = None):
 
     if config.verbosity >= 5:
         t0 = time.time()
@@ -1102,22 +1100,21 @@ def insertAlignments(values, config, db_lock = None):
         insert('Alignment', ['Protein', 'Structure', 'Sequence_Identity', 'Coverage', 'Alignment', 'Backmap'], values, config, locked=True, db_lock=db_lock)
     if config.verbosity >= 5:
         t1 = time.time()
-        print(f'Time for insertAlignments: {t1 - t0} {len(values)=}')
+        config.logger.info(f'Time for insertAlignments: {t1 - t0} {len(values)=}')
 
 
-def get_interfaces(protein_db_ids, config, proteins):
+def get_interfaces(protein_db_ids, config: Config, proteins):
     if config.verbosity >= 3:    
-        print('Call of get_interfaces:', len(protein_db_ids))
+        config.logger.info(f'Call of get_interfaces: {len(protein_db_ids)=}')
         t0 = time.time()
 
     rows = ['Protein', 'Interface_Id', 'Structure_Recommendation']
     table = 'Interface'
     results = binningSelect(protein_db_ids, rows, table, config)
 
-    #print('In get_interfaces', results)
     if config.verbosity >= 3:
         t1 = time.time()
-        print(f'Part 1 of get_interfaces: {t1-t0}')
+        config.logger.info(f'Part 1 of get_interfaces: {t1-t0}')
 
     max_position_interface_select = 50000
     interface_map = {}
@@ -1134,7 +1131,7 @@ def get_interfaces(protein_db_ids, config, proteins):
 
     if config.verbosity >= 3:
         t2 = time.time()
-        print(f'Part 2 of get_interfaces: {t2-t1}')
+        config.logger.info(f'Part 2 of get_interfaces: {t2-t1}')
     if len(interface_key_package) > 0: 
         interface_packages.append(interface_key_package)
 
@@ -1144,7 +1141,7 @@ def get_interfaces(protein_db_ids, config, proteins):
 
     if config.verbosity >= 3:
         t3 = time.time()
-        print(f'Part 3 of get_interfaces: {t3-t2}')
+        config.logger.info(f'Part 3 of get_interfaces: {t3-t2}')
     interfaces = {}
     max_size = 500000
     position_packages = []
@@ -1152,7 +1149,7 @@ def get_interfaces(protein_db_ids, config, proteins):
     for row in results:
         interface_db_id = row[0]
         pos_db_id = row[1]
-        if not interface_db_id in interfaces:
+        if interface_db_id not in interfaces:
             interfaces[interface_db_id] = {}
         interfaces[interface_db_id][pos_db_id] = row[2]
         positions.append(pos_db_id)
@@ -1165,11 +1162,11 @@ def get_interfaces(protein_db_ids, config, proteins):
 
     if config.verbosity >= 3:
         t4 = time.time()
-        print(f'Part 4 of get_interfaces: {t4-t3}')
+        config.logger.info(f'Part 4 of get_interfaces: {t4-t3}')
     pos_id_map = {}
     for positions in position_packages:
         if config.verbosity >= 3:
-            print(f'get_interfaces Position select: {len(positions)}')
+            config.logger.info(f'get_interfaces Position select: {len(positions)}')
         results = binningSelect(positions, ['Position_Id', 'Position_Number'], 'Position', config)
 
         for row in results:
@@ -1177,7 +1174,7 @@ def get_interfaces(protein_db_ids, config, proteins):
 
     if config.verbosity >= 3:
         t5 = time.time()
-        print(f'Part 5 of get_interfaces: {t5-t4}')
+        config.logger.info(f'Part 5 of get_interfaces: {t5-t4}')
     protein_interface_map = {}
     for interface_db_id in interfaces:
         protein_db_id, structure_recommendation = interface_map[interface_db_id]
@@ -1189,18 +1186,16 @@ def get_interfaces(protein_db_ids, config, proteins):
             structure_id, chain = structure_tuple.split(':')
             positions[(pos_id_map[pos_db_id])] = structure_id, chain, res
         interface_obj = interface_package.Aggregated_interface(protein_id, recommended_complex = recommended_complex, chain = chain, interacting_chain = interacting_chain, positions = positions, database_id = interface_db_id)
-        if not protein_id in protein_interface_map:
+        if protein_id not in protein_interface_map:
             protein_interface_map[protein_id] = []
         protein_interface_map[protein_id].append(interface_obj)
 
-    #print('In get_interfaces', protein_interface_map)
-
     if config.verbosity >= 3:
         t6 = time.time()
-        print(f'Part 6 of get_interfaces: {t6-t5}')
+        config.logger.info(f'Part 6 of get_interfaces: {t6-t5}')
     for protein_id in protein_interface_map:
         if config.verbosity >= 6:
-            print(f'Retrieved interfaces from database for {protein_id}:')
+            config.logger.info(f'Retrieved interfaces from database for {protein_id}:')
             for interface in protein_interface_map[protein_id]:
                 interface.print_interface()
         proteins.set_aggregated_interface_map(protein_id, protein_interface_map[protein_id])
@@ -1209,15 +1204,15 @@ def get_interfaces(protein_db_ids, config, proteins):
 
     if config.verbosity >= 3:
         t7 = time.time()
-        print(f'Part 7 of get_interfaces: {t7-t6}')
+        config.logger.info(f'Part 7 of get_interfaces: {t7-t6}')
 
 # called by serializedPipeline
-def getAlignments(proteins, config, get_all_alignments=False):
+def getAlignments(proteins, config: Config, get_all_alignments=False):
     if config.verbosity >= 2:
         t0 = time.time()
 
     if config.verbosity >= 3:
-        print(f'Call fo getAlignments: {get_all_alignments=} {len(proteins.stored_ids)=}')
+        config.logger.info(f'Call fo getAlignments: {get_all_alignments=} {len(proteins.stored_ids)=}')
 
     prot_db_ids = proteins.get_stored_ids(exclude_completely_stored=(not get_all_alignments))
 
@@ -1231,7 +1226,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print('Time for part 1 in getAlignments:', (t1 - t0), ', number of stored proteins', len(prot_db_ids), ', number of stored alignments:', len(results))
+        config.logger.info(f'Time for part 1 in getAlignments: {t1 - t0}, number of stored proteins {len(prot_db_ids)}, number of stored alignments: {len(results)}')
 
     prot_structure_alignment_map = {}
     structure_ids = set()
@@ -1256,19 +1251,19 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print("Time for part 2 in getAlignments: %s" % (str(t2 - t1)))
+        config.logger.info(f"Time for part 2 in getAlignments: {t2 - t1}")
 
     structureCheck(proteins, config)
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print("Time for part 3 in getAlignments: %s" % (str(t3 - t2)))
+        config.logger.info(f"Time for part 3 in getAlignments: {t3 - t2}")
 
     stored_structure_ids = proteins.getStoredStructureIds()
 
     if config.verbosity >= 2:
         t4 = time.time()
-        print("Time for part 4 in getAlignments: %s" % (str(t4 - t3)))
+        config.logger.info(f"Time for part 4 in getAlignments: {t4 - t3}")
 
     structure_target_chain_map = {}
     for structure_db_id in stored_structure_ids:
@@ -1289,7 +1284,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
     if config.verbosity >= 2:
         t5 = time.time()
-        print("Time for part 5 in getAlignments: %s" % (str(t5 - t4)))
+        config.logger.info(f"Time for part 5 in getAlignments: {t5 - t4}")
 
     interacting_protein_db_ids = []
 
@@ -1317,11 +1312,10 @@ def getAlignments(proteins, config, get_all_alignments=False):
                 interacting_protein_db_ids.append(prot_db_id)
 
             prot_structure_alignment_map[prot_db_id][structure_id] = (packed_alignment, coverage, seq_id)
-            #print('Adding interacting protein', prot_db_id, structure_id, seq_id)
 
     if config.verbosity >= 2:
         t6 = time.time()
-        print(f"Time for part 6 in getAlignments: {t6 - t5} {len(interacting_structures)=}")
+        config.logger.info(f"Time for part 6 in getAlignments: {t6 - t5} {len(interacting_structures)=}")
 
     if config.compute_ppi:
         #pos_db_map = retrieve_stored_proteins(interacting_protein_db_ids, config, proteins, without_positions=True)
@@ -1329,21 +1323,21 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
     if config.verbosity >= 2:
         t7 = time.time()
-        print(f'Time for part 7 in getAlignments: {str(t7 - t6)}, {len(interacting_protein_db_ids)}')
+        config.logger.info(f'Time for part 7 in getAlignments: {str(t7 - t6)}, {len(interacting_protein_db_ids)}')
 
     #if config.compute_ppi:
     #    get_interfaces(interacting_protein_db_ids, config, proteins)
 
     if config.verbosity >= 2:
         t8 = time.time()
-        print("Time for part 8 in getAlignments: %s" % (str(t8 - t7)))
+        config.logger.info(f"Time for part 8 in getAlignments: {t8 - t7}")
 
     structure_map: dict[str, dict[str, tuple[int, str]]]
     structure_map, id_structure_map = getStructure_map(structure_ids, config)
 
     if config.verbosity >= 2:
         t9 = time.time()
-        print("Time for part 9 in getAlignments: %s" % (str(t9 - t8)))
+        config.logger.info(f"Time for part 9 in getAlignments: {t9 - t8}")
 
     #pdb_ids = set()
     #for pdb_id in structure_map:
@@ -1353,7 +1347,7 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
     if config.verbosity >= 2:
         t10 = time.time()
-        print("Time for part 10 in getAlignments: %s" % (str(t10 - t9)))
+        config.logger.info(f"Time for part 10 in getAlignments: {t10 - t9} {len(prot_structure_alignment_map)=}")
 
     for prot_db_id in prot_structure_alignment_map:
         prot_id = proteins.getByDbId(prot_db_id).primary_protein_id
@@ -1364,8 +1358,6 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
             struct_anno = structure_package.StructureAnnotation(prot_id, pdb_id, chain, alignment=packed_alignment, stored=True)
             proteins.add_annotation(prot_id, pdb_id, chain, struct_anno)
-
-            #print('Add annotation', prot_id, pdb_id, chain)
 
             if not proteins.contains_structure(pdb_id, chain):
                 oligo: str = structure_map[pdb_id][chain][1]
@@ -1394,13 +1386,13 @@ def getAlignments(proteins, config, get_all_alignments=False):
 
             if is_alphafold_model(pdb_id) and config.provide_msas:
                 if config.verbosity >= 3:
-                    print(f'fetching msa for {prot_id}  {pdb_id}')
+                    config.logger.info(f'fetching msa for {prot_id}  {pdb_id}')
                 seq = proteins[prot_id].sequence
                 fetch_msa(config, pdb_id, prot_id, seq, seq_id, config.proc_n)
 
     if config.verbosity >= 2:
         t11 = time.time()
-        print("Time for part 11 in getAlignments: %s" % (str(t11 - t10)))
+        config.logger.info(f"Time for part 11 in getAlignments: {t11 - t10}")
 
 
 def getStructure_map(structure_ids, config):
@@ -1433,8 +1425,7 @@ def checkLigand(name, db, cursor):
         db.commit()
     except:
         raise NameError("Error in checkLigand: %s" % sql)
-        # Rollback in case there is any NameError
-        db.rollback()
+        
     if results == ():
         return 0
     elif len(results) == 0:
@@ -1442,249 +1433,6 @@ def checkLigand(name, db, cursor):
     else:
         row = results[0]
         return row[0]
-
-
-# called by Babel
-def getLigandTemplates(name, db, cursor):
-    ligand_id = checkLigand(name, db, cursor)
-    sql = "SELECT Template FROM RS_Ligand_Template WHERE Ligand = '%s'" % str(ligand_id)
-    try:
-        # Execute the SQL command
-        cursor.execute(sql)
-        results = cursor.fetchall()
-        # Commit your changes in the database
-        db.commit()
-    except:
-        raise NameError("Error in getLigandTemplate: %s" % sql)
-        # Rollback in case there is any NameError
-        db.rollback()
-
-    template_ids = []
-    for row in results:
-        template_ids.append(row[0])
-    return template_ids
-
-
-'''
-#called by babel
-def createLigandDB(outfile,session_id,db,cursor):
-    sql = "SELECT Template,Mutation FROM RS_Annotation_Session WHERE Session = '%s'" % str(session_id)
-    try:
-        cursor.execute(sql)
-        results = cursor.fetchall()
-        db.commit()
-    except:
-        [e, f, g] = sys.exc_info()
-        raise NameError("Error in createLigandDB: %s,\n%s" % (sql, f))
-        db.rollback()
-
-    template_ids = set()
-    mutation_ids = set()
-    for row in results:
-        template_ids.add(row[0])
-        mutation_ids.add(row[1])
-
-    filtered_template_ids = set()
-    if len(template_ids) > 0:
-        sql = "SELECT Mutation,Template FROM RS_Mutation_Template WHERE Error IS NULL"
-        try:
-            cursor.execute(sql)
-            results = cursor.fetchall()
-            db.commit()
-        except:
-            [e, f, g] = sys.exc_info()
-            raise NameError("Error in createLigandDB: %s,\n%s" % (sql, f))
-
-        for row in results:
-            if not row[1] in template_ids:
-                continue
-            if row[0] in mutation_ids:
-                filtered_template_ids.add(row[1])
-
-    ligand_ids = set()
-    if len(filtered_template_ids) > 0:
-        sql = "SELECT Ligand,Template FROM RS_Ligand_Template"
-        try:
-            cursor.execute(sql)
-            results = cursor.fetchall()
-            db.commit()
-        except:
-            [e, f, g] = sys.exc_info()
-            raise NameError("Error in createLigandDB: %s,\n%s" % (sql, f))
-
-        for row in results:
-            if not row[1] in filtered_template_ids:
-                continue
-            ligand_ids.add(row[0])
-
-    lines = []
-    if len(ligand_ids) > 0:
-        sql = "SELECT Name,Smiles,Ligand_Id FROM Ligand"
-        try:
-            cursor.execute(sql)
-            results = cursor.fetchall()
-            db.commit()
-        except:
-            [e, f, g] = sys.exc_info()
-            raise NameError("Error in createLigandDB: %s,\n%s" % (sql, f))
-
-        for row in results:
-            if not row[2] in ligand_ids:
-                continue
-            lines.append("%s\t%s" % (row[1], row[0]))
-
-    page = "\n".join(lines)
-    f = open(outfile, "wb")
-    f.write(page)
-    f.close()
-'''
-
-
-def getClassWT(lig_sub_dist, chain_sub_dist, chain_type, rel_sur_acc, surface_t_id, chain_t_id, lig_t_id, config):
-    if rel_sur_acc is not None:
-        if rel_sur_acc > 1.0:
-            rel_sur_acc = 0.01 * rel_sur_acc
-    if lig_sub_dist is None:
-        lig_sub_dist = "NONE"
-    if chain_sub_dist is None:
-        chain_sub_dist = "NONE"
-    t_id = None
-    try:
-        mut_class = ""
-        if (lig_sub_dist == "NONE" and chain_sub_dist == "NONE"):
-            if rel_sur_acc is None:
-                mut_class = "Unknown"
-            elif float(rel_sur_acc) > config.surface_threshold:
-                mut_class = "Surface isolated chain"
-                t_id = surface_t_id
-            else:
-                mut_class = "Core isolated chain"
-                t_id = surface_t_id
-        elif lig_sub_dist == "NONE":
-            if float(chain_sub_dist) > 5.0:
-                if rel_sur_acc is None:
-                    mut_class = "Unknown"
-                elif float(rel_sur_acc) > config.surface_threshold:
-                    mut_class = "Surface"
-                    t_id = surface_t_id
-                else:
-                    mut_class = "Core"
-                    t_id = surface_t_id
-            else:
-                mut_class = "Contact %s" % chain_type
-                t_id = chain_t_id
-        elif chain_sub_dist == "NONE":
-            if float(lig_sub_dist) > 5.0:
-                if rel_sur_acc is None:
-                    mut_class = "Unknown"
-                elif float(rel_sur_acc) > config.surface_threshold:
-                    mut_class = "Surface"
-                    t_id = surface_t_id
-                else:
-                    mut_class = "Core"
-                    t_id = surface_t_id
-            else:
-                mut_class = "Contact Ligand"
-                t_id = lig_t_id
-
-        elif (float(lig_sub_dist) > 5.0 and float(chain_sub_dist) > 5.0):
-            if rel_sur_acc is None:
-                mut_class = "Unknown"
-            elif float(rel_sur_acc) > config.surface_threshold:
-                mut_class = "Surface"
-                t_id = surface_t_id
-            else:
-                mut_class = "Core"
-                t_id = surface_t_id
-        elif (float(lig_sub_dist) < 5.0 and float(chain_sub_dist) > 5.0):
-            mut_class = "Contact Ligand"
-            t_id = lig_t_id
-        elif (float(lig_sub_dist) > 5.0 and float(chain_sub_dist) < 5.0):
-            mut_class = "Contact %s" % chain_type
-            t_id = chain_t_id
-        elif (float(lig_sub_dist) < 5.0 and float(chain_sub_dist) < 5.0):
-            if (float(lig_sub_dist) <= float(chain_sub_dist)):
-                mut_class = "Contact Ligand"
-                t_id = lig_t_id
-            elif (float(chain_sub_dist) < float(lig_sub_dist)):
-                mut_class = "Contact %s" % chain_type
-                t_id = chain_t_id
-
-    except:
-        mut_class = "Error"
-        print("Error in class definition")
-        print(lig_sub_dist, chain_sub_dist, chain_type, rel_sur_acc)
-        print(sys.exc_info())
-    if mut_class == "":
-        print(lig_sub_dist, chain_sub_dist, chain_type, rel_sur_acc)
-
-    return mut_class, t_id
-
-
-def getClass(lig_sub_dist, chain_sub_dist, chain_type, rel_sur_acc, config):
-    if rel_sur_acc is not None:
-        if rel_sur_acc > 1.0:
-            rel_sur_acc = 0.01 * rel_sur_acc
-    if lig_sub_dist is None:
-        lig_sub_dist = "NONE"
-    if chain_sub_dist is None:
-        chain_sub_dist = "NONE"
-    try:
-        mut_class = ""
-        if (lig_sub_dist == "NONE" and chain_sub_dist == "NONE"):
-            if rel_sur_acc is None:
-                mut_class = "Unknown"
-            elif float(rel_sur_acc) > config.surface_threshold:
-                mut_class = "Surface"
-            else:
-                mut_class = "Core"
-        elif lig_sub_dist == "NONE":
-            if float(chain_sub_dist) > 5.0:
-                if rel_sur_acc is None:
-                    mut_class = "Unknown"
-                elif float(rel_sur_acc) > config.surface_threshold:
-                    mut_class = "Surface"
-                else:
-                    mut_class = "Core"
-            else:
-                mut_class = "Contact %s" % chain_type
-        elif chain_sub_dist == "NONE":
-            if float(lig_sub_dist) > 5.0:
-                if rel_sur_acc is None:
-                    mut_class = "Unknown"
-                elif float(rel_sur_acc) > config.surface_threshold:
-                    mut_class = "Surface"
-                else:
-                    mut_class = "Core"
-            else:
-                mut_class = "Contact Ligand"
-
-        elif (float(lig_sub_dist) > 5.0 and float(chain_sub_dist) > 5.0):
-            if rel_sur_acc is None:
-                mut_class = "Unknown"
-            elif float(rel_sur_acc) > config.surface_threshold:
-                mut_class = "Surface"
-            else:
-                mut_class = "Core"
-        elif (float(lig_sub_dist) < 5.0 and float(chain_sub_dist) > 5.0):
-            mut_class = "Contact Ligand"
-        elif (float(lig_sub_dist) > 5.0 and float(chain_sub_dist) < 5.0):
-            mut_class = "Contact %s" % chain_type
-        elif (float(lig_sub_dist) < 5.0 and float(chain_sub_dist) < 5.0):
-            if (float(lig_sub_dist) <= float(chain_sub_dist)):
-                mut_class = "Contact Ligand"
-            elif (float(chain_sub_dist) < float(lig_sub_dist)):
-                mut_class = "Contact %s" % chain_type
-
-    except:
-        mut_class = "Error"
-        print("Error in class definition")
-        print(lig_sub_dist, chain_sub_dist, chain_type, rel_sur_acc)
-        print(sys.exc_info())
-    if mut_class == "":
-        print(lig_sub_dist, chain_sub_dist, chain_type, rel_sur_acc)
-
-    return mut_class
 
 
 def majority_vote(secs):
@@ -1914,7 +1662,7 @@ def getLigandAnnotation(chosen_ones,session_id,distance_threshold,db,cursor):
 '''
 
 
-def getProtIdsFromSession(session_id, config, prot_db_ids = None, filter_mutant_proteins=False) -> dict[int, tuple[str, None | set[str]]] :
+def getProtIdsFromSession(session_id, config: Config, prot_db_ids = None, filter_mutant_proteins=False) -> dict[int, tuple[str, None | set[str]]] :
     table = 'RS_Protein_Session'
     cols = ['Protein', 'Input_Id', 'Tags']
     eq_cols = {'Session': session_id}
@@ -1922,7 +1670,7 @@ def getProtIdsFromSession(session_id, config, prot_db_ids = None, filter_mutant_
     prot_ids: dict[int, tuple[str, None | set[str]]] = {}
     for row in results:
         if config.verbosity >= 5:
-            print(f'In getProtIdsFromSession: {row=}')
+            config.logger.info(f'In getProtIdsFromSession: {row=}')
         if filter_mutant_proteins and row[1] is None:
             continue
         if prot_db_ids is not None:
@@ -1946,7 +1694,8 @@ def retrieve_gene_id_map(gene_db_ids, config):
 
 def retrieve_stored_proteins(
         prot_db_ids: dict[int, tuple[str, None | set[str]]],
-        config, proteins,
+        config: Config,
+        proteins,
         with_mappings = False,
         with_struct_recs = True,
         without_positions = False,
@@ -1967,7 +1716,7 @@ def retrieve_stored_proteins(
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print(f'Retrieve stored proteins, part 1: {t1 - t0} {len(prot_db_ids)=} {input_id_is_majored=} {prot_db_ids[:10]=}')
+        config.logger.info(f'Retrieve stored proteins, part 1: {t1 - t0} {len(prot_db_ids)=} {input_id_is_majored=} {prot_db_ids[:10]=}')
 
     id_prot_id_map = {}
 
@@ -1979,7 +1728,7 @@ def retrieve_stored_proteins(
     for row in results:
         protein_db_id: int = row[0]
         if config.verbosity >= 5:
-            print(f'{row=}')
+            config.logger.info(f'{row=}')
         if protein_ids_unknown:
             input_id = row[1]
             tags = None
@@ -2046,26 +1795,26 @@ def retrieve_stored_proteins(
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print(f'Retrieve stored proteins, part 2: {t2 - t1}')
+        config.logger.info(f'Retrieve stored proteins, part 2: {t2 - t1}')
 
     proteins.set_stored_ids(prot_id_list, prot_ids_mutants_excluded)
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print(f'Retrieve stored proteins, part 3: {t3 - t2}')
+        config.logger.info(f'Retrieve stored proteins, part 3: {t3 - t2}')
 
     gene_id_map = retrieve_gene_id_map(gene_db_ids, config)
 
     if config.verbosity >= 2:
         t4 = time.time()
-        print(f'Retrieve stored proteins, part 4: {t4 - t3}')
+        config.logger.info(f'Retrieve stored proteins, part 4: {t4 - t3}')
 
     for prot_id in prot_gene_db_id_map:
         proteins[prot_id].gene = gene_id_map[prot_gene_db_id_map[prot_id]][0]
 
     if config.verbosity >= 2:
         t5 = time.time()
-        print(f'Retrieve stored proteins, part 5: {t5 - t4} {without_positions=} {with_mappings=} {with_struct_recs=}')
+        config.logger.info(f'Retrieve stored proteins, part 5: {t5 - t4} {without_positions=} {with_mappings=} {with_struct_recs=}')
 
     pos_db_map = {}
 
@@ -2088,7 +1837,7 @@ def retrieve_stored_proteins(
 
         if config.verbosity >= 2:
             t6 = time.time()
-            print(f'Retrieve stored proteins, part 6: {t6 - t5} {len(results)}')
+            config.logger.info(f'Retrieve stored proteins, part 6: {t6 - t5} {len(results)}')
 
         for row in results:
             p_id = row[0]
@@ -2147,21 +1896,21 @@ def retrieve_stored_proteins(
 
     if config.verbosity >= 2:
         t7 = time.time()
-        print(f'Retrieve stored proteins, part 7: {t7 - t6}')
+        config.logger.info(f'Retrieve stored proteins, part 7: {t7 - t6}')
 
     if error_count > 0:
-        print(f'There were {error_count} number of errors retrieving position data, example error:\n{error_message}')
+        config.logger.info(f'There were {error_count} number of errors retrieving position data, example error:\n{error_message}')
     return pos_db_map
 
 # called by output
 
-def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=False, with_mappings = False,
+def proteinsFromDb(session, config: Config, with_residues=False, filter_mutant_proteins=False, with_mappings = False,
                    with_snvs=False, with_indels = False, with_multi_mutations = False, mutate_snvs=False, get_stable_objs=False,
                    with_alignments=False, with_complexes=False, keep_ray_alive=False, current_chunk = None, prot_db_id_dict = None,
                    input_id_is_majored = False, update_complexes = False):
 
     if config.verbosity >= 2:
-        print(f'Calling proteinsFromDb, {session=} {with_residues=} {with_mappings=} {input_id_is_majored=} {filter_mutant_proteins=}')
+        config.logger.info(f'Calling proteinsFromDb, {session=} {with_residues=} {with_mappings=} {input_id_is_majored=} {filter_mutant_proteins=}')
 
     if with_alignments:
         with_complexes = True
@@ -2169,12 +1918,11 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
     prot_db_id_dict: dict[int, tuple[str, None | set[str]]] = getProtIdsFromSession(session, config, filter_mutant_proteins=filter_mutant_proteins, prot_db_ids = prot_db_id_dict)
 
     if config.verbosity >= 5:
-        print(f'In proteinsFromDb, {prot_db_id_dict=}')
+        config.logger.info(f'In proteinsFromDb, {prot_db_id_dict=}')
 
     if current_chunk is not None:
         n_of_chunks = (len(prot_db_id_dict) // config.chunksize) + 1
         small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(n_of_chunks, len(prot_db_id_dict))
-        #print(config.chunksize, len(prot_db_id_dict),small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks)
 
         if current_chunk <= n_of_big_chunks:
             l = (current_chunk - 1) * big_chunksize
@@ -2205,7 +1953,7 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
     pos_db_map = retrieve_stored_proteins(prot_db_id_dict, config, proteins, with_mappings = with_mappings, input_id_is_majored = input_id_is_majored)
 
     if config.verbosity >= 5:
-        print(f'In proteinsFromDb, point 0 - {list(proteins.protein_map.keys())=}')
+        config.logger.info(f'In proteinsFromDb, point 0 - {list(proteins.protein_map.keys())=}')
 
 
     if with_complexes:
@@ -2229,7 +1977,7 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             snv_db_id_map[row[2]] = (pos, snv)
 
     if config.verbosity >= 5:
-        print(f'In proteinsFromDb, point A - {list(proteins.protein_map.keys())=}')
+        config.logger.info(f'In proteinsFromDb, point A - {list(proteins.protein_map.keys())=}')
 
     if with_indels:
 
@@ -2289,7 +2037,7 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             #    #Indels without mut_prot are part of a multi-mutation
             #    continue
 
-            if not wt_prot in indel_pre_map:
+            if wt_prot not in indel_pre_map:
                 indel_pre_map[wt_prot] = []
             indel_pre_map[wt_prot].append(indel)
 
@@ -2352,11 +2100,11 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
                         continue
                     mut_list.append(indel_db_id_map[indel_db_id])
 
-            if not wt_prot in indel_map:
+            if wt_prot not in indel_map:
                 indel_map[wt_prot] = {}
 
             if config.verbosity >= 4:
-                print(f'In proteinsFromDB: Call of add_multi_mutation for {wt_prot} {mut_prot}')
+                config.logger.info(f'In proteinsFromDB: Call of add_multi_mutation for {wt_prot} {mut_prot}')
 
             proteins[wt_prot].add_multi_mutation(mut_list, indel_map[wt_prot], mm_tags = mm_tags, mut_prot_id = mut_prot)
 
@@ -2378,7 +2126,7 @@ def proteinsFromDb(session, config, with_residues=False, filter_mutant_proteins=
             proteins.multi_mutation_back_map[mm_db_id] = multi_mutation_obj
 
     if config.verbosity >= 5:
-        print(f'In proteinsFromDb, point B - {list(proteins.protein_map.keys())=}')
+        config.logger.info(f'In proteinsFromDb, point B - {list(proteins.protein_map.keys())=}')
 
     ray_utils.ray_init(config)
 

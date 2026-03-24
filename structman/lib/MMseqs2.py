@@ -5,7 +5,7 @@ import string
 import subprocess
 import time
 from structman.scripts import createCustomDb
-
+from structman.base_utils.config_class import Config
 
 def randomString(stringLength=10):
     """Generate a random string of fixed length """
@@ -13,7 +13,7 @@ def randomString(stringLength=10):
     return ''.join(random.choice(letters) for i in range(stringLength))
 
 
-def geneSeqMapToFasta(proteins, outfile, config, filtering_db=None):
+def geneSeqMapToFasta(proteins, outfile, config: Config, filtering_db=None):
     lines = []
     n = 0
     m = 0
@@ -34,7 +34,7 @@ def geneSeqMapToFasta(proteins, outfile, config, filtering_db=None):
 
         seq = proteins.get_sequence(prot_id)
 
-        if seq == 0 or seq == 1 or seq == '' or seq == None:
+        if seq == 0 or seq == 1 or seq == '' or seq is None:
             continue
         if filtering_db is not None:
             folder_key = prot_id.split('-')[0][-2:]
@@ -52,8 +52,8 @@ def geneSeqMapToFasta(proteins, outfile, config, filtering_db=None):
 
     if len(lines) > 0:
         if config.verbosity >= 2:
-            print('Filtered ', n, ' Proteins before mmseqs2')
-            print(m, ' sequences going into mmseqs2')
+            config.logger.info(f'Filtered {n} Proteins before mmseqs2')
+            config.logger.info(f'{m} sequences going into mmseqs2')
         f = open(outfile, 'w')
         f.write('\n'.join(lines))
         f.close()
@@ -128,76 +128,81 @@ def parseHits(
     return entries, pdb_ids
 
 
-def apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, gigs_of_ram, errorlog, option_seq_thresh,
-                 small_proteins: set[str] | None = None, verbosity = 1, number_of_returned_hits = '999999', is_model_db = False):
+def apply_mmseqs(
+        mmseqs_tmp_folder,
+        mmseqs2_path,
+        temp_fasta,
+        search_db,
+        config: Config,
+        small_proteins: set[str] | None = None,
+        number_of_returned_hits = '999999',
+        ):
 
     if small_proteins is None:
         small_proteins: set[str] = set()
 
     temp_outfile = '%s/tmp_outfile_%s.fasta' % (mmseqs_tmp_folder, randomString())
 
-    if verbosity >= 2:
+    if config.verbosity >= 2:
         t0 = time.time()
-        print(f'\nApply MMseqs2: {mmseqs2_path}, easy-search, {temp_fasta}, {search_db}, {temp_outfile}, {mmseqs_tmp_folder}\n')
+        config.logger.info(f'\nApply MMseqs2: {mmseqs2_path}, easy-search, {temp_fasta}, {search_db}, {temp_outfile}, {mmseqs_tmp_folder}\n')
 
     out_format_str = 'query,target,fident,alnlen,tlen,qcov'
 
     debug_store = False
 
-    if verbosity >= 5:
+    if config.verbosity >= 5:
         if len(small_proteins) == 0:
             cmds = [mmseqs2_path, 'easy-search', temp_fasta, search_db, temp_outfile, mmseqs_tmp_folder, '--format-output', out_format_str,
-                    '--max-seqs', number_of_returned_hits, '--min-aln-len', '50', '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * gigs_of_ram)]
+                    '--max-seqs', number_of_returned_hits, '--min-aln-len', '50', '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * config.gigs_of_ram)]
             p = subprocess.Popen(cmds)
         else:
             cmds = [mmseqs2_path, 'easy-search', temp_fasta, search_db, temp_outfile, mmseqs_tmp_folder, '--format-output', out_format_str,
-                    '--max-seqs', number_of_returned_hits, '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * gigs_of_ram)]
+                    '--max-seqs', number_of_returned_hits, '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * config.gigs_of_ram)]
             p = subprocess.Popen(cmds)
         p.wait()
     else:
         FNULL = open(os.devnull, 'w')
         if len(small_proteins) == 0:
             cmds = [mmseqs2_path, 'easy-search', temp_fasta, search_db, temp_outfile, mmseqs_tmp_folder, '--format-output', out_format_str,
-                    '--max-seqs', number_of_returned_hits, '--min-aln-len', '50', '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * gigs_of_ram)]
+                    '--max-seqs', number_of_returned_hits, '--min-aln-len', '50', '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * config.gigs_of_ram)]
             p = subprocess.Popen(cmds, stdout=FNULL)
         else:
             cmds = [mmseqs2_path, 'easy-search', temp_fasta, search_db, temp_outfile, mmseqs_tmp_folder, '--format-output', out_format_str,
-                    '--max-seqs', number_of_returned_hits, '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * gigs_of_ram)]
+                    '--max-seqs', number_of_returned_hits, '-s', '7.5', '--split-memory-limit', '%1.0fG' % (0.5 * config.gigs_of_ram)]
             p = subprocess.Popen(cmds, stdout=FNULL)
         p.wait()
 
         if not os.path.exists(temp_outfile):
             #Something went wrong, run again in not silenced mode
-            errorlog.add_error(f'Error in MMSEQS2 call, see command line prints for possible bug log.\nCommand that called mmseqs:\n{cmds}\nDeletion of temp file: {temp_fasta} was suppressed')
+            config.errorlog.add_error(f'Error in MMSEQS2 call, see command line prints for possible bug log.\nCommand that called mmseqs:\n{cmds}\nDeletion of temp file: {temp_fasta} was suppressed')
             debug_store = True
             p = subprocess.Popen(cmds)
 
 
-    if verbosity >= 2:
+    if config.verbosity >= 2:
         t1 = time.time()
-        print(f'apply_mmseqs part 1: {t1-t0}')
+        config.logger.info(f'apply_mmseqs part 1: {t1-t0}')
 
-    if verbosity >= 3:
-        print(f'MMseqs2 returned: {temp_outfile}')
+    if config.verbosity >= 3:
+        config.logger.info(f'MMseqs2 returned: {temp_outfile}')
 
-    if verbosity >= 8:
+    if config.verbosity >= 8:
         f = open(temp_outfile, 'r')
-        print(f.read())
+        config.logger.info(f.read())
         f.close()
 
     hits: dict[bytes, dict[str, dict[str, tuple[float, float, set[str], int, int]]]]
     pdb_ids: set[str]
 
-    hits, pdb_ids = parseHits(temp_outfile, option_seq_thresh, small_proteins)
+    hits, pdb_ids = parseHits(temp_outfile, config.option_seq_thresh, small_proteins)
 
-    if verbosity >= 2:
+    if config.verbosity >= 2:
         t2 = time.time()
-        print(f'apply_mmseqs part 1: {t2-t1}')
+        config.logger.info(f'apply_mmseqs part 1: {t2-t1}')
 
-    if verbosity >= 3:
-        print(f'MMseqs2 results parsed: size of hit map: {len(hits)}')
-    #if verbosity >= 4 and len(hits) < 50:
-    #    print(hits)
+    if config.verbosity >= 3:
+        config.logger.info(f'MMseqs2 results parsed: size of hit map: {len(hits)}')
 
     os.remove(temp_outfile)
 
@@ -217,7 +222,7 @@ def wipe_folder(config, folder_path):
 
 
 # called by serializePipeline
-def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, tuple[float, float, set[bytes], int, int]]]], set[bytes], bool]]:
+def search(proteins, config: Config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, tuple[float, float, set[bytes], int, int]]]], set[bytes], bool]]:
 
     # accepts one more argument, custom db
 
@@ -256,8 +261,12 @@ def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, t
         search_dbs = [config.mmseqs2_db_path]
         numbers_of_returned_hits = [None]
         is_model_dbs = [False]
-    option_seq_thresh = config.option_seq_thresh
 
+    if (config.mmseqs2_complex_model_db_path is not None) and (config.mmseqs2_complex_model_db_path != ''):
+        search_dbs.append(config.mmseqs2_complex_model_db_path)
+        numbers_of_returned_hits.append(None)
+        is_model_dbs.append(True)
+        
     small_proteins: set[str] = set()
 
     u_acs = proteins.get_protein_ids()
@@ -281,7 +290,7 @@ def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, t
     if not to_fasta_out:
         # All proteins are stored, no need for mmseqs
         if config.verbosity >= 3:
-            print('No need for sequence similarity search, all proteins are stored already.')
+            config.logger.info('No need for sequence similarity search, all proteins are stored already.')
         return None
 
     default_number_of_returned_hits = '999999'
@@ -304,11 +313,11 @@ def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, t
         hits: dict[str, dict[str, dict[str, tuple[float, float, set[str], int, int]]]]
         pdb_ids: set[str]
 
-        hits, pdb_ids, debug_store = apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, config.gigs_of_ram, config.errorlog, option_seq_thresh, small_proteins = small_proteins, verbosity = config.verbosity, number_of_returned_hits = number_of_returned_hits, is_model_db = is_model_db)
+        hits, pdb_ids, debug_store = apply_mmseqs(mmseqs_tmp_folder, mmseqs2_path, temp_fasta, search_db, config, small_proteins = small_proteins, number_of_returned_hits = number_of_returned_hits)
 
         t11 = time.time()
         if config.verbosity >= 2:
-            print(f'MMseqs2 {search_db} Part 2.1: {t11 - t10}')
+            config.logger.info(f'MMseqs2 {search_db} Part 2.1: {t11 - t10}')
 
         for u_ac in small_proteins:
             if u_ac.count(':') == 1:
@@ -319,19 +328,19 @@ def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, t
 
         t12 = time.time()
         if config.verbosity >= 2:
-            print(f'MMseqs2 {search_db} Part 2.2: {t12 - t11}')
+            config.logger.info(f'MMseqs2 {search_db} Part 2.2: {t12 - t11}')
 
         wipe_folder(config, mmseqs_tmp_folder)
 
         t13 = time.time()
         if config.verbosity >= 2:
-            print(f'MMseqs2 {search_db} Part 2.3: {t13 - t12}')
+            config.logger.info(f'MMseqs2 {search_db} Part 2.3: {t13 - t12}')
 
         search_results.append((hits, pdb_ids, is_model_db))
     
         t14 = time.time()
         if config.verbosity >= 2:
-            print(f'MMseqs2 {search_db} Part 2.4: {t14 - t13}')    
+            config.logger.info(f'MMseqs2 {search_db} Part 2.4: {t14 - t13}')    
 
     if (not debug_store) and not (config.verbosity >= 6):
         os.remove(temp_fasta)
@@ -339,7 +348,7 @@ def search(proteins, config) -> list[tuple[dict[bytes, dict[bytes, dict[bytes, t
     t2 = time.time()
 
     if config.verbosity >= 2:
-        print("MMseqs2 Part 1: %s" % (str(t1 - t0)))
-        print("MMseqs2 Part 2: %s" % (str(t2 - t1)))
+        config.logger.info(f"MMseqs2 Part 1: {t1 - t0}")
+        config.logger.info(f"MMseqs2 Part 2: {t2 - t1}")
 
     return search_results

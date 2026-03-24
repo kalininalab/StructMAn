@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import gzip
+import zstd
 import os
 import resource
 import subprocess
@@ -15,6 +16,7 @@ from structman.lib import centrality
 from structman.lib.rinerator import get_chains
 from structman.lib.sdsc.consts import residues
 from structman.base_utils.config_class import Config
+from structman.base_utils.base_utils import fetch_af_msa, is_alphafold_model
 
 #lowercase_order = {y:x for x,y in lowercase_map.iteritems()}
 
@@ -221,7 +223,7 @@ def calcRIN(
         structure_path: str | None = None):
 
     if config.verbosity >= 4:
-        print(f'Call of calcRIN: {structure_id=}, {out_path=}, {structure_path=} {remove_tmp_files=}')
+        config.logger.info(f'Call of calcRIN: {structure_id=}, {out_path=}, {structure_path=} {remove_tmp_files=}')
 
     parse_out = parsePDB(page)
     if parse_out is None:
@@ -272,9 +274,9 @@ def calcRIN(
     except:
         [e, f, g] = sys.exc_info()
         g = traceback.format_exc()
-        print(f"\nRIN calc Error:\n{structure_id=} {original_chains=}\n{structure_path=}\n{tmp_pdb=}\n{out_path=}\n{e}\n{f}\n{g}")
+        config.logger.info(f"\nRIN calc Error:\n{structure_id=} {original_chains=}\n{structure_path=}\n{tmp_pdb=}\n{out_path=}\n{e}\n{f}\n{g}")
         if config.verbosity >= 5:
-            print(page)
+            config.logger.info(page)
         if os.path.exists(reduce_file):
             os.remove(reduce_file)
         if os.path.exists(probe_file):
@@ -305,9 +307,9 @@ def calcRIN(
         os.remove(tmp_chain)
         os.remove(tmp_ligands)
     else:
-        print(tmp_pdb)
-        print(tmp_chain)
-        print(tmp_ligands)
+        config.logger.info(f'{tmp_pdb=}')
+        config.logger.info(f'{tmp_chain=}')
+        config.logger.info(f'{tmp_ligands=}')
 
 
     sif_file = f"{path_stem}_h.sif"
@@ -364,7 +366,7 @@ def calcRIN(
     os.system("gzip %s" % n_res_file)
 
 
-def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, rinerator_path, errorlog, path_to_model_db):
+def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, rinerator_path, errorlog):
     with lock:
         in_queue.put(None)
     while True:
@@ -373,7 +375,7 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, ri
             if in_t is None:
                 #print('Terminate Rinerator Process: ',i)
                 return
-            (pdbgz_path, structure_id) = in_t
+            (pdbgz_path, structure_id, path_to_model_db) = in_t
         try:
             out_path, path_stem, structure_id = get_entry_path(structure_id, path_to_rindb, path_to_model_db=path_to_model_db)
             
@@ -382,8 +384,16 @@ def createRinProc(config, in_queue, lock, i, remove_tmp_files, path_to_rindb, ri
 
             #n_sif_file = f"{path_stem}.sif"
 
-            f = gzip.open(pdbgz_path, 'rb')
-            page = f.read()
+            if pdbgz_path[-8:] == '.pdb.zst':
+                f = open(pdbgz_path, 'rb')
+                try:
+                    page = zstd.decompress(f.read())
+                except zstd.Error as err:
+                    print(f'Could not decode {pdbgz_path}, {err=}')
+                    page = None
+            else:
+                f = gzip.open(pdbgz_path, 'rb')
+                page = f.read()
             f.close()
 
             calcRIN(config, page, out_path, path_stem, structure_id, rinerator_path, remove_tmp_files)
@@ -416,8 +426,11 @@ def get_entry_path(structure_id: str, path_to_rindb: str, path_to_model_db: str 
         #custom_files_list = os.listdir(config.temp_folder)     
         path_stem = f"{folder_path}/{structure_id}"
        
-    elif (structure_id[:3] == 'AF-'): #Not a pdb structure, but an alphafold model
-        uniprot_ac = structure_id.split('-')[1]
+    elif path_to_model_db is not None and is_alphafold_model(structure_id): #Not a pdb structure, but a model
+        try:
+            uniprot_ac = structure_id.split('-')[1]
+        except IndexError:
+            uniprot_ac = structure_id.split('_')[0]
         topfolder_id = uniprot_ac[-2:]
         subfolder_id = uniprot_ac[-4:]
         folder_path = f'{path_to_model_db}/{topfolder_id}/{subfolder_id}'
@@ -443,91 +456,66 @@ def check_entry(structure_id, path_to_model_db, path_to_rindb):
     n_sif_file = f"{path_stem}.sif.gz"
     return os.path.isfile(n_sif_file)
 
-""" Outdated
-def test_single_file(config, pdb_id):
-    calculateRINsFromPdbList(config, [pdb_id], remove_tmp_files=False)
 
+def process_loop_model_db(config, model_db_path, in_queue, N, fetch_msas = False):
+    for topfolder in os.listdir(model_db_path):
+        if len(topfolder) > 2:
+            continue
+        if not os.path.isdir(f'{model_db_path}/{topfolder}'):
+            continue
+        for sub_folder in os.listdir(f'{model_db_path}/{topfolder}'):
+            for fn in os.listdir(f'{model_db_path}/{topfolder}/{sub_folder}'):
+                if fn.count('.pdb.gz') == 1 or fn[-8:] == '.pdb.zst':
+                    pdbgz_path = f'{model_db_path}/{topfolder}/{sub_folder}/{fn}'
+                    
+                    if fn[-8:] == '.pdb.zst':
+                        model_id = fn[:-8]
+                    else:
+                        model_id = fn[:-7]
 
-def calculateRINsFromPdbList(config, pdbs, fromScratch=True, forceCentrality=True, remove_tmp_files=True, n_proc=32):
+                    if fetch_msas:
+                        model_raw_id = model_id.split('-model')[0]
 
-    pdbs = set([x.lower() for x in pdbs])
+                        msa_file = f'{model_db_path}/{topfolder}/{sub_folder}/{model_raw_id}_msa.fasta'
+                        version_number = model_id.split('_')[-1]
 
-    lim = 100 * 1024 * 1024 * 1024
+                        compressed_a3m_file = f'{model_db_path}/{topfolder}/{sub_folder}/{model_raw_id}-msa_{version_number}.a3m.zst'
 
-    resource.setrlimit(resource.RLIMIT_AS, (lim, lim))
+                        if not os.path.isfile(msa_file):
 
-    if not os.path.isfile(settings.REDUCE_HET_DICT):
-        print("%s not found" % settings.REDUCE_HET_DICT)
-        sys.exit(1)
+                            if os.path.isfile(compressed_a3m_file):
+                                f = open(compressed_a3m_file, 'rb')
+                                try:
+                                    page = zstd.decompress(f.read())
+                                except zstd.Error as err:
+                                    print(f'Could not decode {compressed_a3m_file}, {err=}')
+                                    page = None
+                                f.close()
 
-    os.environ["REDUCE_HET_DICT"] = settings.REDUCE_HET_DICT
+                                if page is not None:
+                                    f = open(msa_file, 'wb')
+                                    f.write(page)
+                                    f.close()
 
-    num_of_proc = n_proc
+                            elif len(model_raw_id) < 12: #Collab entries have longer IDs and don't have MSAs online
+                                fetch_af_msa(config, model_raw_id, f'{model_db_path}/{topfolder}/{sub_folder}/')
 
-    manager = Manager()
-    lock = manager.Lock()
+                    if os.path.getsize(pdbgz_path) > 50 * 1024 * 1024:
+                        continue
 
-    in_queue = manager.Queue()
+                    rin_file = f'{model_db_path}/{topfolder}/{sub_folder}/{model_id}_intsc.ea.gz'
 
-    bio_pdbs = set()
+                    if os.path.exists(rin_file):
+                        continue
 
-    total_structures = 0
+                    in_queue.put((pdbgz_path, model_id, model_db_path))
+                    N += 1
 
-    subfolders = os.listdir(bio_assembly_path)  # BUG: undefined variable
-    for subfolder in subfolders:
-        sub_path = "%s/%s" % (bio_assembly_path, subfolder)
-        files = os.listdir(sub_path)
-        if not os.path.exists("%s/%s" % (base_path, subfolder)):  # BUG: undefined variable
-            os.mkdir("%s/%s" % (base_path, subfolder))
+    return in_queue, N
 
-        for fn in files:
-            if fn.count('.pdb1.gz') == 1:
-                pdbgz_path = "%s/%s" % (sub_path, fn)
-                if os.path.getsize(pdbgz_path) > 50 * 1024 * 1024:
-                    continue
-                pdb_id = fn.replace('.pdb1.gz', '')
-                if pdb_id not in pdbs:
-                    continue
+def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_path='', config = None):
+    
 
-                bio_pdbs.add(pdb_id)
-                in_queue.put((pdbgz_path, pdb_id))
-                total_structures += 1
-
-    subfolders = os.listdir(AU_path)  # BUG: undefined variable
-    for subfolder in subfolders:
-
-        sub_path = "%s/%s" % (AU_path, subfolder)
-        files = os.listdir(sub_path)
-        if not os.path.exists("%s/%s" % (base_path, subfolder)):
-            os.mkdir("%s/%s" % (base_path, subfolder))
-
-        for fn in files:
-            if fn.count('.ent.gz') == 1:
-                pdbgz_path = "%s/%s" % (sub_path, fn)
-                if os.path.getsize(pdbgz_path) > 50 * 1024 * 1024:
-                    continue
-                pdb_id = fn[3:7]
-                if not '%s_au' % pdb_id in pdbs:
-                    continue
-                if pdb_id in bio_pdbs:
-                    continue
-                in_queue.put((pdbgz_path, pdb_id))
-                total_structures += 1
-
-    print('Amount of structures for RINerator: ', total_structures)
-
-    processes = {}
-    for i in range(1, num_of_proc + 1):
-        p = Process(target=createRinProc, args=(config, in_queue, lock, fromScratch, i, forceCentrality, remove_tmp_files, base_path, rinerator_path, errorlog, config.path_to_model_db))  # BUG: undefined variable
-        processes[i] = p
-        print('Start RINerator Process: ', i)
-        p.start()
-    for i in processes:
-        processes[i].join()
-"""
-
-
-def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_path='', process_model_db = False, config = None):
     bio_assembly_path = '%s/data/biounit/PDB/divided' % pdb_p
     AU_path = "%s/data/structures/divided/pdb" % pdb_p
     status_path = "%s/data/status" % pdb_p
@@ -556,6 +544,8 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
     f.write(time.asctime(time.gmtime()))
     f.close()
 
+    print(f'Call of createRINdb.main: {fromScratch=} {rin_db_path=} {time_of_last_update=} {status_path=}')
+
     if not fromScratch:
         recently_modified_structures = get_recently_modified_structures(time_of_last_update, status_path)
     else:
@@ -563,7 +553,10 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
 
     os.environ["REDUCE_HET_DICT"] = het_dict_path
 
-    num_of_proc = n_proc
+    if config is None:
+        num_of_proc = n_proc
+    else:
+        num_of_proc = config.proc_n
 
     manager = Manager()
     lock = manager.Lock()
@@ -596,7 +589,7 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                     if pdb_id not in recently_modified_structures and check_entry(pdb_id, config.path_to_model_db, rin_db_path):
                         continue
 
-                in_queue.put((pdbgz_path, pdb_id))
+                in_queue.put((pdbgz_path, pdb_id, None))
                 N += 1
 
     subfolders = os.listdir(AU_path)
@@ -621,34 +614,29 @@ def main(fromScratch=False, pdb_p='', rin_db_path='', n_proc=32, rinerator_base_
                 if pdb_id in bio_pdbs:
                     continue
 
-                in_queue.put((pdbgz_path, pdb_id))
+                in_queue.put((pdbgz_path, pdb_id, None))
                 N += 1
 
+    if config is not None:
+        process_model_db = config.model_db_active
+        if (config.complex_model_db_path is not None) and (config.complex_model_db_path != ''):
+            process_complex_model_db = True
+        else:
+            process_complex_model_db = False
+    else:
+        process_model_db = False
+        process_complex_model_db = False
+
     if process_model_db:
-        for topfolder in os.listdir(config.path_to_model_db):
-            if not os.path.isdir(f'{config.path_to_model_db}/{topfolder}'):
-                continue
-            for sub_folder in os.listdir(f'{config.path_to_model_db}/{topfolder}'):
-                for fn in os.listdir(f'{config.path_to_model_db}/{topfolder}/{sub_folder}'):
-                    if fn.count('.pdb.gz') == 1:
-                        pdbgz_path = f'{config.path_to_model_db}/{topfolder}/{sub_folder}/{fn}'
-                        if os.path.getsize(pdbgz_path) > 50 * 1024 * 1024:
-                            continue
+        in_queue, N = process_loop_model_db(config, config.path_to_model_db, in_queue, N, fetch_msas=True)
+    if process_complex_model_db:
+        in_queue, N = process_loop_model_db(config, config.complex_model_db_path, in_queue, N)
 
-                        model_id = fn[:-7]
-                        rin_file = f'{config.path_to_model_db}/{topfolder}/{sub_folder}/{model_id}_intsc.ea.gz'
-
-                        if os.path.exists(rin_file):
-                            continue
-
-                        in_queue.put((pdbgz_path, model_id))
-                        N += 1
-
-    print(f'Creating RINs for {N} structures. {errorlog=}')
+    print(f'Creating RINs for {N} structures. {errorlog=} {num_of_proc=}')
 
     processes = {}
     for i in range(1, min([num_of_proc, N]) + 1):
-        p = Process(target=createRinProc, args=(config, in_queue, lock, i, True, base_path, rinerator_path, errorlog, config.path_to_model_db))
+        p = Process(target=createRinProc, args=(config, in_queue, lock, i, True, base_path, rinerator_path, errorlog))
         processes[i] = p
         p.start()
     for i in processes:

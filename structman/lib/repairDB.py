@@ -492,8 +492,8 @@ def reroll(config):
             last_session = row[0]
 
 @ray.remote
-def r_clone_table(config: any, table_name: str, target_db: str) -> None:
-    clone_table_v2(config, table_name, target_db)
+def r_clone_table(config: any, table_name: str, target_db: str, template_db: str) -> None:
+    clone_table_v2(config, table_name, target_db, template_db)
 
 def clone_table(config, table_name, target_db):
     t0 = time.time()
@@ -528,19 +528,19 @@ def clone_table(config, table_name, target_db):
     t2 = time.time()
     print(f'  Time for insert: {t2-t1}')
 
-def clone_table_v2(config, table_name, target_db):
+def clone_table_v2(config, table_name, target_db, template_db):
     t0 = time.time()
     print(f'Cloning {table_name}')
     db, cursor = config.getDB(server_connection=True)
 
-    sql = f'CREATE Table `{target_db}`.{table_name} LIKE `{config.db_name}`.{table_name};'
+    sql = f'CREATE Table `{target_db}`.{table_name} LIKE `{template_db}`.{table_name};'
 
     cursor.execute(sql)
     db.commit()
     t1 = time.time()
     print(f'  Time for creating structure of {table_name}: {t1-t0}')
 
-    sql = f'INSERT INTO `{target_db}`.{table_name} SELECT * FROM `{config.db_name}`.{table_name};'
+    sql = f'INSERT INTO `{target_db}`.{table_name} SELECT * FROM `{template_db}`.{table_name};'
 
     cursor.execute(sql)
     db.commit()
@@ -549,13 +549,32 @@ def clone_table_v2(config, table_name, target_db):
 
     db.close()
 
+def clone_afdb(config, target_db_name: str):
+    db, cursor = config.getDB(server_connection=True, db_name=config.afdb)
+    cursor.execute(f"SHOW TABLES FROM {config.afdb}")
+    
+    tables = [[], [], [], []]
+    alternate = 0
+    for row in cursor.fetchall():
+        tables[alternate].append(row[0])
+        alternate += 1
+        if alternate == 4:
+            alternate = 0
 
-def clone_db(config: any, target_db_name: str) -> None:
+    db.close()
+
+    clone_db(config, target_db_name, tables = tables, template_db=config.afdb)
+
+def clone_db(config, target_db_name: str, tables: None | list[list[str]] = None, template_db: str | None = None) -> None:
     t0 = time.time()
-    tables: list[list[str]] = table_names_in_order
+    if tables is None:
+        tables: list[list[str]] = table_names_in_order
+
+    if template_db is None:
+        template_db = config.db_name
 
     print('============ Database clone ===============')
-    print(f'From {config.db_name} to {target_db_name}\n')
+    print(f'From {template_db} to {target_db_name}\n')
 
     conf_dump = ray.put(config)
 
@@ -571,7 +590,7 @@ def clone_db(config: any, target_db_name: str) -> None:
     for table_names in tables:
         clone_proc_ids = []
         for table_name in table_names:
-            clone_proc_ids.append(r_clone_table.remote(conf_dump, table_name, target_db_name))
+            clone_proc_ids.append(r_clone_table.remote(conf_dump, table_name, target_db_name, template_db))
             #clone_table_v2(config, table_name, target_db_name)
 
         ray.get(clone_proc_ids)

@@ -1,6 +1,6 @@
 import gzip
 import os
-
+import io
 import subprocess
 import time
 import urllib.error
@@ -10,7 +10,9 @@ import urllib.request
 from structman.lib.sdsc.consts import residues as residue_consts
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import residue as residue_package
-from structman.base_utils.base_utils import aggregate_times, add_to_times
+from structman.base_utils.base_utils import aggregate_times, add_to_times, is_alphafold_model
+from structman.base_utils.config_class import Config
+from structman.lib.database.retrieval import get_afdb_structure
 
 chain_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
 
@@ -38,9 +40,20 @@ def test_for_AU(pdb_id, pdb_path):
     AU = os.path.isfile(au_path) and not os.path.isfile(path)
     return AU
 
-def getStructureBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False, get_is_local=False, verbosity=0, model_path = None):
+def getStructureBuffer(
+        structure_id: str,
+        config: Config,
+        AU: bool=False,
+        obsolete_check: bool=False,
+        get_is_local: bool=False,
+        model_path: str | None = None):
     if model_path is None:
-        buf = getPDBBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=obsolete_check, verbosity=verbosity)
+        buf = getPDBBuffer(structure_id, config.pdb_path, AU=AU, obsolete_check=obsolete_check, verbosity=config.verbosity)
+    elif config.afdb is not None and is_alphafold_model(structure_id):
+        page = get_afdb_structure(structure_id, config)
+        if page is None:
+            raise ValueError(f'{structure_id} was not found in AFDB')
+        buf = io.BufferedReader(io.BytesIO(page))
     elif model_path[-3:] == '.gz':
         buf = gzip.open(model_path, 'rb')
     else:
@@ -501,22 +514,21 @@ def parseMMCIFSequence(buf, chain):
 
 
 def standardParsePDB(
-        pdb_id,
-        pdb_path,
-        obsolete_check=False,
-        return_10k_bool=False,
-        get_is_local=False,
-        verbosity=0,
-        model_path=None,
-        only_first_model = False,
-        return_bytes = False):
+        pdb_id: str,
+        config: Config,
+        obsolete_check: bool=False,
+        return_10k_bool: bool=False,
+        get_is_local: bool=False,
+        model_path: str | None=None,
+        only_first_model: bool=False,
+        return_bytes: bool=False):
     AU = False
     if pdb_id.count('_AU') == 1:
         pdb_id = pdb_id[0:4]
         AU = True
         only_first_model = True
 
-    buf = getStructureBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=obsolete_check, verbosity=verbosity, get_is_local=get_is_local, model_path = model_path)
+    buf = getStructureBuffer(pdb_id, config, AU=AU, obsolete_check=obsolete_check, get_is_local=get_is_local, model_path = model_path)
 
     if get_is_local:
         buf, path = buf
@@ -531,7 +543,7 @@ def standardParsePDB(
         return '', 0
     # Added automatization here, if pdb file not exist, automatically calls MMCIF version
     #    print('PDB file does not exist, trying MMCIF file')
-    #    return standardParseMMCIF(pdb_id,pdb_path,obsolete_check=False)
+    #    return standardParseMMCIF(pdb_id,config.pdb_path,obsolete_check=False)
 
     chain_ids = set()
     rare_residues = set()
@@ -543,6 +555,7 @@ def standardParsePDB(
     multi_model_chain_dict = {}
     chain_order_pos_marker = 0
     asymetric_chain_number = None
+    chain_id = None
     current_model_id = 0
     multi_model_chain_dict = {current_model_id: {}}
 
@@ -572,7 +585,7 @@ def standardParsePDB(
 
         elif record_name == b'MODEL':
             current_model_id = line[10:14]
-            if not current_model_id in multi_model_chain_dict:
+            if current_model_id not in multi_model_chain_dict:
                 multi_model_chain_dict[current_model_id] = {}
             if not multi_model_mode:
                 newlines.append(line)
@@ -633,10 +646,10 @@ def standardParsePDB(
                 chain_ids.add(chain_id)
                 multi_model_chain_dict[current_model_id][chain_id] = chain_id
             elif multi_model_mode:
-                if not chain_id in multi_model_chain_dict[current_model_id]:
+                if chain_id not in multi_model_chain_dict[current_model_id]:
                     new_chain_id = None
                     while new_chain_id is None:
-                        if not chain_order[chain_order_pos_marker] in chain_ids:
+                        if chain_order[chain_order_pos_marker] not in chain_ids:
                             new_chain_id = chain_order[chain_order_pos_marker]
                         chain_order_pos_marker += 1
                     multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
@@ -833,12 +846,11 @@ def toOne(res_name: str, only_natural: bool = False) -> str:
 # called by serializedPipeline
 def getStandardizedPdbFile(
         pdb_id: str,
-        pdb_path: str,
+        config: Config,
         oligo: set[str] = set(),
-        verbosity: int = 0,
         model_path: str | None = None,
-        obsolete_check: bool = False,
-        get_residue_maps: bool = False) -> tuple[list[bytes], list, dict[str, str], set[str], int, list[str], set[str]]:
+        obsolete_check: bool = False
+        ) -> tuple[list[bytes], list, dict[str, str], set[str], int, list[str], set[str]]:
 
     t0 = time.time()
     times: list[float] = []
@@ -849,7 +861,7 @@ def getStandardizedPdbFile(
         pdb_id = pdb_id[0:4]
         AU = True
 
-    buf = getStructureBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=obsolete_check, verbosity=verbosity, model_path = model_path)
+    buf = getStructureBuffer(pdb_id, config, AU=AU, obsolete_check=obsolete_check, model_path = model_path)
 
     if buf is None:
         # Added automatization here, if pdb file not exist, automatically calls MMCIF version
@@ -920,7 +932,7 @@ def getStandardizedPdbFile(
 
             case b'MODEL':
                 current_model_id = int(line[10:14])
-                if not current_model_id in multi_model_chain_dict:
+                if current_model_id not in multi_model_chain_dict:
                     multi_model_chain_dict[current_model_id] = {}
 
                 if not multi_model_mode:
@@ -972,10 +984,10 @@ def getStandardizedPdbFile(
                     chain_ids.add(chain_id)
                     multi_model_chain_dict[current_model_id][chain_id] = chain_id
                 elif multi_model_mode:
-                    if not chain_id in multi_model_chain_dict[current_model_id]:
+                    if chain_id not in multi_model_chain_dict[current_model_id]:
                         new_chain_id = None
                         while new_chain_id is None:
-                            if not chain_order[chain_order_pos_marker] in chain_ids:
+                            if chain_order[chain_order_pos_marker] not in chain_ids:
                                 new_chain_id = chain_order[chain_order_pos_marker]
                             chain_order_pos_marker += 1
                         multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
@@ -984,7 +996,7 @@ def getStandardizedPdbFile(
                         chain_id = multi_model_chain_dict[current_model_id][chain_id]
 
                 res_nr: str = line[22:27].strip().decode('ascii')
-                if not chain_id in used_res_s:
+                if chain_id not in used_res_s:
                     used_res_s[chain_id] = set()
                     seq_res_maps[chain_id] = []
                     seqs[chain_id] = ''
@@ -1040,10 +1052,10 @@ def getStandardizedPdbFile(
                     chain_ids.add(chain_id)
                     multi_model_chain_dict[current_model_id][chain_id] = chain_id
                 elif multi_model_mode:
-                    if not chain_id in multi_model_chain_dict[current_model_id]:
+                    if chain_id not in multi_model_chain_dict[current_model_id]:
                         new_chain_id = None
                         while new_chain_id is None:
-                            if not chain_order[chain_order_pos_marker] in chain_ids:
+                            if chain_order[chain_order_pos_marker] not in chain_ids:
                                 new_chain_id = chain_order[chain_order_pos_marker]
                             chain_order_pos_marker += 1
                         multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
@@ -1053,7 +1065,7 @@ def getStandardizedPdbFile(
 
                 #occupancy = float(line[54:60].replace(" ",""))
 
-                if not chain_id in used_res_s:
+                if chain_id not in used_res_s:
                     used_res_s[chain_id] = set()
                     seq_res_maps[chain_id] = []
                     seqs[chain_id] = ''
@@ -1476,7 +1488,7 @@ def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]], dict[s
         #buf = getMMCIFHeaderBuffer(pdb_id,pdb_path)
         # if buf is None:
         #    return None,{}
-        return None, {}
+        return None, {}, None
     abort = False
     resolution = None
 

@@ -1,11 +1,11 @@
 import os
-import psutil
 import ray
 import time
 
 from structman.lib import serializedPipeline
 from structman.lib.output.out_generator import OutputGenerator
 from structman.lib.database.insertion_lib import insert_indel_results
+from structman.base_utils.config_class import Config
 try:
     from structman.lib import modelling
 except:
@@ -94,23 +94,23 @@ def flanking_region_analysis(classification_results, left_flank_pos, right_flank
 
 
 @ray.remote(num_cpus=1)
-def indel_analysis(config, indel_obj, wt_structure_annotations, mut_structure_annotations):
+def indel_analysis(config: Config, indel_obj, wt_structure_annotations, mut_structure_annotations):
     serializedPipeline.ray_hack()
 
-    # print('1:',indel_obj.wt_prot,indel_obj.get_notation(),len(wt_structure_annotations),len(mut_structure_annotations))
+    # config.logger.info('1:',indel_obj.wt_prot,indel_obj.get_notation(),len(wt_structure_annotations),len(mut_structure_annotations))
 
     # The structures has to be checked that they include the flanks
     wt_structure_annotations, mut_structure_annotations = indel_obj.inclusion_check(wt_structure_annotations, mut_structure_annotations)
 
-    # print('2:',indel_obj.wt_prot,indel_obj.get_notation(),len(wt_structure_annotations),len(mut_structure_annotations))
+    # config.logger.info('2:',indel_obj.wt_prot,indel_obj.get_notation(),len(wt_structure_annotations),len(mut_structure_annotations))
 
     wt_structure_annotations, mut_structure_annotations = separate_structure_annotations(wt_structure_annotations, mut_structure_annotations, config)
 
-    # print('3:',indel_obj.wt_prot,indel_obj.get_notation(),len(wt_structure_annotations),len(mut_structure_annotations))
+    # config.logger.info('3:',indel_obj.wt_prot,indel_obj.get_notation(),len(wt_structure_annotations),len(mut_structure_annotations))
 
     analysis_list = indel_obj.get_scenario(len(wt_structure_annotations), len(mut_structure_annotations))
 
-    # print('4:',indel_obj.wt_prot,indel_obj.get_notation(),analysis_list,len(wt_structure_annotations),len(mut_structure_annotations))
+    # config.logger.info('4:',indel_obj.wt_prot,indel_obj.get_notation(),analysis_list,len(wt_structure_annotations),len(mut_structure_annotations))
 
     indel_type, terminal, terminal_end = indel_obj.get_type()
 
@@ -143,7 +143,7 @@ def indel_analysis(config, indel_obj, wt_structure_annotations, mut_structure_an
     return ret_tuple
 
 
-def compare_classifications(proteins, config, prot_id, models, sub_infos, write_output=None):
+def compare_classifications(proteins, config: Config, prot_id, models, sub_infos, write_output=None):
     if write_output is not None:
         dC_output = OutputGenerator()
         headers = ['Position', 'Original classification', 'Recommended structure', 'Model ID', 'Model chain', 'Model residue', 'Model classification']
@@ -159,7 +159,7 @@ def compare_classifications(proteins, config, prot_id, models, sub_infos, write_
     for rec_struct in rec_structs:
         pdb_id, tchain = rec_struct.split(':')
 
-        if not (pdb_id, tchain) in models:
+        if (pdb_id, tchain) not in models:
             continue
         for pos in rec_structs[rec_struct]:
             original_class = proteins.get_classification(prot_id, pos)
@@ -177,7 +177,7 @@ def compare_classifications(proteins, config, prot_id, models, sub_infos, write_
             if res_id is None:
                 delta_classification += 1
                 if config.verbosity >= 2:
-                    print('Position not annotated in model:', prot_id, pos, pdb_id, tchain, model.model_id, original_class)
+                    config.logger.info(f'Position not annotated in model: {prot_id}, {pos}, {pdb_id}, {tchain}, {model.model_id}, {original_class}')
                 if write_output is not None:
                     dC_output.add_value('Model classification', 'Unmapped')
             else:
@@ -201,8 +201,7 @@ def compare_classifications(proteins, config, prot_id, models, sub_infos, write_
     return delta_classification
 
 
-def para_indel_analysis(proteins, config):
-    indel_result_ids = []
+def para_indel_analysis(proteins, config: Config):
     modelling_result_ids = []
 
     prot_specific_mapping_dumps = {}
@@ -212,7 +211,7 @@ def para_indel_analysis(proteins, config):
     model_stack = set()
 
     if config.verbosity >= 2:
-        print('Starting indel analysis with', len(proteins.indels), 'indels')
+        config.logger.info(f'Starting indel analysis with {len(proteins.indels)} indels')
         t0 = time.time()
 
     complex_store_references = []
@@ -232,14 +231,14 @@ def para_indel_analysis(proteins, config):
             wt_structure_annotations = proteins.get_protein_structure_annotations(prot_id)
             if len(wt_structure_annotations) == 0:
                 if config.verbosity >= 3:
-                    print('Indel analysis not possible, no structures annotated', prot_id)
+                    config.logger.info(f'Indel analysis not possible, no structures annotated {prot_id}')
                 continue
 
             rec_structs = proteins[prot_id].getRecommendedStructures()
 
             if len(rec_structs) == 0:
                 if config.verbosity >= 3:
-                    print('Indel analysis not possible, no recommended structures for', prot_id)
+                    config.logger.info(f'Indel analysis not possible, no recommended structures for {prot_id}')
                 continue
 
             for indel_notation in proteins.indels[prot_id]:
@@ -251,9 +250,9 @@ def para_indel_analysis(proteins, config):
 
                 for rec_struct in rec_structs:
                     pdb_id, tchain = rec_struct.split(':')
-                    if not (pdb_id, tchain) in mut_structure_annotations:
+                    if (pdb_id, tchain) not in mut_structure_annotations:
                         if config.verbosity >= 3:
-                            print('Indel analysis not possible, structure not annotated to mut protein', prot_id, indel_obj.wt_prot, pdb_id, tchain)
+                            config.logger.info(f'Indel analysis not possible, structure not annotated to mut protein {prot_id} {indel_obj.wt_prot} {pdb_id} {tchain}')
                         continue
                     # modelling the WT for all recommended structures
                     compl_obj = ray.put(proteins.complexes[pdb_id])
@@ -261,7 +260,7 @@ def para_indel_analysis(proteins, config):
                     structures = ray.put(proteins.get_complex_structures(pdb_id))
                     structures_store_references.append(structures)
 
-                    if not (pdb_id, tchain, indel_obj.wt_prot) in model_stack:
+                    if (pdb_id, tchain, indel_obj.wt_prot) not in model_stack:
                         alignment_tuple = proteins[indel_obj.wt_prot].structure_annotations[pdb_id][tchain].get_alignment(unpacked = True)
                         seq_id = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].sequence_identity
                         cov = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].coverage
@@ -270,7 +269,7 @@ def para_indel_analysis(proteins, config):
                         model_stack.add((pdb_id, tchain, indel_obj.wt_prot))
 
                     # modelling the MUT for all recommend structures
-                    if not (pdb_id, tchain, indel_obj.mut_prot) in model_stack:
+                    if (pdb_id, tchain, indel_obj.mut_prot) not in model_stack:
                         alignment_tuple = proteins[indel_obj.mut_prot].structure_annotations[pdb_id][tchain].get_alignment(unpacked = True)
                         seq_id = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].sequence_identity
                         cov = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].coverage
@@ -280,13 +279,12 @@ def para_indel_analysis(proteins, config):
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print('Indel analysis, part 1:', t1 - t0)
+        config.logger.info(f'Indel analysis, part 1: {t1 - t0}')
 
     #indel_analysis_outs = ray.get(indel_result_ids)
     if config.model_indel_structures:
         models = ray.get(modelling_result_ids)
 
-    del conf_dump
     for i in reversed(range(len(structures_store_references))):
         del structures_store_references[i]
     del structures_store_references
@@ -296,7 +294,7 @@ def para_indel_analysis(proteins, config):
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print('Indel analysis, part 2:', t2 - t1)
+        config.logger.info(f'Indel analysis, part 2 {t2 - t1}')
 
     alignment_results = []
     model_map = {}
@@ -325,7 +323,7 @@ def para_indel_analysis(proteins, config):
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print('Indel analysis, part 3:', t3 - t2)
+        config.logger.info(f'Indel analysis, part 3: {t3 - t2}')
 
     if config.model_indel_structures:
         result_chunks = ray.get(alignment_results)
@@ -336,7 +334,7 @@ def para_indel_analysis(proteins, config):
 
     if config.verbosity >= 2:
         t4 = time.time()
-        print('Indel analysis, part 4:', t4 - t3)
+        config.logger.info(f'Indel analysis, part 4: {t4 - t3}')
 
     warn_map = set()
     sub_info_map = {}
@@ -361,7 +359,7 @@ def para_indel_analysis(proteins, config):
                     (prot_id, pdb_id, chain, sub_infos, align_info) = out
                     if config.verbosity >= 4:
                         seq_id, alignment_text = align_info
-                        print('Alignment got filtered:', prot_id, pdb_id, chain, len(sub_infos), seq_id, alignment_text)
+                        config.logger.info(f'Alignment got filtered: {prot_id} {pdb_id} {chain} {len(sub_infos)} {seq_id} {alignment_text}')
                     continue
 
                 (prot_id, model_id, model_chain, alignment, seq_id, coverage, interaction_partners, chain_type_map,
@@ -373,7 +371,7 @@ def para_indel_analysis(proteins, config):
 
     if config.verbosity >= 2:
         t5 = time.time()
-        print('Indel analysis, part 5:', t5 - t4)
+        config.logger.info(f'Indel analysis, part 5: {t5 - t4}')
 
     n_filtered = 0
     n_success = 0
@@ -410,17 +408,16 @@ def para_indel_analysis(proteins, config):
                 wt_model_delta_classification = compare_classifications(proteins, config, indel_obj.wt_prot, model_map[indel_obj.wt_prot], sub_info_map[indel_obj.wt_prot], write_output='WT')
                 mut_model_delta_classification = compare_classifications(proteins, config, indel_obj.wt_prot, model_map[indel_obj.mut_prot], sub_info_map[indel_obj.wt_prot], write_output='MUT')
 
-                #print('ddC analysis:',prot_id,indel_notation,wt_model_delta_classification,mut_model_delta_classification)
                 indel_obj.delta_delta_classification = mut_model_delta_classification - wt_model_delta_classification
             n_success += 1
 
 
     if config.verbosity >= 2:
         t6 = time.time()
-        print('Indel analysis, part 6:', t6 - t5, n_filtered, n_success)
+        config.logger.info(f'Indel analysis, part 6: {t6 - t5} {n_filtered=} {n_success=}')
 
     insert_indel_results(proteins, config)
 
     if config.verbosity >= 2:
         t7 = time.time()
-        print('Indel analysis, part 7:', t7 - t6)
+        config.logger.info(f'Indel analysis, part 7 {t7 - t6}')

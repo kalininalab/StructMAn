@@ -1,14 +1,11 @@
 import sys
 import os
-import traceback
-import numpy as np
-import socket
-import time
-from numba.experimental import jitclass
-from numba.typed import List as NumbaList
-from numba.types import ListType, int64
-#from numba import typeof
 
+import time
+#from numba.experimental import jitclass
+#from numba.typed import List as NumbaList
+#from numba.types import ListType, int64
+#from numba import typeof
 
 try:
     from reprlib import repr
@@ -16,7 +13,33 @@ except ImportError:
     pass
 
 from structman.lib.sdsc.consts import ligands, residues
-from structman.base_utils.base_utils import identify_structure_id_type_key
+from structman.base_utils.base_utils import identify_structure_id_type_key, is_connected
+
+def sizeof_fmt(num, suffix='B'):
+    ''' by Fred Cirera,  https://stackoverflow.com/a/1094933/1870254, modified'''
+    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f %s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f %s%s" % (num, 'Yi', suffix)
+
+def deep_get_size_of(obj):
+    if isinstance(obj, list) or isinstance(obj, set):
+        size_sum = 0
+        for s_obj in obj:
+            size_sum += deep_get_size_of(s_obj)
+        return size_sum
+    
+    if isinstance(obj, dict):
+        size_sum = 0
+        for s_obj in obj.values():
+            size_sum += deep_get_size_of(s_obj)
+        return size_sum
+    
+    if isinstance(obj, Slotted_obj):
+        return obj.__getsize__()
+
+    return sys.getsizeof(obj)
 
 class Slotted_obj:
     def __serialize__(self) -> list:
@@ -51,6 +74,24 @@ class Slotted_obj:
     def reactivate_slot_mask(self, slot_mask_bu) -> None:
         for pos in range(len(slot_mask_bu)):
             self.__class__.slot_mask[pos] = slot_mask_bu[pos]
+
+    def __getsize__(self):
+        size_sum = 0
+        for attr_name in self.__slots__:
+            obj = self.__getattribute__(attr_name)
+            size_sum += deep_get_size_of(obj)
+        return size_sum
+
+    def log_attr_sizes(self, logger, label = ''):
+        tup_list = []
+        for attr_name in self.__slots__:
+            obj = self.__getattribute__(attr_name)            
+            size = deep_get_size_of(obj)
+            tup_list.append((attr_name, size))
+
+        tup_list = sorted(tup_list, key= lambda x :x[1], reverse=True)
+        for attr_name, size in tup_list[:10]:
+            logger.info(f'{label}{attr_name} {sizeof_fmt(size)}')
 
 class SparseArray(Slotted_obj):
     __slots__ = ['ranged_lists']
@@ -540,31 +581,6 @@ def get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances
         return None
 
     return min_hd, min_ld, min_md, min_id, min_cd, min_rd, min_dd, min_lig, min_metal, min_ion, iacs
-
-
-def is_connected(url):
-    if url.count('//') == 0:
-        return False, 'Invalid url'
-    
-    domain = url.split('//')[1].split('/')[0]
-
-    if domain.count(':') == 1:
-        domain, port = domain.split(':')
-    else:
-        if url[:5] == 'https':
-            port = 443
-        else:
-            port = 80
-    
-    try:
-        # connect to the host -- tells us if the host is actually
-        # reachable
-        socket.create_connection((domain, port))
-        return True, None
-    except:
-        [e, f, g] = sys.exc_info()
-        g = traceback.format_exc()
-        return False, f'{e}\n{f}\n{g}'
 
 
 def connection_sleep_cycle(verbosity, url):

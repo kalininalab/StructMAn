@@ -1,12 +1,13 @@
 import ray
 import os
 from structman import settings
+from structman.base_utils.config_class import Config
 import subprocess
 import time
 import sys
 import traceback
 
-def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_level = None, total_memory_quantile = 0.5, debug = False, num_gpus=0):
+def ray_init(config: Config, n_try = 0, redis_mem_default = False, overwrite_logging_level = None, total_memory_quantile = 0.5, debug = False, num_gpus=0):
     if ray.is_initialized():
         return
     
@@ -29,14 +30,14 @@ def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_lev
         log_to_driver = False
     else:
         log_to_driver = True
-        print(f'Setting log_to_driver in ray.init to True, local mode: {config.ray_local_mode}')
+        config.logger.info(f'Setting log_to_driver in ray.init to True, local mode: {config.ray_local_mode}')
 
     redis_mem = ((total_memory_quantile*1.5)/10.0) * config.gigs_of_ram * 1024 * 1024 * 1024
  
     mem = ((total_memory_quantile*0.85)/10.0) * config.gigs_of_ram * 1024 * 1024 * 1024
 
     if config.verbosity >= 2:
-        print(f'Call of ray.init: num_cpus = {config.proc_n}, object_store_memory = {redis_mem}')
+        config.logger.info(f'Call of ray.init: num_cpus = {config.proc_n}, object_store_memory = {redis_mem}')
 
     errs = '1'
     loops = 0
@@ -54,7 +55,7 @@ def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_lev
         loops += 1
 
         if config.verbosity >= 3:
-            print(f'Returns of ray stop:\n{outs}\n{errs}')
+            config.logger.info(f'Returns of ray stop:\n{outs}\n{errs}')
         if outs.decode('ascii').count('Stopped') > 0:
             time.sleep(5)
         if loops > 1:
@@ -88,7 +89,7 @@ def ray_init(config, n_try = 0, redis_mem_default = False, overwrite_logging_lev
             errs = ''
 
         if config.verbosity >= 3:
-            print(f'Returns of ray stop:\n{outs}\n{errs}')
+            config.logger.info(f'Returns of ray stop:\n{outs}\n{errs}')
         time.sleep(10*n_try)
         if n_try <= 4:
            ray_init(config, n_try = (n_try + 1), total_memory_quantile = total_memory_quantile - 0.05, num_gpus=num_gpus)

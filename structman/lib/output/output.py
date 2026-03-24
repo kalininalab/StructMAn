@@ -10,7 +10,7 @@ try:
 except:
     pass
 from structman.lib.output import classification as classification_package
-
+from structman.base_utils.config_class import Config
 
 
 def makeDiffDict(f):
@@ -111,7 +111,7 @@ def genediffAna(fileA, fileB):
 
 
 # called by structman
-def main(sess_id, output_path, config):
+def main(sess_id, output_path, config: Config):
     db_name = config.db_name
     db_address = config.db_address
     db_password = config.db_password
@@ -151,22 +151,22 @@ def main(sess_id, output_path, config):
         classification_package.classificationOutput(config, output_path, session_name, session_id)
         t01 = time.time()
         if config.verbosity >= 2:
-            print("Time for classificationOutput: ", t01 - t00)
+            config.logger.info(f"Time for classificationOutput: {t01 - t00}")
         #for classfile in classfiles:
         #    out_utils.classDistributionFromFile(classfile, output_path, session_name, config)
         #    out_utils.classDistributionFromFile(classfile, output_path, session_name, config, rin_classes=True)
         t02 = time.time()
         if config.verbosity >= 2:
-            print("Time for producing classification distributions: ", t02 - t01)
+            config.logger.info(f"Time for producing classification distributions: {t02 - t01}")
 
 
     t1 = time.time()
     if config.verbosity >= 2:
-        print("Time for producing classification file: ", t1 - t0)
+        config.logger.info(f"Time for producing classification file: {t1 - t0}")
 
     #if config.indels_given_by_input:
         #if config.verbosity >= 2:
-        #    print('Starting indel analysis output generation')
+        #    config.logger.info('Starting indel analysis output generation')
         #indel_package.create_indel_results_table(config, output_path, session_name, session_id)
 
     db, cursor = config.getDB()
@@ -179,8 +179,7 @@ def main(sess_id, output_path, config):
             for f in files:
                 if '.goterm.tsv' in f:
                     go_files.append(f)
-            print(go_files)
-            print(files)
+
             if len(go_files) == 2:
                 fileA = "%s/%s" % (output_path, go_files[0])
                 fileB = "%s/%s" % (output_path, go_files[1])
@@ -219,7 +218,7 @@ def main(sess_id, output_path, config):
         babel.writeReport(anno_dict, "%s/Ligand_Report_%s_%s.tsv" % (output_path, ligand_file.rsplit('/', 1)[1].rsplit(".", 1)[0], session_name), db_name, db_address, db_user_name, db_password)
         t2 = time.time()
         if config.verbosity >= 2:
-            print("Time for ligandAnalyzer: ", t1 - t0)
-            print("Time for writeReport: ", t2 - t1)
+            config.logger.info(f"Time for ligandAnalyzer: {t1 - t0}")
+            config.logger.info(f"Time for writeReport: {t2 - t1}")
 
     return 0

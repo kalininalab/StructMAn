@@ -105,7 +105,7 @@ class Structure(Slotted_obj):
             return self.sequence
         else:
             if complex_obj is None:
-                template_page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path, return_bytes=True)
+                template_page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config, return_bytes=True)
             else:
                 template_page = complex_obj.getPage(config)
             seq_res_map, seq, last_residue, first_residue = globalAlignment.createTemplateFasta(template_page.split(b'\n'), self.pdb_id, self.chain.encode('ascii'), config, seqAndMap=True, for_modeller=for_modeller, could_be_empty=True, rare_residues=config.rare_residues)

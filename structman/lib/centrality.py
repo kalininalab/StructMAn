@@ -33,7 +33,7 @@ def normalize_centrality(btw_cent, min_btw, max_btw, num_residues):
     return (btw_cent, btw_cent_norm_len, btw_cent_norm_max)
 
 
-def main(path, pdb_id=None):
+def main(path, pdb_id=None, verbosity = 1):
     dir_name = os.path.dirname(path)
 
     if pdb_id is None:
@@ -49,7 +49,8 @@ def main(path, pdb_id=None):
 
     out_path = dir_name + '/' + pdb_id + '_btw_cent.txt.gz'
 
-    print(f'{path=} {pdb_id=} {scores_path=} {out_path=}')
+    if verbosity >= 3:
+        print(f'{path=} {pdb_id=} {scores_path=} {out_path=}')
 
     with gzip.open(out_path, 'wt') as out_file:
 
@@ -151,12 +152,12 @@ def main(path, pdb_id=None):
 
                 complex_vertex_id = all_chains.res_to_vertex[res]
                 centralities.extend(normalize_centrality(complex_betweenness[complex_vertex_id],
-                                                        min_btw_cent,
-                                                        max_btw_cent,
+                                                        min_complex_btw_cent,
+                                                        max_complex_btw_cent,
                                                         num_complex_residues))
                 centralities.extend(normalize_centrality(complex_betweenness_with_negative[complex_vertex_id],
-                                                        min_btw_cent_with_negative,
-                                                        max_btw_cent_with_negative,
+                                                        min_complex_btw_cent_with_negative,
+                                                        max_complex_btw_cent_with_negative,
                                                         num_complex_residues))
                 if any(centralities) is not None:
                     res_names.append(res)

@@ -39,6 +39,8 @@ def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = No
         if filename[-6:] != 'pdb.gz':
             return {}, None, bio_entries, error_files
         pdb_id = '-'.join(filename.split('-')[:2])
+        if pdb_id[-7:] == '.pdb.gz':
+            pdb_id = pdb_id[:-7]
         path = f'{divide_folder}/{sub_folder}/{filename}'
 
         f = gzip.open(path,'rb')
@@ -449,6 +451,74 @@ def create_model_db_fasta(config):
     f.close()
 
     return len(great_seq_map) > 0
+
+def create_complex_model_db_fasta(config, update_source = None):
+    great_seq_map = {}
+    parse_results = []
+    
+    if (config.complex_model_db_path is not None) and (config.complex_model_db_path != ''):
+        config.complex_model_db_fasta_created = True
+    else:
+        config.complex_model_db_fasta_created = False 
+        return False
+
+    parse_dump = ray.put(config.complex_model_db_path)
+
+    for topfolder in os.listdir(config.complex_model_db_path):
+        if not os.path.isdir(f'{config.complex_model_db_path}/{topfolder}'):
+            continue
+        for sub_folder in os.listdir(f'{config.complex_model_db_path}/{topfolder}'):
+            parse_results.append(parseByAtom.remote(parse_dump, f'{topfolder}/{sub_folder}', model_db = True))
+
+    parse_out = ray.get(parse_results)
+    for seq_map, bio_entries_part, error_files in parse_out:
+        if len(error_files) > 0:
+            for error_file in error_files:
+                print('Error with file: %s' % error_file)
+        for seq in seq_map:
+            if seq not in great_seq_map:
+                great_seq_map[seq] = seq_map[seq]
+            else:
+                great_seq_map[seq] += seq_map[seq]
+
+    entries = []
+
+    id_list = []
+
+    for seq in great_seq_map:
+        if seq == '':
+            continue
+
+        for pdb, chain in great_seq_map[seq]:
+            id_list.append('%s-%s' % (pdb, chain))
+
+        block_seqs = []
+        while len(seq) > 0:
+            m = min((len(seq), 80))
+            block_seqs.append(seq[:m])
+            seq = seq[m:]
+
+        if id_list == []:
+            continue
+
+        entry = ">%s\n%s" % (','.join(id_list), '\n'.join(block_seqs))
+        entries.append(entry)
+        id_list = []
+
+    page = '\n'.join(entries)
+
+    f = open(config.complex_model_db_fasta_path, 'w') # get set in scripts/update.py
+    f.write(page)
+    f.close()
+
+    if len(great_seq_map) > 0:
+        if update_source is not None:
+            target_folder = f'{update_source}/structman/resources'
+            with open(f'{target_folder}/complexmodeldb.fasta.gz', 'w') as outfile:
+                p = subprocess.run(['gzip', '-9', '-c', config.complex_model_db_fasta_path], stdout=outfile)    
+        return True  
+            
+    return False
 
 def update_model_db(config, update_source = None, init_ray = False):
     if init_ray:

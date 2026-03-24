@@ -272,7 +272,7 @@ class Complex(Slotted_obj):
                     model_path = None
             else:
                 model_path = None
-            parse_out = pdbParser.getStandardizedPdbFile(self.pdb_id, config.pdb_path, verbosity=config.verbosity, model_path = model_path)
+            parse_out = pdbParser.getStandardizedPdbFile(self.pdb_id, config, model_path = model_path)
 
             if parse_out is None:
                 config.errorlog.add_error(f'pdbParser failed: {self.pdb_id}')
@@ -301,7 +301,7 @@ class Complex(Slotted_obj):
                     model_path = None
             else:
                 model_path = None
-            page, atom_count = pdbParser.standardParsePDB(self.pdb_id, config.pdb_path, model_path = model_path, return_bytes=True)
+            page, _ = pdbParser.standardParsePDB(self.pdb_id, config, model_path = model_path, return_bytes=True)
             self.page = page
             if config.verbosity >= 7:
                 print(f'Result of getPage: {self.pdb_id=} {model_path=} {page=}')

@@ -1,4 +1,7 @@
 from importlib import import_module
+import numpy as np
+from io import BytesIO
+from ray import cloudpickle, ObjectRef
 
 try:
     from structguy.support_classes import CrossValidationSlice, Feature
@@ -22,6 +25,17 @@ def custom_encoder(obj):
     if isinstance(obj, set):
         return {'__set__': True, 'as_list': list(obj)}
 
+    if isinstance(obj, np.ndarray):
+        memfile = BytesIO()
+        np.save(memfile, obj)
+        return {'__ndarray__': True, 'as_list': memfile.getvalue()}
+    """
+    if isinstance(obj, ObjectRef):
+        memfile = BytesIO()
+        cloudpickle.dump(obj, memfile)
+        del obj
+        return {'__ObjectRef__': True, 'as_list': memfile.getvalue()}
+    """
     try:
         serialized_object = obj.__serialize__()
         return {f'__{fullname(obj)}__': True, 'as_list': serialized_object}
@@ -62,6 +76,21 @@ def custom_decoder(obj: dict[str, any]) -> any:
     if '__set__' == dunder_class_name:
         return set(serialized_object)
 
+    if '__ndarray__' == dunder_class_name:
+        memfile = BytesIO()
+        memfile.write(serialized_object)
+        memfile.seek(0)
+        return np.load(memfile, allow_pickle=True)
+    
+    """
+    if '__ObjectRef__' == dunder_class_name:
+        memfile = BytesIO()
+        memfile.write(serialized_object)
+        memfile.seek(0)
+        new_obj_ref = cloudpickle.load(memfile)
+        return new_obj_ref
+    """
+        
     if dunder_class_name[:2] == '__':
         full_class_name: str = dunder_class_name[2:-2]
         module_path, class_name = full_class_name.rsplit('.', 1)

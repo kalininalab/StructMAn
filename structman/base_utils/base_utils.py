@@ -1,13 +1,20 @@
 import math
 import os
+import sys
 import time
 import traceback
 import numpy as np
 from zlib import adler32
 
+import socket
+import wget
+import requests
+
+from collections import Counter
 import zstd
 import msgpack
 import subprocess
+import logging
 
 from numba import njit
 
@@ -38,7 +45,7 @@ class Errorlog:
         f.write(errortext)
         f.close()
 
-    def add_error(self, error_text):
+    def add_error(self, error_text, logger = None):
         self.error_counter += 1
         g = ''.join(traceback.format_list(traceback.extract_stack()))
         error_text = 'Error %s:\n%s\n%s\n' % (str(self.error_counter), error_text, g)
@@ -48,6 +55,8 @@ class Errorlog:
         f = open(self.path, 'a')
         f.write(error_text)
         f.close()
+        if logger is not None:
+            logger.error(error_text)
 
     def stop(self) -> int:
         if self.warn_path is not None:
@@ -124,20 +133,30 @@ def aggregate_times(total_times: list[float | list[float]], times: list[float | 
                     total_times[pos][sub_pos] += sub_t
     return total_times
 
-def print_times(times, label = 'structural analysis'):
+def print_times(times, label = 'structural analysis', logger = None):
     if len(times) == 0:
-        print(f'empty times: {label}')
+        if logger is None:
+            print(f'empty times: {label}')
+        else:
+            logger.info(f'empty times: {label}')
     for part, t in enumerate(times):
         if isinstance(t, float):
-            print(f'Accumulated {label} time part {part}: {t:_}')
+            if logger is None:
+                print(f'Accumulated {label} time part {part}: {t:_}')
+            else:
+                logger.info(f'Accumulated {label} time part {part}: {t:_}')
         else:
             for sub_part, sub_t in enumerate(times[part]):
-                print(f'  Accumulated {label} time part {part}.{sub_part}: {sub_t:_}')
+                if logger is None:
+                    print(f'  Accumulated {label} time part {part}.{sub_part}: {sub_t:_}')
+                else:
+                    logger.info(f'  Accumulated {label} time part {part}.{sub_part}: {sub_t:_}')
 
 structure_id_types = [
     'PDB',
     'Asymmetric unit PDB',
-    'Alphafold model'
+    'Alphafold model',
+    'Complex model'
 ]
 
 def identify_structure_id_type(structure_id):
@@ -148,16 +167,22 @@ def identify_structure_id_type(structure_id):
 
 
 def identify_structure_id_type_key(structure_id: str) -> int | None:
-    l = len(structure_id)
-    if l == 7:
+    le = len(structure_id)
+    if le == 7:
         if structure_id[-3:] == '_AU':
             return 1
 
-    if len(structure_id) == 4:
+    if le == 4:
         return 0
 
     if structure_id[:3] == 'AF-':
         return 2
+
+    if structure_id[-6:] == 'pdb.gz':
+        return 3
+
+    if structure_id.count('__') > 0:
+        return 3
 
     return None
 
@@ -165,24 +190,65 @@ def is_alphafold_model(structure_id):
     structe_id_type_key = identify_structure_id_type_key(structure_id)
     return (structe_id_type_key == 2)
 
-def get_af_model_folder(model_id, config):
+def is_model(structure_id):
+    structe_id_type_key = identify_structure_id_type_key(structure_id)
+    try:
+        return (structe_id_type_key >= 2)
+    except TypeError:
+        return f'Unknown {structure_id=}'
+
+def topfolder_id_to_chunk_id(topfolder_id: str):
+    a = topfolder_id[0]
+    b = topfolder_id[1]
+
+    if a.isdigit():
+        if b.isdigit():
+            bi = int(b)
+            sec = (bi//2)*2
+            return f'{a}{sec}'
+        else:
+            return f'{a}_'
+    else:
+        if b.isdigit():
+            return f'_{b}'
+        else:    
+            return '__'
+
+def get_af_model_folder(model_id, config, get_topfolder_id = False):
     uniprot_ac = model_id.split('-')[1]
     topfolder_id = uniprot_ac[-2:]
     subfolder_id = uniprot_ac[-4:]
 
     folder_path = f'{config.path_to_model_db}/{topfolder_id}/{subfolder_id}'
+    if get_topfolder_id:
+        return folder_path, topfolder_id
     return folder_path
 
-def alphafold_model_id_to_file_path(model_id, config):
-    uniprot_ac = model_id.split('-')[1]
-    topfolder_id = uniprot_ac[-2:]
-    subfolder_id = uniprot_ac[-4:]
+def alphafold_model_id_to_db_key(model_id):
+    id_parts = model_id.split('-')
+    main_db: bool = len(id_parts) > 2
+    try:
+        afdb_id_core = id_parts[1]
+    except IndexError as err:
+        raise IndexError(f'alphafold_model_id_to_db_key failed: {model_id=} {err=}')
+    if not main_db and len(afdb_id_core) < 8:
+        main_db = True
+        afdb_id = f'{afdb_id_core}-F1'
+    elif main_db:
+        afdb_id = f'{afdb_id_core}-{id_parts[2]}'
+    else:
+        afdb_id = afdb_id_core
+    topfolder_id = afdb_id_core[-2:]
+    chunk_id = topfolder_id_to_chunk_id(topfolder_id)
+    return afdb_id, main_db, chunk_id
 
-    folder_path = f'{config.path_to_model_db}/{topfolder_id}/{subfolder_id}'
+def alphafold_model_id_to_file_path(model_id, config):
+
+    folder_path = get_af_model_folder(model_id, config)
 
     for fn in os.listdir(folder_path):
-        if fn.count(model_id) == 1 and fn.count('.pdb.gz') == 1:
-            return f'{config.path_to_model_db}/{topfolder_id}/{subfolder_id}/{fn}'
+        if fn.count(model_id) == 1 and (fn.count('.pdb.gz') == 1 or fn.count('.pdb.zst')):
+            return f'{folder_path}/{fn}'
 
     config.errorlog.add_warning(f'Did not find file {model_id} in alphafold model db: {config.path_to_model_db}')
     return None
@@ -193,6 +259,14 @@ def is_alphafold_db_valid(config):
     if not os.path.exists(f'{config.path_to_model_db}/00'):
         return False
     return True
+
+def complex_id_to_file_path(structure_id, config):
+    first_uac = structure_id.split('_')[0]
+    topfolder_id = first_uac[-2:]
+    subfolder_id = first_uac[-4:-2]
+    if structure_id[-7:] != '.pdb.gz':
+        structure_id = f'{structure_id}.pdb.gz'
+    return f'{config.complex_model_db_path}/{topfolder_id}/{subfolder_id}/{structure_id}'
 
 
 def resolve_path(path):
@@ -352,3 +426,91 @@ def unpack(packed_object):
         return None
     some_object = msgpack.unpackb(dec_obj, object_hook = custom_decoder, strict_map_key = False, use_list = False)
     return some_object
+
+def reset_logger_for_remotes(config):
+    numba_logger = logging.getLogger('numba')
+    numba_logger.setLevel(logging.WARNING)
+    fl_logger = logging.getLogger('filelock')
+    fl_logger.setLevel(logging.WARNING)
+    main_logger = logging.getLogger(__name__)
+    logging.basicConfig(filename=config.logfile, encoding='utf-8', level=logging.DEBUG)
+    config.logger = main_logger
+
+def is_seq_valid(seq: str):
+    
+    freq = dict(Counter(seq))
+    
+    if len(freq) < 5:
+        return False, f'Too few different amino acids ({len(freq)})'
+    
+    return True, None
+
+def is_connected(url):
+    if url.count('//') == 0:
+        return False, 'Invalid url'
+    
+    domain = url.split('//')[1].split('/')[0]
+
+    if domain.count(':') == 1:
+        domain, port = domain.split(':')
+    else:
+        if url[:5] == 'https':
+            port = 443
+        else:
+            port = 80
+    
+    try:
+        # connect to the host -- tells us if the host is actually
+        # reachable
+        socket.create_connection((domain, port))
+        return True, None
+    except:
+        [e, f, g] = sys.exc_info()
+        g = traceback.format_exc()
+        return False, f'{e}\n{f}\n{g}'
+
+def fetch_af_msa(config, model_id, folder_path, current_afdb_version = 'v6', tmp_target=None):
+    full_id = None
+    for fn in os.listdir(folder_path):
+        if fn.count(model_id) == 1 and fn.count('-model') > 0:
+            full_id = fn.split('-model')[0]
+            break
+
+    if config.verbosity >= 4:
+        config.logger.info(f'Call of fetch_af_msa: {model_id=} {folder_path=} {full_id=} {tmp_target=}')
+
+    if full_id is None:
+        config.errorlog.add_warning(f'Did not find file {model_id} in alphafold model db: {config.path_to_model_db}')
+        return None
+
+    af_msa_filename = f'{full_id}-msa_{current_afdb_version}.a3m'
+
+    if config.verbosity >= 3:
+        print(f'Fetching MSA for {model_id} from AFDB')
+
+ 
+    url = f'https://alphafold.ebi.ac.uk/files/msa/{af_msa_filename}'
+    connected, error = is_connected(url)
+    if not connected:
+        config.errorlog.add_warning(f'Did not find file {model_id} in online alphafold model db: {url} {error=}')
+        return None
+    r = requests.head(url)
+
+    if tmp_target is None:
+        target_folder = folder_path
+    else:
+        target_folder = tmp_target.rsplit('/',1)[0]
+
+    if r.status_code < 300:
+        try:
+            wget.download(url, out=target_folder)
+        except OSError:
+            return None
+    else:
+        config.errorlog.add_warning(f'Invalid http code {r.status_code} trying to fetch {model_id} msa in online alphafold model db: {url}')
+        return None
+
+    if tmp_target is None:
+        os.rename(f'{folder_path}/{af_msa_filename}', f'{folder_path}/{model_id}_msa.fasta')
+    else:
+        os.rename(f'{target_folder}/{af_msa_filename}', tmp_target)

@@ -1,9 +1,12 @@
 import time
 import ray
-from structman.base_utils.base_utils import unpack, aggregate_times, print_times, add_to_times
+import gzip
+import zstd
+from structman.base_utils.base_utils import unpack, aggregate_times, print_times, add_to_times, alphafold_model_id_to_db_key
+from structman.base_utils.config_class import Config
 from structman.lib.sdsc import residue as residue_package
 from structman.lib.sdsc import interface as interface_package
-from structman.lib.database.database_core_functions import binningSelect
+from structman.lib.database.database_core_functions import binningSelect, select
 
 @ray.remote(max_calls=1)
 def remote_select_package_from_db(id_package, config, columns, pkg_number):
@@ -11,12 +14,12 @@ def remote_select_package_from_db(id_package, config, columns, pkg_number):
     results = binningSelect(id_package, columns, table, config)
     return (results, pkg_number)
 
-def process_results_chunk(config, results, stored_ids, retrieve_only_db_ids, proteins, locked, skip_interfaces, db_lock):
+def process_results_chunk(config: Config, results, stored_ids, retrieve_only_db_ids, proteins, locked, skip_interfaces, db_lock):
     times = []
     t_init = time.time()
 
     if config.verbosity >= 4:
-        print(f'process resutls chunk {len(stored_ids)=} {len(results)=} {(proteins is None)=} {locked=} {skip_interfaces=} {retrieve_only_db_ids=}')
+        config.logger.info(f'process resutls chunk {len(stored_ids)=} {len(results)=} {(proteins is None)=} {locked=} {skip_interfaces=} {retrieve_only_db_ids=}')
 
     stored_res_db_ids: dict[int, tuple[str, str, str | int]] = {}
 
@@ -50,7 +53,7 @@ def process_results_chunk(config, results, stored_ids, retrieve_only_db_ids, pro
             else:
                 proteins.structures[pdb_id][chain].add_residue(res_id, [res_id, row[1], residue])
             if config.verbosity >= 7:
-                print(f'Calling structures.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
+                config.logger.info(f'Calling structures.add_residue in getStoredResidues: {pdb_id} {chain} {res_id}')
         else:
             if proteins is None:
                 if pdb_id not in structures:
@@ -81,7 +84,7 @@ def process_results_chunk(config, results, stored_ids, retrieve_only_db_ids, pro
         results = binningSelect(stored_res_db_ids.keys(), rows, table, config, locked=locked, db_lock=db_lock)
 
         if config.verbosity >= 3:
-            print(f'Get Interfaces: {len(stored_res_db_ids)=} {len(results)=}')
+            config.logger.info(f'Get Interfaces: {len(stored_res_db_ids)=} {len(results)=}')
 
         total_subtimes = []
 
@@ -116,7 +119,7 @@ def process_results_chunk(config, results, stored_ids, retrieve_only_db_ids, pro
                         complexes[pdb_id][chain][interacting_chain].add_support(res)
 
                 else:
-                    if not chain in proteins.complexes[pdb_id].interfaces:
+                    if chain not in proteins.complexes[pdb_id].interfaces:
                         n_interfaces += 1
                         proteins.complexes[pdb_id].interfaces[chain] = {}
                         proteins.complexes[pdb_id].interfaces[chain][interacting_chain] = interface_package.Interface(chain, interacting_chain, stored = True)
@@ -132,7 +135,7 @@ def process_results_chunk(config, results, stored_ids, retrieve_only_db_ids, pro
             aggregate_times(total_subtimes, subtimes)
 
         if config.verbosity >= 3:
-            print(f'Total number of received interfaces: {n_interfaces}')
+            config.logger.info(f'Total number of received interfaces: {n_interfaces}')
 
         if config.verbosity >= 2:
             times.append(total_subtimes)
@@ -145,7 +148,8 @@ def process_results_chunk(config, results, stored_ids, retrieve_only_db_ids, pro
     return times
 
 def getStoredResidues(
-        proteins, config,
+        proteins,
+        config: Config,
         custom_ids = None,
         retrieve_only_db_ids = False,
         exclude_interacting_chains = False,
@@ -159,15 +163,15 @@ def getStoredResidues(
     if custom_ids is None:
         stored_ids: dict[int, tuple[str, str]] = proteins.getStoredStructureIds(exclude_interacting_chains = exclude_interacting_chains)
         if config.verbosity >= 3:
-            print(f'Call of getStoredResidues, retrieve_only_db_ids {retrieve_only_db_ids}, exclude_interacting_chains {exclude_interacting_chains}: {len(stored_ids)}')
+            config.logger.info(f'Call of getStoredResidues, retrieve_only_db_ids {retrieve_only_db_ids}, exclude_interacting_chains {exclude_interacting_chains}: {len(stored_ids)}')
     else:
         stored_ids = custom_ids
         if config.verbosity >= 3:
-            print(f'Call of getStoredResidues, retrieve_only_db_ids {retrieve_only_db_ids}, exclude_interacting_chains {exclude_interacting_chains} with custom_ids: {len(custom_ids)}')
+            config.logger.info(f'Call of getStoredResidues, retrieve_only_db_ids {retrieve_only_db_ids}, exclude_interacting_chains {exclude_interacting_chains} with custom_ids: {len(custom_ids)}')
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print("Time for getstoredresidues 1: %s" % str(t1 - t0))
+        config.logger.info(f"Time for getstoredresidues 1: {t1 - t0}")
 
     if retrieve_only_db_ids:
         max_number_of_residues = 10000000
@@ -213,7 +217,7 @@ def getStoredResidues(
 
                 t11 = time.time()
                 if config.verbosity >= 4:
-                    print(f"Time for getstoredresidues 2.1: {t11 - t10} {len(id_package)}")
+                    config.logger.info(f"Time for getstoredresidues 2.1: {t11 - t10} {len(id_package)}")
                 times.append(t11-t10)
 
                 if proteins is not None:
@@ -226,7 +230,7 @@ def getStoredResidues(
                 
                 t12 = time.time()
                 if config.verbosity >= 4:
-                    print(f"Time for getstoredresidues 2.2: {t12 - t11} {len(id_package)}")
+                    config.logger.info(f"Time for getstoredresidues 2.2: {t12 - t11} {len(id_package)}")
                 times.append(t12-t11)
 
                 total_times = aggregate_times(total_times, times)
@@ -254,7 +258,7 @@ def getStoredResidues(
 
                 if count >= 50000:
                     if config.verbosity >= 2:
-                        print(f'remote getStoredResidues froze: {len(id_packages)=} {len(returned_pkgs)=}')
+                        config.logger.info(f'remote getStoredResidues froze: {len(id_packages)=} {len(returned_pkgs)=}')
                     for remote_process in remote_selects_process_ids:
                         ray.kill(remote_process)
                     if len(id_packages) - len(returned_pkgs) == 1:
@@ -270,38 +274,58 @@ def getStoredResidues(
         else:
             if config.verbosity >= 2:
                 t12 = time.time()
-                print(f"Time for remote select: {t12 - t11}")
+                config.logger.info(f"Time for remote select: {t12 - t11}")
 
     if config.verbosity >= 2:
-        print_times(total_times, label = 'process residue data')
+        print_times(total_times, label = 'process residue data', logger=config.logger)
         t2 = time.time()
-        print("Time for getstoredresidues 2: %s" % str(t2 - t1))
+        config.logger.info(f"Time for getstoredresidues 2: {t2 - t1}")
 
     if proteins is None:
         return total_structures, total_complexes
-    
-def getBackmaps(
-        structure_db_ids: dict[int, tuple[str, str]],
-        config,
-        unpacked = True,
-        locked = True, db_lock = None
-        ) -> dict[str, dict[str, dict[str, residue_package.Residue_Map[int] | bytes]]]:
-    columns = ['Structure', 'Protein', 'Backmap']
-    table = 'Alignment'
-    results = binningSelect(structure_db_ids, columns, table, config, locked=locked, db_lock=db_lock)
 
-    backmaps: dict[str, dict[str, dict[str, residue_package.Residue_Map[int] | bytes]]] = {}
 
-    for row in results:
-        structure_id, chain = structure_db_ids[row[0]]
-        if structure_id not in backmaps:
-            backmaps[structure_id] = {}
-        if chain not in backmaps[structure_id]:
-            backmaps[structure_id][chain] = {}
-        if unpacked:
-            backmap = unpack(row[2])
+def get_afdb_data(model_id: str, config: Config, columns_tuple: tuple[str, str]):
+    afdb_id, main_db, chunk_id = alphafold_model_id_to_db_key(model_id)
+    if main_db:
+        subdb = 'main'
+    else:
+        subdb = 'collab'
+    table_name = f'AFDB_{subdb}_{chunk_id}'
+
+    if config.verbosity >= 4:
+        config.logger.info(f'get_afdb_data: {model_id=} {columns_tuple=} {afdb_id=} {table_name=}')
+
+    results = select(config, columns_tuple, table_name, equals_rows={'ID':afdb_id}, db_name=config.afdb)
+    if len(results) == 0:
+        return None
+
+    pages = []
+    for i in range(len(columns_tuple)//2):
+        try:
+            data, compr_type = results[0][(i*2):(i*2)+2]
+        except ValueError as err: 
+            raise ValueError(f'{err=} {columns_tuple=} {results=}')
+
+        if compr_type == 0:
+            page = gzip.decompress(data)
+        elif compr_type == 1:
+            page = zstd.decompress(data)
         else:
-            backmap = row[2]
-        backmaps[structure_id][chain][row[1]] = backmap
+            page = None
+        pages.append(page)
+    if len(pages) == 1:
+        return pages[0]
+    return pages
 
-    return backmaps
+def get_afdb_structure(model_id: str, config: Config):
+    columns = ['Structure_data', 'Sd_compr_type']
+    return get_afdb_data(model_id, config, columns)
+
+def get_afdb_msa(model_id: str, config: Config):
+    columns = ['MSA_data', 'Md_compr_type']
+    return get_afdb_data(model_id, config, columns)
+
+def get_afdb_rin_and_cent(model_id: str, config: Config):
+    columns = ['RIN_data', 'Rd_compr_type', 'Centralities_data', 'Cd_compr_type']
+    return get_afdb_data(model_id, config, columns)

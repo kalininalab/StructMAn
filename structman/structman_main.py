@@ -6,6 +6,8 @@ import os
 import resource
 import sys
 import time
+import logging
+from datetime import datetime
 
 import pymysql as MySQLdb
 import ray
@@ -41,8 +43,6 @@ except ImportError:
         with open(os.path.join(env_path, 'deactivate.d', 'env_vars.sh'), 'a') as file:
             file.write('unset STRUCTMAN_WARN\n')
 
-
-
 def limit_memory(soft_limit):
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     resource.setrlimit(resource.RLIMIT_AS, (soft_limit, hard))
@@ -50,27 +50,15 @@ def limit_memory(soft_limit):
 def main(infiles, out_folder, config):
     # resource.setrlimit(resource.RLIMIT_AS,(6442450944,8589934592))
     # resource.setrlimit(resource.RLIMIT_AS,(442450944,589934592))
+    numba_logger = logging.getLogger('numba')
+    numba_logger.setLevel(logging.WARNING)
+    fl_logger = logging.getLogger('filelock')
+    fl_logger.setLevel(logging.WARNING)
     for infile in infiles:
-        if isinstance(infile, str):
-            if config.verbosity >= 1:
-                print('Processing file: ', infile)
-            # check if the infile got already processed
-            session_id = database.getSessionId(infile, config)
-
-
-            # create the output folder
-            trunk, infilename = os.path.split(infile)
-
-            if infilename[-6:] == '.fasta':
-                config.fasta_input = True
-
-            if out_folder is None:
-                out_folder = resolve_path(os.path.join(trunk, "Output"))
-        else:
-            config.errorlog.add_error(f'Invalid input file path: {infile}')
-
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
+
+        trunk, infilename = os.path.split(infile)
 
         session_name = infilename.rsplit('.', 1)[0]
 
@@ -80,6 +68,36 @@ def main(infiles, out_folder, config):
             os.makedirs(outpath)
 
         config.outpath = outpath
+
+        main_logger = logging.getLogger(__name__)
+
+        time_stamp = str(datetime.now()).replace(' ','_')
+
+        log_file = f'{config.outpath}/main_log_verbosity_{config.verbosity}_{time_stamp}.log'
+        logging.basicConfig(filename=log_file, encoding='utf-8', level=logging.DEBUG)
+
+        config.logfile = log_file
+        config.logger = main_logger
+
+        print(f'Command will be written to: {log_file}')
+
+        if isinstance(infile, str):
+            if config.verbosity >= 1:
+                print('Processing file: ', infile)
+            # check if the infile got already processed
+            session_id = database.getSessionId(infile, config)
+
+            # create the output folder
+            if infilename[-6:] == '.fasta':
+                config.fasta_input = True
+
+            if out_folder is None:
+                out_folder = resolve_path(os.path.join(trunk, "Output"))
+        else:
+            config.errorlog.add_error(f'Invalid input file path: {infile}')
+
+        
+
         # run the main pipeline
         
         if session_id is None:
@@ -89,12 +107,12 @@ def main(infiles, out_folder, config):
 
 
         # run the output scripts
-        months = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
-        time_struct = time.gmtime()
-        year = str(time_struct[0])
-        month = months[time_struct[1]]
-        day = str(time_struct[2])
-        date = f"{day}{month}{year}"
+        #months = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+        #time_struct = time.gmtime()
+        #year = str(time_struct[0])
+        #month = months[time_struct[1]]
+        #day = str(time_struct[2])
+        #date = f"{day}{month}{year}"
         
         out_returncode = output.main(session_id, outpath, config)
 
@@ -174,6 +192,8 @@ def structman_cli():
         'mapping_db_from_scratch   same as mapping_db but removes an existing instance of the mapping DB.\n\n'
 
         'alphafold_db              downloads all available protein structures models created by alphafold stored at: https://alphafold.ebi.ac.uk/\n'
+
+        'complex_model_db          downloads all available protein complex models created by the Cong lab stored at: https://conglab.swmed.edu/humanPPI/\n'
     ])
 
     config_util_disclaimer = ''.join([
@@ -230,7 +250,7 @@ def structman_cli():
         database_util = True
         argv = argv[1:]
 
-        possible_key_words = set(['reset', 'out', 'create', 'destroy', 'clear', 'export', 'reduce', 'remove_sessions', 'fix', 'clone'])
+        possible_key_words = set(['reset', 'out', 'create', 'destroy', 'clear', 'export', 'reduce', 'remove_sessions', 'fix', 'clone', 'clone_afdb'])
 
         if len(argv) == 0 or argv[0] == '-h' or argv[0] == '--help':
             print(database_util_disclaimer)
@@ -252,6 +272,7 @@ def structman_cli():
     update_mapping_db_from_scratch = False
     update_mapping_db_keep_raw_files = False
     update_alphafold_db = False
+    update_complex_model_db = False
     structure_limiter = None
     update_microminer = False
     microminer_from_scratch = False
@@ -291,11 +312,12 @@ def structman_cli():
             if 'mmdb_from_scratch' in argv:
                 update_microminer = True
                 microminer_from_scratch = True
-
+            if 'complex_model_db' in argv:
+                update_complex_model_db = True
             if 'check_search_db' in argv:
                 check_search_db = True
 
-            if not (update_pdb or update_rindb or update_mapping_db or update_alphafold_db or update_microminer or check_search_db):
+            if not (update_pdb or update_rindb or update_mapping_db or update_alphafold_db or update_microminer or check_search_db or update_complex_model_db):
                 print(update_util_disclaimer)
                 sys.exit(1)
 
@@ -629,7 +651,7 @@ def structman_cli():
             sys.exit(2)
 
 
-    config = Config(config_path, num_of_cores=num_of_cores, dbname = dbname,
+    config = Config(config_path, num_of_cores=num_of_cores, dbname = dbname, force_db_name = force_db_name,
                     output_path=outfolder, util_mode=util_mode, configure_mode=configure_mode, local_db = local_db, db_mode = db_mode,
                     basic_util_mode=basic_util_mode, output_util=output_util, external_call=False, verbosity=verbosity,
                     print_all_errors=print_all_errors, print_all_warns=print_all_warns, restartlog=restartlog, compute_ppi = compute_ppi)
@@ -737,6 +759,12 @@ def structman_cli():
                 sys.exit(1)
             repairDB.clone_db(config, target_db)
 
+        elif db_mode == 'clone_afdb':
+            if target_db is None:
+                print('Database clone_afdb needs "--target_db" to be specified, Abort ...')
+                sys.exit(1)
+            repairDB.clone_afdb(config, target_db)
+
     elif output_util:
         if config.verbosity >= 1:
             print(infile)
@@ -773,7 +801,7 @@ def structman_cli():
             genes_out_package.generate_gene_interaction_network(session_id, config, out_f, session_name)
         elif out_util_mode == 'getsubgraph':
             if target is None:
-                print(f'getsubgraph needs a target gene ID given with --target [gene ID]')
+                print('getsubgraph needs a target gene ID given with --target [gene ID]')
                 sys.exit(1)
             genes_out_package.retrieve_sub_graph(infile, config, trunk, session_name, target)
         elif out_util_mode == 'isoform_relations':
@@ -781,7 +809,7 @@ def structman_cli():
             genes_out_package.generate_isoform_relations(session_id, config, out_f, session_name)
         elif out_util_mode == 'gene_report':
             if target is None:
-                print(f'gene_report needs a target gene ID given with --target [gene ID]')
+                print('gene_report needs a target gene ID given with --target [gene ID]')
                 sys.exit(1)
             if session_id is None:
                 print(f'Couldnt find input file {infile} in database. Is the correct database (--dbname) provided?')
@@ -819,6 +847,12 @@ def structman_cli():
                 config.mapping_db = 'struct_man_db_mapping'
                 config.config_parser_obj.set('user', 'mapping_db', 'struct_man_db_mapping')
                 config.check_mapping_db()
+            
+            if update_complex_model_db:
+                if not os.path.exists('/structman/resources/complex_model_db'):
+                    os.mkdir('/structman/resources/complex_model_db')
+                config.complex_model_db_path = '/structman/resources/complex_model_db'
+                config.config_parser_obj.set('user', 'complex_model_db_path', '/structman/resources/complex_model_db')
 
             f = open(config_path, 'w')
             config.config_parser_obj.write(f)
@@ -833,7 +867,8 @@ def structman_cli():
                             update_source = update_source,
                             update_microminer = update_microminer,
                             microminer_from_scratch = microminer_from_scratch,
-                            check_search_db = check_search_db
+                            check_search_db = check_search_db, 
+                            update_complex_model_db = update_complex_model_db
                     )
 
     elif configure_mode:

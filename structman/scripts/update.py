@@ -8,7 +8,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(os.path.realpath(__file__))))))
 import structman
 
-from structman.scripts import createPdbBaDb, updateMappingDB, updateAlphafoldModelDB, createCustomDb
+from structman.scripts import createPdbBaDb, updateMappingDB, updateAlphafoldModelDB, createCustomDb, updateComplexModelDB
 from structman.scripts.createMMDB import update_microminer_db
 
 
@@ -31,7 +31,7 @@ def create_mmseqs_index(infile, outfolder, mmseqs2_tmp):
 def main(
             config, skipUpdatePDB=False, skip_rindb=False, rin_fromScratch=False, update_mapping_db = False,
             mapping_db_from_scratch = False, update_mapping_db_keep_raw_files = False, update_alphafold_db = False,
-            update_source = None, update_microminer = False, microminer_from_scratch = False, check_search_db = False
+            update_source = None, update_microminer = False, microminer_from_scratch = False, check_search_db = False, update_complex_model_db = False
         ):
     mmseqs_fromScratch = False
     skipStructureDBs = False
@@ -40,10 +40,11 @@ def main(
 
     pdb_path = config.pdb_path
     pdb_update_script = config.pdb_sync_script
-    print(f'================================\nStructMAn Update Script:\n Update PDB: {not skipUpdatePDB}\n Update RIN DB: {not skipUpdatePDB}\n Update AF DB: {update_alphafold_db}\n Update Mapping DB: {update_mapping_db}\n Check Search DB: {check_search_db}\n================================')
+    print(f'================================\nStructMAn Update Script:\n Update PDB: {not skipUpdatePDB}\n Update RIN DB: {not skipUpdatePDB}\n Update AF DB: {update_alphafold_db}\n Update Mapping DB: {update_mapping_db}\n Check Search DB: {check_search_db}\n Update Complex Model DB: {update_complex_model_db}\n================================')
 
     rinerator_base_path = config.rinerator_base_path
     rin_db_path = config.rin_db_path
+    complex_model_db_path = config.complex_model_db_path
 
     mmseqs2_db_path = config.mmseqs2_db_path
     search_db_base_path = mmseqs2_db_path.rsplit('/', 1)[0]
@@ -84,9 +85,19 @@ def main(
         if update_alphafold_db:
             updateAlphafoldModelDB.main(config)
 
+        if update_complex_model_db:
+            updateComplexModelDB.main(config)
+
         if not skip_rindb:
             # update rin db
-            recently_modified_structures = structman.lib.createRINdb.main(fromScratch=rin_fromScratch, pdb_p=pdb_path, rin_db_path=rin_db_path, n_proc=config.proc_n, rinerator_base_path=rinerator_base_path, process_model_db = config.model_db_active, config = config)
+            recently_modified_structures = structman.lib.createRINdb.main(
+                fromScratch=rin_fromScratch,
+                pdb_p=pdb_path,
+                rin_db_path=rin_db_path,
+                n_proc=config.proc_n,
+                rinerator_base_path=rinerator_base_path,
+                config = config
+                )
 
             p = subprocess.Popen(['chmod', '777', '-R', '.'], cwd=rin_db_path)
             p.wait()
@@ -119,7 +130,8 @@ def main(
             create_mmseqs_index(model_db_fasta_name, search_db_base_path, mmseqs2_tmp)
 
             print("Model search database for MMseqs2 created!")
-    elif update_alphafold_db:
+
+    if update_alphafold_db:
         model_db_fasta_name = 'model_db_mmseqs2'
         config.model_db_fasta_path = f'{search_db_base_path}/{model_db_fasta_name}'
         createPdbBaDb.update_model_db(config, update_source = update_source, init_ray = True)
@@ -128,8 +140,19 @@ def main(
             create_mmseqs_index(model_db_fasta_name, search_db_base_path, mmseqs2_tmp)
 
             print("Model search database for MMseqs2 created!")
+    
+    if update_complex_model_db:
+        complex_model_db_fasta_name = 'complex_model_db_mmseqs2'
+        config.complex_model_db_fasta_path = f'{search_db_base_path}/{complex_model_db_fasta_name}'
+        createPdbBaDb.create_complex_model_db_fasta(config, update_source = update_source)
+        
+        if config.complex_model_db_fasta_created:
 
-    elif check_search_db:
+            create_mmseqs_index(complex_model_db_fasta_name, search_db_base_path, mmseqs2_tmp)
+
+            print("Complex Model search database for MMseqs2 created!")
+
+    if check_search_db:
         if os.path.exists(mmseqs2_db_path):
             pass
         else:

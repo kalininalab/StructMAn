@@ -15,7 +15,15 @@ import ray
 from structman.lib import pdbParser, rin
 from structman.lib.database.retrieval import getStoredResidues
 from structman.lib.database.insertion_lib import remote_insertResidues, insertComplexes, insert_interfaces, remote_insert_interface_residues
-from structman.base_utils.base_utils import median, distance, pack, unpack, is_alphafold_model, alphafold_model_id_to_file_path, aggregate_times, print_times
+from structman.base_utils.base_utils import (
+    median, distance,
+    pack, unpack,
+    is_alphafold_model, alphafold_model_id_to_file_path,
+    is_model, complex_id_to_file_path,
+    aggregate_times, print_times,
+    reset_logger_for_remotes
+)
+from structman.base_utils.config_class import Config
 from structman.lib.sdsc.consts.residues import CORRECT_COUNT, THREE_TO_ONE, BLOSUM62, ONE_TO_THREE, RESIDUE_MAX_ACC, HYDROPATHY, METAL_ATOMS, ION_ATOMS
 from structman.lib.sdsc import sdsc_utils
 from structman.lib.sdsc import residue as residue_package
@@ -54,7 +62,7 @@ def candidateScore(lig_sub_dist, chain_sub_dist, lig_wf=1.0, chain_wf=1.0, useBl
     return candidate
 
 
-def calcDSSP(path, DSSP, angles=False, verbosity_level=0):
+def calcDSSP(path, DSSP, angles=False):
 
     dssp_dict = {}
     errorlist = []
@@ -68,8 +76,7 @@ def calcDSSP(path, DSSP, angles=False, verbosity_level=0):
     # Alert user for errors
     if err.strip():
         if not out.strip():
-            if verbosity_level >= 4:
-                print('DSSP failed to produce an output\n%s\n%s\n' % (path, err))
+            
             errorlist.append('DSSP failed to produce an output\n%s\n%s\n' % (path, err))
             return dssp_dict, errorlist
 
@@ -476,8 +483,6 @@ def parsePDB(input_page: str) -> tuple[
         if chain_type_map[chain_id] == 'DNA' or chain_type_map[chain_id] == 'RNA':
             continue
 
-        #print(f'{chain_id} {peptide_count[chain_id]}')
-
         if peptide_count[chain_id][0] <= peptide_count[chain_id][1] * 2:
             chain_type_map[chain_id] = 'Peptide'
         elif (peptide_count[chain_id][0] + peptide_count[chain_id][1]) < 300:  # Total number of atoms
@@ -769,7 +774,6 @@ def calculate_interfaces(IAmap, chain_type_map) -> dict[str, dict[str, interface
             interfaces[chain][chain_b] = interface_package.Interface(chain, chain_b)
         
         interfaces[chain][chain_b].add_interaction(res, res_b, score)
-        #print('Add interaction:', chain, chain_b, res, res_b)
 
     """
     #find interface edge triangles
@@ -810,11 +814,7 @@ def analysis_chain_remote_wrapper(target_chain, analysis_dump):
 
     result = [analysis_chain(target_chain, config, profiles, centralities, packed_analysis_dump)]
 
-    #print('Finished nested chain:', target_chain)
-
     result = pack(result)
-
-    #print('Finished packaging of nested chain:', target_chain)
 
     return result
 
@@ -822,6 +822,7 @@ def analysis_chain_remote_wrapper(target_chain, analysis_dump):
 def analysis_chain_package_wrapper(package, analysis_dump):
     results = []
     config, profiles, centralities, packed_analysis_dump = analysis_dump
+    reset_logger_for_remotes(config)
     analysis_dump = packed_analysis_dump
     for target_chain in package:
         results.append(analysis_chain(target_chain, config, profiles, centralities, analysis_dump))
@@ -830,6 +831,7 @@ def analysis_chain_package_wrapper(package, analysis_dump):
 @ray.remote(max_calls = 1)
 def annotate_wrapper(conf_dump, chunk, structure_ids, db_lock):
     config = conf_dump
+    reset_logger_for_remotes(config)
     return annotate(config, chunk, structure_ids, locked = True, db_lock=db_lock)
 
 def annotate(config, chunk, structure_ids: dict[str, dict[str, int]], locked = False, db_lock=None):
@@ -843,45 +845,48 @@ def annotate(config, chunk, structure_ids: dict[str, dict[str, int]], locked = F
     structural_analysis_list: list[tuple[str, dict[str, residue_package.Residue_Map]]] = []
     interface_map: dict[str, dict[str, dict[str, interface_package.Interface]]] = {}
     structure_db_dict: dict[int, tuple[str, str]] = {}
-    for pdb_id, target_dict, nested_cores_limiter, nested_call in chunk:
+    for structure_id, target_dict, nested_cores_limiter, nested_call in chunk:
         t0 = time.time()
         model_path = None
         # set model path to pdb file path in custom db path 
         if config.custom_db_path:
             custom_path_list = os.listdir(config.custom_db_path)
             for model in custom_path_list:
-                if model.startswith(pdb_id):
+                if model.startswith(structure_id):
                     model_path = config.custom_db_path + "/%s" %model
 
         elif config.model_db_active:
-            if is_alphafold_model(pdb_id):
-                model_path = alphafold_model_id_to_file_path(pdb_id, config)
+            if is_model(structure_id):
+                if is_alphafold_model(structure_id):
+                    model_path = alphafold_model_id_to_file_path(structure_id, config)
+                else:
+                    model_path = complex_id_to_file_path(structure_id, config)
         interfaces: dict[str, dict[str, interface_package.Interface]]
         (structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles,
          chain_type_map, chainlist, nested_processes,
          interfaces,
-         times, nested_times, serialized_times) = structuralAnalysis(pdb_id, config, target_dict=target_dict, nested_cores_limiter = nested_cores_limiter, nested_call = nested_call, model_path = model_path, chain_ids = structure_ids[pdb_id])
+         times, nested_times, serialized_times) = structuralAnalysis(structure_id, config, target_dict=target_dict, nested_cores_limiter = nested_cores_limiter, nested_call = nested_call, model_path = model_path, chain_ids = structure_ids[structure_id])
         t1 = time.time()
 
-        interface_map[pdb_id] = interfaces
+        interface_map[structure_id] = interfaces
 
         total_times = aggregate_times(total_times, times)
         total_nested_times = aggregate_times(total_nested_times, nested_times)
         total_serialized_times = aggregate_times(total_serialized_times, serialized_times)
 
         if config.verbosity >= 5:
-            print(f'Time for structural analysis of {pdb_id}: {t1 - t0}, nested call: {nested_call}')
+            config.logger.info(f'Time for structural analysis of {structure_id}: {t1 - t0}, nested call: {nested_call}')
 
-        for chain in structure_ids[pdb_id]:
-            db_id = structure_ids[pdb_id][chain]
-            structure_db_dict[db_id] = (pdb_id, chain)
+        for chain in structure_ids[structure_id]:
+            db_id = structure_ids[structure_id][chain]
+            structure_db_dict[db_id] = (structure_id, chain)
 
         if nested_call:
-            nested_outputs.append((pdb_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
+            nested_outputs.append((structure_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
             nested_processes_dump.append(nested_processes)
         else:
-            outputs.append((pdb_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
-            structural_analysis_list.append((pdb_id, structural_analysis_dict))
+            outputs.append((structure_id, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, interfaces, t1 - t0))
+            structural_analysis_list.append((structure_id, structural_analysis_dict))
 
     if not nested_call:
         background_process = remote_insertResidues(structural_analysis_list, structure_ids, config, locked=locked)
@@ -899,7 +904,7 @@ def annotate(config, chunk, structure_ids: dict[str, dict[str, int]], locked = F
 
 def analysis_chain(
         target_chain: str,
-        config,
+        config: Config,
         profiles: dict[str, residue_package.Residue_Map[rin.Interaction_profile]],
         centralities, analysis_dump):
     coordinate_map: dict[str, tuple[residue_package.Residue_Map, residue_package.Residue_Map]]
@@ -915,9 +920,9 @@ def analysis_chain(
 
     if config.verbosity >= 5:
         if len(target_residues[target_chain]) <= 1:
-            print(f'Call of analysis_chain: {pdb_id} {target_chain} {target_residues[target_chain]}')
+            config.logger.info(f'Call of analysis_chain: {pdb_id} {target_chain} {target_residues[target_chain]}')
         else:
-            print(f'Call of analysis_chain: {pdb_id} {target_chain} {len(target_residues[target_chain])}')
+            config.logger.info(f'Call of analysis_chain: {pdb_id} {target_chain} {len(target_residues[target_chain])}')
 
     structural_analysis_dict = residue_package.Residue_Map()
 
@@ -927,7 +932,6 @@ def analysis_chain(
 
     for target_res_id in target_residues[target_chain].get_keys():
         if not res_contig_map[target_chain].contains(target_res_id):
-            #print(f'{pdb_id} {target_chain} {target_res_id}')
             continue
         if sub_loop_broken:
             break
@@ -1011,7 +1015,7 @@ def analysis_chain(
 
                     if inside_sphere is not None:
                         if config.verbosity >= 8:
-                            print('Residue-Residue calc:', pdb_id, chain, target_res_id, 'inside the sphere:', len(inside_sphere))
+                            config.logger.info(f'Residue-Residue calc: {pdb_id}, {chain}, {target_res_id}, {len(inside_sphere)=}')
 
                         for intra_chain_res in inside_sphere.get_keys():
                             if not dssp_dict[chain].contains(intra_chain_res):
@@ -1097,11 +1101,8 @@ def analysis_chain(
                 dssp = False
 
 
-        #print(f'Before Adding profiles: {target_chain} {target_res_id} {list(profiles.keys())}')
         if target_chain in profiles:
-            #print(profiles[target_chain].get_keys())
             if profiles[target_chain].contains(target_res_id):
-                #print(f'Setting {profiles[target_chain].get_item(target_res_id)=} to {target_chain} {target_res_id}')
                 residue.interaction_profile = profiles[target_chain].get_item(target_res_id)
 
         if target_chain in centralities:
@@ -1150,7 +1151,6 @@ def analysis_chain(
             (res_name_2, chain_2, res_nr_2, angle) = cis_follower_map[(target_chain, target_res_id)]
             residue.cis_follower = angle
 
-        #print(f'{pdb_id} {is_alphafold_model(pdb_id)} {avg_b_factor}')
         if is_alphafold_model(pdb_id):
             residue.pLDDT = avg_b_factor
         else:
@@ -1160,15 +1160,16 @@ def analysis_chain(
 
     if config.verbosity >= 5:
         if len(structural_analysis_dict) <= 10:
-            print(f'Results of analysis_chain: {pdb_id} {target_chain} {structural_analysis_dict}')
+            config.logger.info(f'Results of analysis_chain: {pdb_id} {target_chain} {structural_analysis_dict}')
         else:
-            print(f'Results of analysis_chain: {pdb_id} {target_chain} {len(structural_analysis_dict)}')
+            config.logger.info(f'Results of analysis_chain: {pdb_id} {target_chain} {len(structural_analysis_dict)}')
 
     return target_chain, structural_analysis_dict, errorlist
 
 
 def structuralAnalysis(
-        pdb_id: str, config: any,
+        pdb_id: str,
+        config: Config,
         target_dict: list[str] | None = None,
         model_path: str = None, keep_rin_files: bool =True,
         nested_cores_limiter: int | None = None, nested_call: bool = False,
@@ -1176,7 +1177,6 @@ def structuralAnalysis(
 
     dssp: bool = True
     dssp_path: str = config.dssp_path
-    pdb_path: str = config.pdb_path
     rin_db_path: str = config.rin_db_path
     verbosity: int = config.verbosity
 
@@ -1184,15 +1184,15 @@ def structuralAnalysis(
     t0 = time.time()
 
     if verbosity >= 4:  
-        print('Start structuralAnalysis of:', pdb_id)
+        config.logger.info(f'Start structuralAnalysis of {pdb_id=} {model_path=} {config.pdb_path=}')
 
-    page, page_altered, path, _ = pdbParser.standardParsePDB(pdb_id, pdb_path, return_10k_bool=True, get_is_local=True, model_path=model_path)
+    page, page_altered, path, _ = pdbParser.standardParsePDB(pdb_id, config, return_10k_bool=True, get_is_local=True, model_path=model_path)
 
     t1 = time.time()
     times.append(t1-t0)
 
     if verbosity >= 8:
-        print('\n',pdb_id,'\n\n',page)
+        config.logger.info(f'\n{pdb_id}\n\n{page}')
 
     errorlist = []
 
@@ -1247,13 +1247,13 @@ def structuralAnalysis(
             tmp_path = path
 
         # call DSSP  -structure of dssp_dict: {Chain:{Res_id:(racc,ssa)}}
-        dssp_dict, errlist = calcDSSP(tmp_path, dssp_path, angles=True, verbosity_level=verbosity)
+        dssp_dict, errlist = calcDSSP(tmp_path, dssp_path, angles=True)
         errorlist += errlist
         # remove tmp_file
         if page_altered:
             try:
                 os.remove(tmp_path)
-            except:
+            except OSError:
                 pass
         if dssp_dict == {}:
             dssp = False
@@ -1280,7 +1280,7 @@ def structuralAnalysis(
         if len(profiles) == 0:
             errorlist.append('Empty profiles %s %s %s' % (pdb_id, str(len(page)), str(len(res_contig_map))))
         elif verbosity >= 5:
-            print('Chains in profiles:', list(profiles.keys()))
+            config.logger.info(f'Chains in profiles: {list(profiles.keys())}')
 
 
     times.append(lookup_times)
@@ -1298,7 +1298,7 @@ def structuralAnalysis(
 
     number_protein_chains = 0
     for target_chain in target_residues:
-        if not target_chain in chain_type_map:
+        if target_chain not in chain_type_map:
             config.errorlog.add_warning(f'{target_chain} not in chain_type_map for: {pdb_id}')
             continue
         if chain_type_map[target_chain] != 'Protein':
@@ -1325,7 +1325,7 @@ def structuralAnalysis(
         nested_cores = min([config.proc_n - 1, nested_cores_limiter])
 
         if number_protein_chains < nested_cores:
-            packaged = False
+
             for target_chain in target_residues:
                 if target_chain not in chain_type_map:
                     continue
@@ -1336,8 +1336,8 @@ def structuralAnalysis(
 
         else:
             if verbosity >= 5:
-                print('Packaging a big structure:',pdb_id,'with',number_protein_chains,'chains')
-            packaged = True
+                config.logger.info(f'Packaging a big structure: {pdb_id} with {number_protein_chains} chains')
+
             max_package_size = number_protein_chains // nested_cores
             if (number_protein_chains % nested_cores) != 0:
                 max_package_size += 1
@@ -1357,7 +1357,7 @@ def structuralAnalysis(
                 core_results.append(analysis_chain_package_wrapper.remote(package, analysis_dump))
 
         if verbosity >= 5:
-            print('Reached nested remotes:', pdb_id, number_protein_chains)
+            config.logger.info(f'Reached nested remotes: {pdb_id} {number_protein_chains}')
 
         t9 = time.time()
         nested_times.append(t9-t8)
@@ -1396,14 +1396,14 @@ def structuralAnalysis(
             structural_analysis_dict[target_chain] = chain_structural_analysis_dict
             errorlist += ['%s - %s' % (x, pdb_id) for x in chain_errorlist[:5]]
             if config.verbosity >= 5:
-                print(f'Received structural analysis results (1) from: {pdb_id} {target_chain} {len(chain_structural_analysis_dict)} {chain_errorlist}')
+                config.logger.info(f'Received structural analysis results (1) from: {pdb_id} {target_chain} {len(chain_structural_analysis_dict)} {chain_errorlist}')
 
         t8 = time.time()
         serialized_times.append(t8-t7)
 
     return structural_analysis_dict, errorlist, ligand_profiles, metal_profiles, ion_profiles, chain_chain_profiles, chain_type_map, chainlist, [], interfaces, times, None, serialized_times
 
-def trim_down_backmaps(config, proteins):
+def trim_down_backmaps(config: Config, proteins):
     removed_backmaps = 0
     for structure_id in proteins.complexes:
         chains_with_interfaces = set()
@@ -1424,9 +1424,6 @@ def trim_down_backmaps(config, proteins):
                             pass
             proteins.structures[structure_id][chain_a].backmaps = new_back_maps
 
-        #print(structure_id, chains_with_interfaces)
-
-        
         for chain in proteins.complexes[structure_id].chains:
             if chain in chains_with_interfaces:
                 continue
@@ -1435,12 +1432,11 @@ def trim_down_backmaps(config, proteins):
                     removed_backmaps += len(proteins.structures[structure_id][chain].backmaps)
                     proteins.structures[structure_id][chain].backmaps = {}
                     
-
     if config.verbosity >= 4:
-        print(f'Removed backmaps: {removed_backmaps}')
+        config.logger.info(f'Removed backmaps: {removed_backmaps}')
     return
 
-def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
+def paraAnnotate(config: Config, proteins, indel_analysis_follow_up=False):
 
     t0 = time.time()
 
@@ -1477,14 +1473,14 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         total_cost += ac
 
         if config.verbosity >= 6:
-            print(f'PDB entry {pdb_id} added to size_list, {ac=}')
+            config.logger.info(f'PDB entry {pdb_id} added to size_list, {ac=}')
         n_of_comps += 1
 
     chunksize: int = total_cost // (8 * config.proc_n)
 
     if config.verbosity >= 2:
-        print(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}, n_of_chain_thresh: {config.n_of_chain_thresh}')
-        print(f'Total amount in structure_list: {len(structure_list)}. Total cost: {total_cost}, Threads: {config.proc_n}')
+        config.logger.info(f'Starting structural analysis with {n_of_comps} complexes. {n_of_stored_complexes} complexes are already stored. Chunksize: {chunksize}, n_of_chain_thresh: {config.n_of_chain_thresh}')
+        config.logger.info(f'Total amount in structure_list: {len(structure_list)}. Total cost: {total_cost}, Threads: {config.proc_n}')
 
     size_list = sorted(size_list, key=lambda x:x[1] ,reverse=True)
 
@@ -1552,15 +1548,15 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
     if config.verbosity >= 2:
         t11 = time.time()
-        print(f"Annotation Part 1.1: {t11 - t0} {n_started=} {input_procession_counter=}")
+        config.logger.info(f"Annotation Part 1.1: {t11 - t0} {n_started=} {input_procession_counter=}")
 
     #getStoredResidues(proteins, config, exclude_interacting_chains = not config.compute_ppi)  # has to be called after insertStructures
     #getStoredResidues(proteins, config, exclude_interacting_chains=True)
 
     if config.verbosity >= 2:
         t1 = time.time()
-        print("Annotation Part 1.2: %s" % (str(t1 - t11)))
-        print("Annotation Part 1: %s" % (str(t1 - t0)))
+        config.logger.info(f"Annotation Part 1.2: {t1 - t11}")
+        config.logger.info(f"Annotation Part 1: {t1 - t0}")
 
     max_comp_time = 0.
     total_comp_time = 0.
@@ -1600,8 +1596,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                 wait_counter_2 += 1
                 core_ready, core_not_ready = ray.wait(core_not_ready_dict[ret_pdb_id], timeout=0.1)
                 if config.verbosity >= 5:
-                    print(f'{wait_counter} {wait_counter_2} Nested wait:', ret_pdb_id, len(core_ready), len(core_not_ready))
-                    print(f'RAM memory % used: {psutil.virtual_memory()[2]}')
+                    config.logger.info(f'{wait_counter} {wait_counter_2} Nested wait:', ret_pdb_id, len(core_ready), len(core_not_ready))
+                    config.logger.info(f'RAM memory % used: {psutil.virtual_memory()[2]}')
                 if len(core_ready) > 0:
                     errorlist = []
                     structural_analysis_dict = {}
@@ -1615,7 +1611,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                             package_cost -= 1  # relieve cost for each finished nested remote (individual chains)
                             temporarily_freed[ret_pdb_id] += 1
                             if config.verbosity >= 5:
-                                print(f'Received structural analysis results (2) from: {ret_pdb_id} {target_chain} {len(chain_structural_analysis_dict)} {chain_errorlist}')
+                                config.logger.info(f'Received structural analysis results (2) from: {ret_pdb_id} {target_chain} {len(chain_structural_analysis_dict)} {chain_errorlist}')
                     if len(errorlist) > 0:
                         for error_text in errorlist:
                             config.errorlog.add_warning(error_text)
@@ -1644,7 +1640,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         not_ready = []
         if len(anno_result_ids) > 0:
             if config.verbosity >= 5:
-                print('Before wait, loop counter:', loop_counter)
+                config.logger.info(f'Before wait, loop counter: {loop_counter}')
 
             '''
             ready, not_ready = ray.wait(anno_result_ids, timeout = 0.00001)
@@ -1653,13 +1649,13 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                 gc.collect()
                 t_gc_1 = time.time()
                 if config.verbosity >= 5:
-                    print('Manual gc happend:', (t_gc_1 - t_gc_0))
+                    config.logger.info(f'Manual gc happend: {t_gc_1 - t_gc_0}')
             '''
             if config.proc_n > 1:
                 ready, not_ready = ray.wait(anno_result_ids)
 
                 if config.verbosity >= 5:
-                    print('Wait happened:', no_result_run)
+                    config.logger.info(f'Wait happened: {no_result_run=}')
 
                 t_0 = time.time()
 
@@ -1672,7 +1668,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
                 t_1 = time.time()
                 if config.verbosity >= 5:
-                    print('Time for loop part 1:', (t_1-t_0))
+                    config.logger.info(f'Time for loop part 1: {t_1-t_0}')
             else:
                 t_1 = time.time()
                 chunk_struct_outs = anno_result_ids
@@ -1724,7 +1720,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
                     #for chain in structural_analysis_dict:
                     #    if config.verbosity >= 5:
-                    #        print(f'Received structural analysis results (3) from: {ret_pdb_id} {chain} {len(structural_analysis_dict[chain])}')
+                    #        config.logger.info(f'Received structural analysis results (3) from: {ret_pdb_id} {chain} {len(structural_analysis_dict[chain])}')
                         
                     #    total_structural_analysis[ret_pdb_id][chain] = structural_analysis_dict[chain]
                     #    amount_of_chains_in_analysis_dict += 1
@@ -1769,7 +1765,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
                                 package_cost -= 1  # relieve cost for each finished nested remote (individual chains)
                                 temporarily_freed[ret_pdb_id] += 1
                                 if config.verbosity >= 5:
-                                    print(f'Received structural analysis results (4) from: {ret_pdb_id} {target_chain} {len(chain_structural_analysis_dict)} {chain_errorlist}')
+                                    config.logger.info(f'Received structural analysis results (4) from: {ret_pdb_id} {target_chain} {len(chain_structural_analysis_dict)} {chain_errorlist}')
 
                     if len(core_not_ready) > 0:
                         core_not_ready_dict[ret_pdb_id] = core_not_ready
@@ -1831,19 +1827,19 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
             
             if config.verbosity >= 4:
-                print('Time for result integration:', (t_integrate_4 - t_integrate_0), 'for amount of analyzed chunks:', len(chunk_struct_out),
-                      'individual times:', (t_integrate_1 - t_integrate_0),
-                                           (t_integrate_2 - t_integrate_1),
-                                           (t_integrate_3 - t_integrate_2),
-                                           (t_integrate_4 - t_integrate_3))
-                print('Time for unpacking:', (t_pickle_1 - t_pickle_0))
+                config.logger.info(f'Time for result integration: {t_integrate_4 - t_integrate_0} for amount of analyzed chunks: {len(chunk_struct_out)}')
+                config.logger.info(f'individual times: {t_integrate_1 - t_integrate_0}')
+                config.logger.info(f'{t_integrate_2 - t_integrate_1}')
+                config.logger.info(f'{t_integrate_3 - t_integrate_2}')
+                config.logger.info(f'{t_integrate_4 - t_integrate_3}')
+                config.logger.info(f'Time for unpacking: {t_pickle_1 - t_pickle_0}')
 
                 if (t_pickle_2 - t_pickle_1) > 60:
-                    print('Long depickling:', returned_pdbs)
-                print(f'RAM memory % used: {psutil.virtual_memory()[2]}')
+                    config.logger.info(f'Long depickling: {returned_pdbs}')
+                config.logger.info(f'RAM memory % used: {psutil.virtual_memory()[2]}')
 
             if config.verbosity >= 5:
-                print('Time for loop part 2:', (t_2-t_1))
+                config.logger.info(f'Time for loop part 2: {t_2-t_1}')
 
         new_anno_result_ids = []
 
@@ -1884,7 +1880,7 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
         if len(new_anno_result_ids) > 0 and config.verbosity >= 5:
             t_3 = time.time()
-            print('Time for loop part 3:', (t_3-t_2))
+            config.logger.info(f'Time for loop part 3: {t_3-t_2}')
 
         #for ray_id in ready:
         #    ray.cancel(ray_id, force=True)
@@ -1894,8 +1890,8 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
         if finished > 0:
             total_computed += finished
             if config.verbosity >= 5:
-                print('Newly finished structural analysis of', finished, '. Total:', total_computed, 'Current package:', len(anno_result_ids), 'and nested packages:', str(nested_packages), ', number of pending nested packaged chains:', len(core_not_ready_dict), 'Amount of new started processes:', len(new_anno_result_ids), 'Amount of pending processes:', len(not_ready))
-                print(f'RAM memory % used: {psutil.virtual_memory()[2]}')
+                config.logger.info(f'Newly finished structural analysis of {finished}. Total: {total_computed} Current package: {len(anno_result_ids)} and nested packages: {nested_packages}, number of pending nested packaged chains: {len(core_not_ready_dict)} Amount of new started processes: {len(new_anno_result_ids)} Amount of pending processes: {len(not_ready)}')
+                config.logger.info(f'RAM memory % used: {psutil.virtual_memory()[2]}')
         if len(anno_result_ids) == 0 and input_procession_counter >= len(size_list) and len(core_not_ready_dict) == 0:
             break
 
@@ -1906,20 +1902,20 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
 
     if config.verbosity >= 3:
-        print_times(total_times)
-        print_times(total_nested_times)
-        print_times(total_serialized_times)
+        print_times(total_times, logger=config.logger)
+        print_times(total_nested_times, logger=config.logger)
+        print_times(total_serialized_times, logger=config.logger)
 
     if config.verbosity >= 2:
         t2 = time.time()
-        print('Time for reenabling gc:', (t2- t_1_5))
-        print("Annotation Part 2: %s" % (str(t2 - t1)))
-        print('Longest computation for:', max_comp_time_structure, 'with:', max_comp_time, 'In total', amount_of_structures, 'structures', 'Accumulated time:', total_comp_time)
+        config.logger.info(f'Time for reenabling gc: {t2- t_1_5}')
+        config.logger.info(f"Annotation Part 2: {t2 - t1}")
+        config.logger.info(f'Longest computation for: {max_comp_time_structure} with: {max_comp_time} In total {amount_of_structures} structures, Accumulated time: {total_comp_time}')
 
     if config.verbosity >= 3:
         try:
             times_stat_file = f'{config.temp_folder}/../struct_wise_times.tsv'
-            print(f'Writing struct wise times to: {times_stat_file}')
+            config.logger.info(f'Writing struct wise times to: {times_stat_file}')
             with open(times_stat_file, 'w') as f:
                 f.write(''.join(struct_comp_times))
         except:
@@ -1927,33 +1923,33 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
     if config.verbosity >= 2:
         t32 = time.time()
-        print(f'Annotation Part 3.1: {t32 - t2}')
+        config.logger.info(f'Annotation Part 3.1: {t32 - t2}')
 
     insertComplexes(proteins, config)
 
     if config.verbosity >= 2:
         t33 = time.time()
-        print('Annotation Part 3.2:', t33 - t32)
+        config.logger.info(f'Annotation Part 3.2: {t33 - t32}')
 
     #if len(total_structural_analysis) > 0:
     #    background_insert_residues_process = insertResidues(total_structural_analysis, proteins, config)
 
     if config.verbosity >= 2:
         t34 = time.time()
-        print('Annotation Part 3.3:', t34 - t33)
+        config.logger.info(f'Annotation Part 3.3: {t34 - t33}')
 
     #trim_down_backmaps(config, proteins)
     #getStoredResidues(proteins, config, exclude_interacting_chains=True, retrieve_only_db_ids=True, skip_interfaces=True)
 
     if config.verbosity >= 2:
         t35 = time.time()
-        print('Annotation Part 3.4:', t35 - t34)
+        config.logger.info(f'Annotation Part 3.4: {t35 - t34}')
 
     #insert_interface_residues(proteins, config)
 
     if config.verbosity >= 2:
         t3 = time.time()
-        print("Annotation Part 3: %s" % (str(t3 - t2)))
+        config.logger.info(f"Annotation Part 3: {t3 - t2}")
 
     if config.verbosity >= 2:
         t41 = time.time()
@@ -1977,23 +1973,23 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
         if config.verbosity >= 2:
             t42 = time.time()
-            print(f'Annotation Part 4.1, pdb fast annotation, bg inserst residues: {t42-t41}')
+            config.logger.info(f'Annotation Part 4.1, pdb fast annotation, bg inserst residues: {t42-t41}')
         #insert_interfaces(proteins, config)
         if config.verbosity >= 2:
             t43 = time.time()
-            print(f'Annotation Part 4.2, pdb fast annotation, insert interfaces: {t43-t42}')
+            config.logger.info(f'Annotation Part 4.2, pdb fast annotation, insert interfaces: {t43-t42}')
 
     if config.verbosity >= 2:
         t4 = time.time()
-        print(f'Annotation Part 4: {t4-t3}')
+        config.logger.info(f'Annotation Part 4: {t4-t3}')
 
     if config.verbosity >= 2:
         t5 = time.time()
-        print(f"Annotation Part 5: {t5-t4}")
+        config.logger.info(f"Annotation Part 5: {t5-t4}")
 
     if not indel_analysis_follow_up:
         if config.verbosity >= 3:
-            print('Proteins object semi deconstruction')
+            config.logger.info('Proteins object semi deconstruction')
         #for protein_id in protein_ids:
         #    proteins.remove_protein_annotations(protein_id)
         proteins.semi_deconstruct()
@@ -2003,13 +1999,13 @@ def paraAnnotate(config, proteins, indel_analysis_follow_up=False):
 
     if config.verbosity >= 2:
         t6 = time.time()
-        print(f"Annotation Part 6: {t6-t5}")
+        config.logger.info(f"Annotation Part 6: {t6-t5}")
 
     gc.collect()
 
     if config.verbosity >= 2:
         t7 = time.time()
-        print(f"Time for garbage collection: {t7-t6}")
+        config.logger.info(f"Time for garbage collection: {t7-t6}")
 
     return amount_of_structures
 

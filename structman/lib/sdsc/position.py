@@ -48,16 +48,17 @@ class Position(Slotted_obj):
 
     def deconstruct(self, completely = False):
         try:
-            for mut_aa in self.mut_aas:
-                self.mut_aas[mut_aa].deconstruct()
-            del self.mut_aas
+            if completely:
+                for mut_aa in self.mut_aas:
+                    self.mut_aas[mut_aa].deconstruct()
+                del self.mut_aas
             self.mappings.deconstruct()
         except:
             pass
         if completely:
             doomsday_protocol(self)
         else:
-            doomsday_protocol(self, immunity = {'pos', 'pdb_res_nr', 'wt_aa'})
+            doomsday_protocol(self, immunity = {'pos', 'pdb_res_nr', 'wt_aa', 'pos_tags', 'mut_aas'})
 
     def print_state(self):
         print(self.wt_aa, self.pos, self.mut_aas, self.pos_tags)
@@ -86,9 +87,11 @@ class Position(Slotted_obj):
             return f'Cannot fuse positions with differing pdb_res_nr {self.pdb_res_nr=} {position.pdb_res_nr=}'
 
         if self.wt_aa != position.wt_aa:
-            return f'Cannot fuse positions with different WT AAs: {self.pos=} {self.pdb_res_nr=} {self.wt_aa=} {position.wt_aa=}'
+            if self.wt_aa == 'U':
+                self.wt_aa = position.wt_aa
+            else:
+                return f'Cannot fuse positions with different WT AAs: {self.pos=} {self.pdb_res_nr=} {self.wt_aa=} {position.wt_aa=}'
 
-        
         if self.pos_tags is not None and position.pos_tags is not None:
             self.pos_tags = self.pos_tags | position.pos_tags
         elif position.pos_tags is not None:

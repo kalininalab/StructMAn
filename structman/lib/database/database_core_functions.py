@@ -643,6 +643,7 @@ def select(
         null_columns: list[str] = [],
         n_trials: int = 3,
         from_mapping_db: bool = False,
+        db_name: str | None = None,
         locked: bool = False,
         db_lock = None) -> list[list]:
     
@@ -700,7 +701,7 @@ def select(
         broken = False
         if locked:
             with FileLock(db_lock_file):
-                db, cursor = config.getDB(mapping_db=from_mapping_db)
+                db, cursor = config.getDB(mapping_db=from_mapping_db, db_name = db_name)
                 try:
                     cursor.execute(statement, params)
                     results = cursor.fetchall()
@@ -716,7 +717,7 @@ def select(
                     if db is not None:
                         db.close()
         else:
-            db, cursor = config.getDB(mapping_db=from_mapping_db)
+            db, cursor = config.getDB(mapping_db=from_mapping_db, db_name = db_name)
             try:
                 cursor.execute(statement, params)
                 results = cursor.fetchall()

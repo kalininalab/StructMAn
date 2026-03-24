@@ -1,3 +1,11 @@
+Version 2.2.2
+    - Added AFDB collab datasets
+    - Implemented the integration of AFDB as an SQL database
+
+Version 2.2.1
+    - Changed logging from command line to a logfile
+    - Added a complex model db (based on https://www.science.org/doi/10.1126/science.adt1630)
+
 Version 2.2.0
     - Reorganized database inserts and selects, now are mostly scheduled in ray remote functions using filelocks to prevent collisions
     - Improvements on the installer
