@@ -1,9 +1,8 @@
 import math
 
 from structman.lib.sdsc import position as position_package
-from structman.lib.sdsc.indel import Indel
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
-
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol
+from structman.base_utils.base_utils import Slotted_obj
 
 class MultiMutation(Slotted_obj):
     __slots__ = ['wt_prot', 'mut_prot', 'snvs', 'indels', 'database_id', 'stored', 'tags', 'snv_db_ids', 'indel_db_ids']
@@ -20,33 +19,37 @@ class MultiMutation(Slotted_obj):
             self.tags = tags.copy()
         else:
             self.tags = None
+        # Position -> new amino acid, not the SNV object. The SNV belongs to the wildtype's
+        # Position, and sequence deduplication replaces it: fusing a duplicate wildtype into
+        # its survivor fuses or copies the duplicate's SNVs into the survivor's positions and
+        # deconstructs the originals. A multi mutation holding those originals then failed with
+        # "'SNV' object has no attribute 'database_id'". The SNV is looked up through wt_prot
+        # when it is needed, and wt_prot already names the survivor after a fusion.
         for mut in mutation_list:
             if not isinstance(mut, tuple):
                 self.indels.append(mut)
             else:
-                self.snvs[mut[0].pos] = (mut[0].mut_aas[mut[1]])
+                self.snvs[mut[0].pos] = mut[1]
         self.database_id = None
         self.stored = False
         self.snv_db_ids = None
         self.indel_db_ids = None
 
     def deconstruct(self):
-       for snv in self.snvs:
-           self.snvs[snv].deconstruct()
-       del self.snvs
-       for indel in self.indels:
-           self.indels[indel].deconstruct()
-       del self.indels
-       del self.tags
-       doomsday_protocol(self)
+        # The SNVs belong to the wildtype's positions and the indels to Proteins.indels, so
+        # only the references are dropped here.
+        del self.snvs
+        del self.indels
+        del self.tags
+        doomsday_protocol(self)
 
-    def get_snv_db_ids(self):
+    def get_snv_db_ids(self, proteins):
         if self.snv_db_ids is not None:
             return self.snv_db_ids
+        positions = proteins[self.wt_prot].positions
         db_ids = set()
-        for pos in self.snvs:
-            snv = self.snvs[pos]
-            db_ids.add(snv.database_id)
+        for pos, new_aa in self.snvs.items():
+            db_ids.add(positions[pos].mut_aas[new_aa].database_id)
         self.snv_db_ids = db_ids
         return db_ids
 
@@ -103,10 +106,10 @@ class MultiMutation(Slotted_obj):
                 return
             mut_seq = proteins[self.wt_prot].sequence
             indel_position_order = {}
-            for pos in self.snvs:
-                wt_aa = proteins[self.wt_prot].positions[pos].wt_aa
-                aa2 = self.snvs[pos].new_aa
-                mut_seq = '%s%s%s' % (mut_seq[:pos], aa2, mut_seq[(pos + 1):])
+            # Positions are 1-based over the 0-based sequence string, as for the indels below:
+            # residue pos is mut_seq[pos - 1]. Slicing at pos replaced the residue after it.
+            for pos, aa2 in self.snvs.items():
+                mut_seq = '%s%s%s' % (mut_seq[:(pos - 1)], aa2, mut_seq[pos:])
 
             for indel in self.indels:
                 indel_position_order[indel.left_flank_pos] = indel
@@ -128,8 +131,8 @@ class MultiMutation(Slotted_obj):
         insertions = []
         deletions = []
         subsitutions = []
-        for pos in self.snvs:
-            subsitutions.append((pos, self.snvs[pos].new_aa))
+        for pos, new_aa in self.snvs.items():
+            subsitutions.append((pos, new_aa))
         for indel in self.indels:
             ins, dels, subs = indel.get_affected_positions()
             insertions += ins

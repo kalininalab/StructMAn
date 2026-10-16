@@ -1,8 +1,32 @@
 import time
 from ast import literal_eval
 
+from structman.base_utils import base_utils
 from structman.lib.output import out_generator
 from structman.lib.output import plots
+
+
+def hide_emulated_resolution(structure_id: str, resolution):
+    """'-' instead of the 2.0 that stands in for a model's missing resolution.
+
+    A model has no experimental resolution, so the pipeline stamps 2.0 onto it
+    (templateFiltering.paraAnnotate, serializedPipeline.parse_complexes_body and
+    the retrieval side all do it) to keep the scoring arithmetic supplied with a
+    number. That value is an internal placeholder, not a measurement, and printing
+    it invites the reader to compare it against real resolutions.
+
+    The test is on the structure id, not on the value, so a crystal structure
+    solved at exactly 2.0 A keeps its resolution. It covers all three model
+    flavours the id scheme knows: AF-*, afdb_* and the '__'-joined multimer ids.
+    """
+    # is_model answers with a diagnostic string rather than False for a structure id
+    # whose type it cannot identify, and a non-empty string is truthy - so compare
+    # against True instead of testing truthiness, otherwise an unrecognised id would
+    # have its resolution hidden too.
+    if base_utils.is_model(structure_id) is True:
+        return '-'
+    return resolution
+
 
 type_factor = {
                 'substitution' : 0.5,

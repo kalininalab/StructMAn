@@ -1,7 +1,8 @@
 import math
 
 from structman.lib import sdsc
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol, translate, Slotted_obj
+from structman.base_utils.base_utils import Slotted_obj
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, translate
 from structman.lib.output.out_utils import function_factor
 
 def majority_vote(secs):

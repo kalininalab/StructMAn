@@ -1,3 +1,26 @@
+Version 2.3.3
+    - Many runtime and memory optimizations, by 
+        -- further transformation of python dicts to more reasonable datastructures
+        -- continued numba-fication of core processes
+        -- setting exact datatypes (i.e. python default float -> numpy.float32)
+    - Changing --fast_pdb_annotation: now writes protein abd position tables into database. PDB structure annotation are so fetchable by the database (esp. using --read_only)
+    - Several minor bug fixes Claude spoted during the bigger refactorizations
+
+Version 2.3.2
+    - Added Inflow and Outflow graph centrality measures
+    - Distinguish now between homomeric and heteromeric PPIs
+    - Added the AFDB predicted complex model databases
+    
+
+Version 2.3.1
+    - Fixed some issues in the feature calculations resulting from the numpy-ization from 2.3.0
+    - Clean-up of some old unused code
+
+Version 2.3.0
+    - Major update refactoring large parts of the database
+    - Encoding many datastructures into numpy-based entities for zero-copy shared read access of ray processes
+    - Adding the first complex model database
+
 Version 2.2.2
     - Added AFDB collab datasets
     - Implemented the integration of AFDB as an SQL database

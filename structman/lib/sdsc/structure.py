@@ -1,7 +1,7 @@
 from structman.lib import globalAlignment, pdbParser
-from structman.lib.sdsc.sdsc_utils import process_alignment_data, doomsday_protocol, Slotted_obj
-from structman.lib.sdsc.residue import Residue_Map
-from structman.base_utils.base_utils import unpack
+from structman.lib.sdsc.sdsc_utils import process_alignment_data, doomsday_protocol
+from structman.lib.sdsc.residue import Residue
+from structman.base_utils.base_utils import unpack, Residue_Map, Slotted_obj
 
 class Structure(Slotted_obj):
     __slots__ = [
@@ -21,9 +21,9 @@ class Structure(Slotted_obj):
     ]
 
     def __init__(self, pdb_id = None, chain = None, oligo = None, mapped_proteins = None, database_id=None, last_residue=None, first_residue=None, sequence=None, seq_len = None, new_interacting_chain = False):
-        self.pdb_id = pdb_id
-        self.chain = chain
-        self.database_id = database_id
+        self.pdb_id: str = pdb_id
+        self.chain: str = chain
+        self.database_id: int = database_id
 
         if oligo is None:
             self.oligo: set[str] = set()
@@ -39,7 +39,7 @@ class Structure(Slotted_obj):
             self.mapped_proteins = []
         else:
             self.mapped_proteins = mapped_proteins[:]
-        self.residues = Residue_Map()
+        self.residues: Residue_Map[Residue] = Residue_Map()
         self.last_residue = last_residue
         self.first_residue = first_residue
         self.sequence = sequence
@@ -76,6 +76,8 @@ class Structure(Slotted_obj):
         self.database_id = value
 
     def get_database_id(self):
+        if self.database_id is None:
+            return 0
         return self.database_id
 
     def set_last_residue(self, last_residue):
@@ -90,7 +92,7 @@ class Structure(Slotted_obj):
     def get_stored(self):
         return self.stored
 
-    def add_residue(self, res_nr, residue_obj):
+    def add_residue(self, res_nr: int | str, residue_obj: Residue):
         self.residues.add_item(res_nr, residue_obj)
 
 
@@ -145,7 +147,13 @@ class StructureAnnotation(Slotted_obj):
         self.alignment: bytes | None = alignment
         self.coverage = None
         self.sequence_identity = None
-        self.sub_infos = []  # {pos:(res_nr,res_aa,structure_sequence_number)}
+        # None, not []: one StructureAnnotation exists per (protein, structure, chain),
+        # hundreds of millions of them on a whole-PDB run, and an empty list costs 56
+        # bytes and one more GC tracked container each - ~17 GB and 300M containers at
+        # that scale. Nothing in the package ever writes this slot (set_sub_infos has no
+        # caller), so the list was allocated only to be read back empty.
+        # get_sub_infos normalises it, so its readers see the [] they always saw.
+        self.sub_infos = None  # {pos:(res_nr,res_aa,structure_sequence_number)}
         self.stored = stored
         self.database_id: int | None = None
 
@@ -184,6 +192,9 @@ class StructureAnnotation(Slotted_obj):
         self.sub_infos = value
 
     def get_sub_infos(self):
+        # Normalised so callers keep seeing an empty list rather than None.
+        if self.sub_infos is None:
+            return []
         return self.sub_infos
 
     def get_sub_info(self, pos):

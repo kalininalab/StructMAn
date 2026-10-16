@@ -6,6 +6,7 @@ import subprocess
 import random
 import string
 
+
 from bisect import bisect_left
 from more_itertools import consecutive_groups
 
@@ -16,7 +17,8 @@ from structman.lib.sdsc import position as position_package
 from structman.lib.globalAlignment import call_biopython_alignment
 from structman.base_utils.base_utils import get_af_model_folder, fetch_af_msa
 from structman.base_utils.config_class import Config
-from structman.lib.database.retrieval import get_afdb_msa
+from structman.lib.database.afdb_retrieval import get_afdb_msa, get_single_sequence
+
 
 def truncate_af_msa(infile, outfile, overwrite_query_label = None, page: str | None = None):
     print(f'Call of truncate_af_msa: {infile=} {outfile=} {overwrite_query_label=} {page is None=}')
@@ -27,6 +29,9 @@ def truncate_af_msa(infile, outfile, overwrite_query_label = None, page: str | N
         f.close()
     else:
         lines = page.splitlines(keepends=True)
+
+    if isinstance(lines[0], bytes):
+        lines = [line.decode() for line in lines]
 
     if overwrite_query_label is not None:
         outlines = [f'>{overwrite_query_label}\n', lines[1]]
@@ -40,6 +45,7 @@ def truncate_af_msa(infile, outfile, overwrite_query_label = None, page: str | N
     current_seq = ''
 
     for line in lines[2:]:
+        
         if line[0] == '>':
             if len(current_seq) > 0:
                 outlines.append(f'{current_seq[:seq_len]}\n')
@@ -116,7 +122,7 @@ def use_mafft_add(config, msa_file, outfile, work_folder, prot_id, seq, num_of_t
     f.close()
 
 def clean_prot_id(prot_id):
-    cleaned_id = prot_id.replace('(','').replace(')','').replace('/','_')
+    cleaned_id = prot_id.replace('(','').replace(')','').replace('/','_').replace('|','_')
     if cleaned_id[0] == '_':
         cleaned_id = cleaned_id[1:]
     return cleaned_id
@@ -172,7 +178,7 @@ def check_msa_file(infile, seq):
 
     return True
 
-def fetch_msa(config: Config, model_id: str, prot_id: str, seq: str, seq_identity: float, num_of_threads: int):
+def fetch_msa(config: Config, model_id: str, prot_id: str, seq: str | int, seq_identity: float, num_of_threads: int):
     folder_path = get_af_model_folder(model_id, config)
     msa_file = f'{folder_path}/{model_id}_msa.fasta'
 
@@ -202,6 +208,9 @@ def fetch_msa(config: Config, model_id: str, prot_id: str, seq: str, seq_identit
     if seq_identity < 1.0:
         target_file_precursor = f'{msa_outfolder}/{cleaned_prot_id}_{model_id}_msa_precursor.fasta'
         truncate_af_msa(msa_file, target_file_precursor, overwrite_query_label = model_id, page = afdb_msa_page)
+        if isinstance(seq, int):
+            seq = get_single_sequence(config, seq)
+
         use_mafft_add(config, target_file_precursor, target_file, msa_outfolder, cleaned_prot_id, seq, num_of_threads)
 
         os.remove(target_file_precursor)
@@ -894,5 +903,3 @@ def find_neighbors(iterable1, iterable2):
             neighbors.append(i + 1)
 
     return set(neighbors)
-
-

@@ -6,6 +6,7 @@ from structman.lib import serializedPipeline
 from structman.lib.output.out_generator import OutputGenerator
 from structman.lib.database.insertion_lib import insert_indel_results
 from structman.base_utils.config_class import Config
+from structman.base_utils.ray_utils import ray_init
 try:
     from structman.lib import modelling
 except:
@@ -220,6 +221,9 @@ def para_indel_analysis(proteins, config: Config):
     conf_dump = None
 
     if config.model_indel_structures:
+        # Guard against ray auto_init_hook starting an unconfigured cluster here
+        # (see structman/__init__.py).
+        ray_init(config, stop_existing = False)
         conf_dump = ray.put(config)
 
         for prot_id in proteins.indels:
@@ -261,7 +265,7 @@ def para_indel_analysis(proteins, config: Config):
                     structures_store_references.append(structures)
 
                     if (pdb_id, tchain, indel_obj.wt_prot) not in model_stack:
-                        alignment_tuple = proteins[indel_obj.wt_prot].structure_annotations[pdb_id][tchain].get_alignment(unpacked = True)
+                        alignment_tuple = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].get_alignment(unpacked = True)
                         seq_id = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].sequence_identity
                         cov = proteins[indel_obj.wt_prot].structure_annotations[(pdb_id, tchain)].coverage
                         modelling_result_ids.append(modelling.model.remote(conf_dump, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, indel_obj.wt_prot))
@@ -270,7 +274,7 @@ def para_indel_analysis(proteins, config: Config):
 
                     # modelling the MUT for all recommend structures
                     if (pdb_id, tchain, indel_obj.mut_prot) not in model_stack:
-                        alignment_tuple = proteins[indel_obj.mut_prot].structure_annotations[pdb_id][tchain].get_alignment(unpacked = True)
+                        alignment_tuple = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].get_alignment(unpacked = True)
                         seq_id = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].sequence_identity
                         cov = proteins[indel_obj.mut_prot].structure_annotations[(pdb_id, tchain)].coverage
                         modelling_result_ids.append(modelling.model.remote(conf_dump, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, indel_obj.mut_prot))

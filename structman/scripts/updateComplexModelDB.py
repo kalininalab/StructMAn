@@ -64,6 +64,7 @@ def complex_model_id_to_folder_path(config):
 
 def main(config):
     print('Updating local Complex model DB')
+    return
     database_got_updated = retrieve_raw_data(config)
     if database_got_updated:
         complex_model_id_to_folder_path(config)

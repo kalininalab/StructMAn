@@ -6,9 +6,7 @@ from collections import defaultdict
 
 import igraph
 
-from structman.lib.sdsc.consts import residues as residue_consts
-from structman.lib.sdsc.consts import ligands as ligand_consts
-
+from structman.base_utils import residue_consts, ligand_consts
 
 class ChainGraph():
     def __init__(self):

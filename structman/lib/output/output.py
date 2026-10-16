@@ -10,6 +10,7 @@ try:
 except:
     pass
 from structman.lib.output import classification as classification_package
+from structman.lib.output import alignments as alignments_package
 from structman.base_utils.config_class import Config
 
 
@@ -146,9 +147,14 @@ def main(sess_id, output_path, config: Config):
 
     t0 = time.time()
 
+    # Per-position classification and recommended residue for the alignment
+    # matrices; None when the classification output is skipped, and then
+    # create_alignment_matrices collects it itself.
+    alignment_annotations = None
+
     if classification and not config.skip_main_output_generation:
         t00 = time.time()
-        classification_package.classificationOutput(config, output_path, session_name, session_id)
+        alignment_annotations = classification_package.classificationOutput(config, output_path, session_name, session_id)
         t01 = time.time()
         if config.verbosity >= 2:
             config.logger.info(f"Time for classificationOutput: {t01 - t00}")
@@ -159,6 +165,13 @@ def main(sess_id, output_path, config: Config):
         if config.verbosity >= 2:
             config.logger.info(f"Time for producing classification distributions: {t02 - t01}")
 
+
+    if config.fetch_alignments:
+        t03 = time.time()
+        alignments_package.create_alignment_matrices(
+            config, session_id, output_path, position_annotations=alignment_annotations)
+        if config.verbosity >= 2:
+            config.logger.info(f"Time for create_alignment_matrices: {time.time() - t03}")
 
     t1 = time.time()
     if config.verbosity >= 2:
@@ -184,6 +197,11 @@ def main(sess_id, output_path, config: Config):
                 fileA = "%s/%s" % (output_path, go_files[0])
                 fileB = "%s/%s" % (output_path, go_files[1])
                 godiffAna(fileA, fileB)
+
+    t2 = time.time()
+    if config.verbosity >= 2:
+        config.logger.info(f"Time for goTermAnalysis: {t2 - t1}")
+
     if path:
         database.pathwayAnalysis(session_id, "%s/%s.pathway.tsv" % (output_path, session_name), db, cursor)
         if pathdiff:
@@ -196,11 +214,26 @@ def main(sess_id, output_path, config: Config):
                 fileA = "%s/%s" % (output_path, path_files[0])
                 fileB = "%s/%s" % (output_path, path_files[1])
                 pathdiffAna(fileA, fileB)
+    
+    t3 = time.time()
+    if config.verbosity >= 2:
+        config.logger.info(f"Time for pathwayAnalysis: {t3 - t2}")
+
+
     if do_modelling:
         modelling.massModel(session_id, db, cursor, output_path, total_models=0, model_per_gene=int(mod_per_gene), multiple_mutations=multi_modelling)
 
+    t4 = time.time()
+    if config.verbosity >= 2:
+        config.logger.info(f"Time for massModel: {t4 - t3}")
+
     cursor.close()
     db.close()
+
+    t5 = time.time()
+    if config.verbosity >= 2:
+        config.logger.info(f"Time for closing connection: {t5 - t4} {ligand_file is None=}")
+
     if ligand_file is None:
         try:
             ligand_file_names = os.listdir("%s/ligands" % infile.rsplit("/", 1)[0])
@@ -220,5 +253,7 @@ def main(sess_id, output_path, config: Config):
         if config.verbosity >= 2:
             config.logger.info(f"Time for ligandAnalyzer: {t1 - t0}")
             config.logger.info(f"Time for writeReport: {t2 - t1}")
+
+    
 
     return 0

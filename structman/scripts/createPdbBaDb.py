@@ -1,4 +1,5 @@
 import gzip
+
 import os
 import sys
 import subprocess
@@ -9,78 +10,16 @@ import traceback
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(os.path.realpath(__file__))))))
 
-from structman.lib.sdsc.consts import residues as residue_consts
+from structman.base_utils import residue_consts
 from structman.base_utils.ray_utils import ray_init, ray_hack
+from structman.base_utils.base_utils import decode_zstd, disect_filename
+from structman.base_utils.config_class import Config
+from structman.base_utils.chain_consts import CHAIN_ID_ORDER as chain_order
 
-def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = None, filename = None, bio_entries = None, model_db = False, error_files = None):
-    if bio_entries is None:
-        bio_entries = set()
-
-    if error_files is None:
-        error_files = []
-
-    if full_path is None:
-        path = f'{divide_folder}/{sub_folder}/{filename}'
-    else:
-        filename = full_path.rsplit('/', 1)[-1]
-        path = full_path
-
-    if not model_db:
-        if not filename.count('.pdb1.gz') > 0:
-            return {}, None, bio_entries, error_files
-        pdb_id = filename[:4].upper()
-
-        bio_entries.add(pdb_id)
-
-        f = gzip.open(path, 'rb')
-    else:
-        if len(filename) < 7:
-            return {}, None, bio_entries, error_files
-        if filename[-6:] != 'pdb.gz':
-            return {}, None, bio_entries, error_files
-        pdb_id = '-'.join(filename.split('-')[:2])
-        if pdb_id[-7:] == '.pdb.gz':
-            pdb_id = pdb_id[:-7]
-        path = f'{divide_folder}/{sub_folder}/{filename}'
-
-        f = gzip.open(path,'rb')
-    try:
-        page = f.read()
-        f.close()
-    except:
-        [e, f, g] = sys.exc_info()
-        try:
-            g = traceback.format_exc(g)
-        except:
-            pass
-        error = f"Couldn't read file: {path}\n{e}\n{f}\n{g}"
-        error_files.append(error)
-        return {}, pdb_id, bio_entries, error_files
-
-    try:
-        page = page.decode('ascii')
-    except:
-        try:
-            decoded_lines = []
-            for line in page.split(b'\n'):
-                try:
-                    decoded_lines.append(f"{line.decode('ascii')}\n")
-                except:
-                    pass
-            page = ''.join(decoded_lines)
-        except:
-            [e, f, g] = sys.exc_info()
-            try:
-                g = traceback.format_exc(g)
-            except:
-                pass
-            error = f"Couldn't decode page: {path}\n{e}\n{f}\n{g}"
-            error_files.append(error)
-            return {}, pdb_id, bio_entries, error_files
-
+def parseSequences(page: str) -> dict[str, str]:
     lines = page.split('\n')
 
-    seqs = {}
+    seqs: dict[str, str] = {}
     chain_ids = set()
 
     not_crystal = False
@@ -93,12 +32,11 @@ def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = No
 
     used_res = {}
     firstAltLoc = None
-    chain_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
 
     for line in lines:
         record_name = line[0:6].replace(" ", "")
-        atom_nr = line[6:11].replace(" ", "")
-        atom_name = line[12:16].replace(" ", "")
+        #atom_nr = line[6:11].replace(" ", "")
+        #atom_name = line[12:16].replace(" ", "")
         res_name = line[17:20].replace(" ", "")
 
         if record_name == 'EXPDTA':
@@ -117,7 +55,7 @@ def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = No
 
         if record_name == 'MODEL':
             current_model_id = line[10:14]
-            if not current_model_id in multi_model_chain_dict:
+            if current_model_id not in multi_model_chain_dict:
                 multi_model_chain_dict[current_model_id] = {}
             if multi_model_mode:
                 if len(multi_model_chain_dict) * asymetric_chain_number >= len(chain_order):
@@ -141,12 +79,11 @@ def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = No
                     chain_ids.add(chain_id)
                     multi_model_chain_dict[current_model_id][chain_id] = chain_id
                 elif multi_model_mode:
-                    if not chain_id in multi_model_chain_dict[current_model_id]:
+                    if chain_id not in multi_model_chain_dict[current_model_id]:
                         new_chain_id = None
                         while new_chain_id is None:
-                            if chain_order_pos_marker == len(chain_order):
-                                print(pdb_id, filename)
-                            if not chain_order[chain_order_pos_marker] in chain_ids:
+                            
+                            if chain_order[chain_order_pos_marker] not in chain_ids:
                                 new_chain_id = chain_order[chain_order_pos_marker]
                             chain_order_pos_marker += 1
                         multi_model_chain_dict[current_model_id][chain_id] = new_chain_id
@@ -174,6 +111,82 @@ def parseSequencesByAtom(full_path = None, divide_folder = None, sub_folder = No
                         aa = 'X'
                     seqs[chain_id] += aa
                     used_res[chain_id].add(res_nr)
+
+    return seqs
+
+def parseSequencesByAtom(
+        full_path = None,
+        divide_folder = None,
+        sub_folder = None,
+        filename = None,
+        bio_entries = None,
+        model_db = False,
+        error_files = None,
+        compr_type = None):
+    if bio_entries is None:
+        bio_entries = set()
+
+    if error_files is None:
+        error_files = []
+
+    if full_path is None:
+        path = f'{divide_folder}/{sub_folder}/{filename}'
+    else:
+        filename = full_path.rsplit('/', 1)[-1]
+        path = full_path
+
+    if not model_db:
+        if not filename.count('.pdb1.gz') > 0:
+            return {}, None, bio_entries, error_files
+        pdb_id = filename[:4].upper()
+
+        bio_entries.add(pdb_id)
+
+        f = gzip.open(path, 'rb')
+    else:
+        path = f'{divide_folder}/{sub_folder}/{filename}'
+        if len(filename) < 7:
+            return {}, None, bio_entries, error_files
+        if compr_type is None:
+            if filename[-6:] != 'pdb.gz':
+                return {}, None, bio_entries, error_files
+            else:
+                compr_type = 0
+                f = gzip.open(path,'rb')
+        elif compr_type == 0:
+            f = gzip.open(path,'rb')
+        elif compr_type == 1:
+            f = open(path, 'rb')
+
+        pdb_id = '-'.join(filename.split('-')[:2])
+        if pdb_id[-7:] == '.pdb.gz':
+            pdb_id = pdb_id[:-7]
+
+    try:
+        page = f.read()
+        f.close()
+        if compr_type == 1:
+            page = decode_zstd(page)
+    except BaseException as err:
+        
+        raise ValueError(f"Couldn't read file: {model_db=} {path=} {compr_type=} {err=}")
+        
+
+    try:
+        page = page.decode('ascii')
+    except:
+        try:
+            decoded_lines = []
+            for line in page.split(b'\n'):
+                decoded_lines.append(f"{line.decode('ascii')}\n")
+
+            page = ''.join(decoded_lines)
+        except BaseException as err:
+
+            raise ValueError(f"Couldn't read file: {path=} {compr_type} {err=}")
+
+    seqs = parseSequences(page)
+
     return seqs, pdb_id, bio_entries, error_files
 
 def parseSequencesByAtomAU(full_path = None, AU_folder = None, sub_folder = None, filename = None):
@@ -241,9 +254,8 @@ def parseSequencesByAtomAU(full_path = None, AU_folder = None, sub_folder = None
     return seqs, pdb_id
 
 @ray.remote(num_cpus=1)
-def parseByAtom(parse_dump, sub_folder, model_db = False):
-    ray_hack()
-    
+def parseByAtom(parse_dump, sub_folder, model_db = False, afdb = False):
+
     divide_folder = parse_dump
 
     files = os.listdir("%s/%s" % (divide_folder, sub_folder))
@@ -253,7 +265,21 @@ def parseByAtom(parse_dump, sub_folder, model_db = False):
     error_files = []
 
     for filename in files:
-        seqs, pdb_id, bio_entries, error_files = parseSequencesByAtom(divide_folder = divide_folder, sub_folder = sub_folder, filename = filename, bio_entries = bio_entries, model_db = model_db, error_files = error_files)
+        if afdb:
+            afdb_id, file_type, compr_type, version_nr = disect_filename(filename)
+            if afdb_id is None:
+                print(f'Found faulty file: {filename=}, trying to delete it...')
+                if os.path.exists(f'{divide_folder}/{sub_folder}/{filename}'):
+                    os.remove(f'{divide_folder}/{sub_folder}/{filename}')
+                continue
+
+            if file_type != 0:
+                continue
+
+        else:
+            compr_type = None
+
+        seqs, pdb_id, bio_entries, error_files = parseSequencesByAtom(divide_folder = divide_folder, sub_folder = sub_folder, filename = filename, bio_entries = bio_entries, model_db = model_db, error_files = error_files, compr_type = compr_type)
 
         if len(seqs) == 0:
             continue
@@ -394,11 +420,13 @@ def parse_seq_file(seq_file, recently_modified_structures):
 
     return pdb_ids, great_seq_map
 
-def create_model_db_fasta(config):
+def create_model_db_fasta(config: Config):
     great_seq_map = {}
     parse_results = []
 
     parse_dump = ray.put(config.path_to_model_db)
+
+    subfolder_todos = []
 
     for topfolder in os.listdir(config.path_to_model_db):
         if not os.path.isdir(f'{config.path_to_model_db}/{topfolder}'):
@@ -406,19 +434,46 @@ def create_model_db_fasta(config):
         for sub_folder in os.listdir(f'{config.path_to_model_db}/{topfolder}'):
             if not os.path.isdir(f'{config.path_to_model_db}/{topfolder}/{sub_folder}'):
                 continue
-            parse_results.append(parseByAtom.remote(parse_dump, f'{topfolder}/{sub_folder}', model_db = True))
+            subfolder_todos.append(f'{topfolder}/{sub_folder}')
 
-    parse_out = ray.get(parse_results)
-    for seq_map, bio_entries_part, error_files in parse_out:
-        if len(error_files) > 0:
-            for error_file in error_files:
-                config.errorlog.add_warning('Error with file: %s' % error_file)
-        for seq in seq_map:
-            if seq not in great_seq_map:
-                great_seq_map[seq] = seq_map[seq]
-            else:
-                great_seq_map[seq] += seq_map[seq]
+    for job_nr, subfolder_path in enumerate(subfolder_todos):
+        parse_results.append(parseByAtom.remote(parse_dump, subfolder_path, model_db = True, afdb = True))
+        if job_nr == config.proc_n:
+            break
 
+    while True:
+        ready, not_ready = ray.wait(parse_results)
+        if len(ready) > 0:
+            parse_out = ray.get(ready)
+            for seq_map, bio_entries_part, error_files in parse_out:
+                if len(error_files) > 0:
+                    for error_file in error_files:
+                        config.errorlog.add_warning('Error with file: %s' % error_file)
+                for seq in seq_map:
+                    if seq not in great_seq_map:
+                        great_seq_map[seq] = seq_map[seq]
+                    else:
+                        great_seq_map[seq] += seq_map[seq]
+
+            if (job_nr+1) < len(subfolder_todos):
+                job_nr += 1
+                subfolder_path = subfolder_todos[job_nr]
+                not_ready.append(parseByAtom.remote(parse_dump, subfolder_path, model_db = True, afdb = True))
+
+        parse_results = not_ready
+
+        if len(parse_results) == 0:
+            break
+
+    great_seq_map_to_fasta(great_seq_map, config.model_db_fasta_path)
+
+    return len(great_seq_map) > 0
+
+def great_seq_map_to_fasta(
+        great_seq_map: dict[str, str],
+        outfile: str
+        ):
+    
     entries = []
 
     id_list = []
@@ -446,11 +501,9 @@ def create_model_db_fasta(config):
 
     page = '\n'.join(entries)
 
-    f = open(config.model_db_fasta_path, 'w') # get set in scripts/update.py
+    f = open(outfile, 'w') # get set in scripts/update.py
     f.write(page)
     f.close()
-
-    return len(great_seq_map) > 0
 
 def create_complex_model_db_fasta(config, update_source = None):
     great_seq_map = {}

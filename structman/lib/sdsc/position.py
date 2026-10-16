@@ -1,5 +1,5 @@
-from structman.lib import sdsc
-from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol, Slotted_obj
+from structman.base_utils.base_utils import Slotted_obj
+from structman.lib.sdsc.sdsc_utils import process_recommend_structure_str, doomsday_protocol
 from structman.lib.sdsc import snv as snv_package
 from structman.lib.output.out_utils import calculatePositionScore
 
@@ -41,7 +41,6 @@ class Position(Slotted_obj):
         self.database_id = database_id
         self.stored = (database_id is not None)
         self.checked = checked  # Flag for sanity checks
-        #self.mappings = sdsc.mappings.Mappings()
         self.recommended_structure = recommended_structure
         self.session_less = session_less
         self.microminer_features = None
@@ -79,18 +78,36 @@ class Position(Slotted_obj):
             self.checked = True
             return True
 
-    def fuse(self, position):
+    def conflict_with(self, position):
+        """Why position cannot be fused into this one, or None when it can.
+
+        Kept apart from fuse so a whole protein's positions can be checked before any of
+        them is merged: a fusion that stopped at the first conflict left the positions
+        after it behind while the duplicate's multi mutations still moved over.
+        """
         if self.pos != position.pos:
             return f'Cannot fuse positions with differing pos numbers {self.pos=} {position.pos=}'
+        if self.wt_aa != position.wt_aa and self.wt_aa != 'U':
+            return f'Cannot fuse positions with different WT AAs: {self.pos=} {self.pdb_res_nr=} {self.wt_aa=} {position.wt_aa=}'
+        return None
+
+    def fuse(self, position):
+        conflict = self.conflict_with(position)
+        if conflict is not None:
+            return conflict
 
         if self.pdb_res_nr != position.pdb_res_nr:
-            return f'Cannot fuse positions with differing pdb_res_nr {self.pdb_res_nr=} {position.pdb_res_nr=}'
+            # Not an error. Positions are fused by sequence position, and the incoming
+            # one can carry a residue number from a different structure - two chains of
+            # one sequence, numbered by their own depositors - or none at all, when it
+            # was requested against the sequence. The sequence decides which residue
+            # this is, the numbering does not, so the survivor keeps its own; it is the
+            # number that belongs to the structure the survivor stands for.
+            if self.pdb_res_nr is None:
+                self.pdb_res_nr = position.pdb_res_nr
 
-        if self.wt_aa != position.wt_aa:
-            if self.wt_aa == 'U':
-                self.wt_aa = position.wt_aa
-            else:
-                return f'Cannot fuse positions with different WT AAs: {self.pos=} {self.pdb_res_nr=} {self.wt_aa=} {position.wt_aa=}'
+        if self.wt_aa == 'U':
+            self.wt_aa = position.wt_aa
 
         if self.pos_tags is not None and position.pos_tags is not None:
             self.pos_tags = self.pos_tags | position.pos_tags

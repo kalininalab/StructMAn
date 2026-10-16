@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 
-import pymysql as MySQLdb
+import structman.base_utils.mysql_driver as MySQLdb
 
 from structman.lib.sdsc.consts import codons as codon_consts
 

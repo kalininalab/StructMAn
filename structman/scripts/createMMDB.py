@@ -66,8 +66,11 @@ def mm_lookup(
 
     mmdb_raw_entry, mmdb_aggregated_entry = get_mmdb_entry_path(pdb_id, config.microminer_db, identity = config.microminer_identity, kmer_matching_rate = config.microminer_kmer_matching_rate, fragment_length = config.microminer_fragment_length, k = config.microminer_k)
     
+    if mmdb_raw_entry is None:
+        return {}, []
+
     if not os.path.isfile(mmdb_aggregated_entry) and config.update_microminer_active:
-        if config.verbosity >= 4:
+        if config.verbosity >= 6:
             print(f'Running microminer in mm_lookup: {pdb_id} {mmdb_raw_entry}')
         outfolder = mmdb_raw_entry.rsplit('/', 1)[0]
         microminer_search_db = get_mm_search_db_path(config.microminer_db, config.microminer_k)
@@ -113,9 +116,36 @@ def apply_microminer(config, microminer_search_db, infile, outfolder, identity =
         f.close()
 
 
+def mmdb_entry_path_readonly(pdb_id, mmdb_path, identity = 0.6, kmer_matching_rate = 0.4, fragment_length = 8, k = 7):
+    """Path of the processed entry, without touching the filesystem.
+
+    get_mmdb_entry_path creates the AlphaFold folder chain as a side effect, which is
+    fine when a single entry is about to be written but not for bulk probing - scanning
+    the run's complexes with it would create a directory per complex. This mirrors its
+    path construction exactly and only that. Returns None where it would too.
+    """
+    if pdb_id[-3:] == '_AU':
+        pdb_id = pdb_id[0:4]
+
+    if is_alphafold_model(pdb_id):
+        try:
+            uniprot_ac = pdb_id.split('-')[1]
+        except IndexError:
+            return None
+        entry_stem = f'{mmdb_path}/{uniprot_ac[-2:]}/{uniprot_ac[-4:]}/{pdb_id}/{pdb_id}'
+    else:
+        pdb_id = pdb_id.lower()
+        entry_stem = f'{mmdb_path}/{pdb_id[1:-1]}/{pdb_id}/{pdb_id}'
+
+    return f'{entry_stem}_i{int(identity*100)}_kmr_{int(kmer_matching_rate*100)}_f_{fragment_length}_k_{k}_processed.tsv'
+
+
 def get_mmdb_entry_path(pdb_id, mmdb_path, identity = 0.6, kmer_matching_rate = 0.4, fragment_length = 8, k = 7):
     if is_alphafold_model(pdb_id):
-        uniprot_ac = pdb_id.split('-')[1]
+        try:
+            uniprot_ac = pdb_id.split('-')[1]
+        except IndexError:
+            return None, None
         topfolder_id = uniprot_ac[-2:]
         subfolder_id = uniprot_ac[-4:]
         topfolder = f'{mmdb_path}/{topfolder_id}'
@@ -447,7 +477,7 @@ def parse_processed_mmdb_entry(
     
 
 
-@ray.remote(max_calls = 1)
+@ray.remote
 def calc_microminer_package(package, store):
     package = unpack(package)
 
@@ -471,7 +501,7 @@ def mm_post_procession(outfolder, mmdb_raw_entry, mmdb_aggregated_entry):
     aggregated_dict = aggregate_mm_dict(mm_dict, query_pdb_id)
     write_aggregated_dict(aggregated_dict, mmdb_aggregated_entry)
 
-@ray.remote(max_calls = 1)
+@ray.remote
 def parse_subfolders(package, store):
     bio_assembly_path, config, recently_modified_structures, fromScratch, identity, kmer_matching_rate, fragment_length, k = store
     results = []

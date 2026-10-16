@@ -7,17 +7,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from structman.lib.sdsc.consts import residues as residue_consts
+from structman.base_utils import residue_consts
+from structman.base_utils.chain_consts import CHAIN_ID_ORDER, is_usable_chain_id
 from structman.lib.sdsc import sdsc_utils
-from structman.lib.sdsc import residue as residue_package
-from structman.base_utils.base_utils import aggregate_times, add_to_times, is_alphafold_model
+from structman.base_utils.base_utils import aggregate_times, add_to_times, is_alphafold_model, Residue_Map
 from structman.base_utils.config_class import Config
-from structman.lib.database.retrieval import get_afdb_structure
+from structman.lib.database.afdb_retrieval import get_afdb_structure
 
-chain_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
+chain_order = CHAIN_ID_ORDER
 
 def getCurrentPDBID(pdb_id, pdb_path, debug=False):
-    obsolete_path = '%s/data/structures/obsolete/pdb/%s/pdb%s.ent.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
+    obsolete_path = f'{pdb_path}/data/structures/obsolete/pdb/{pdb_id[1:-1].lower()}/pdb{pdb_id.lower()}.ent.gz'
 
     if os.path.isfile(obsolete_path):
         buf = gzip.open(obsolete_path, 'rb')
@@ -35,8 +35,8 @@ def getCurrentPDBID(pdb_id, pdb_path, debug=False):
     return pdb_id
 
 def test_for_AU(pdb_id, pdb_path):
-    path = '%s/data/biounit/PDB/divided/%s/%s.pdb1.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
-    au_path = '%s/data/structures/divided/pdb/%s/pdb%s.ent.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
+    path = f'{pdb_path}/data/biounit/PDB/divided/{pdb_id[1:-1].lower()}/{pdb_id.lower()}.pdb1.gz'
+    au_path = f'{pdb_path}/data/structures/divided/pdb/{pdb_id[1:-1].lower()}/pdb{pdb_id.lower()}.ent.gz'
     AU = os.path.isfile(au_path) and not os.path.isfile(path)
     return AU
 
@@ -47,15 +47,20 @@ def getStructureBuffer(
         obsolete_check: bool=False,
         get_is_local: bool=False,
         model_path: str | None = None):
-    if model_path is None:
+    if model_path is None and not is_alphafold_model(structure_id):
         buf = getPDBBuffer(structure_id, config.pdb_path, AU=AU, obsolete_check=obsolete_check, verbosity=config.verbosity)
     elif config.afdb is not None and is_alphafold_model(structure_id):
         page = get_afdb_structure(structure_id, config)
         if page is None:
             raise ValueError(f'{structure_id} was not found in AFDB')
         buf = io.BufferedReader(io.BytesIO(page))
+    elif model_path is None:
+        raise ValueError(f'model_path should not be None here: {model_path=} {config.afdb=} {structure_id=} {is_alphafold_model(structure_id)=}')
     elif model_path[-3:] == '.gz':
-        buf = gzip.open(model_path, 'rb')
+        try:
+            buf = gzip.open(model_path, 'rb')
+        except FileNotFoundError as err:
+            raise FileNotFoundError(f'{err=} {model_path=} {config.afdb=} {structure_id=} {is_alphafold_model(structure_id)=}')
     else:
         buf = open(model_path, 'rb')
     if get_is_local:
@@ -68,12 +73,12 @@ def getPDBBuffer(pdb_id: str, pdb_path: str, AU: bool =False, obsolete_check: bo
         pdb_id = getCurrentPDBID(pdb_id, pdb_path)
 
     if AU:
-        path = '%s/data/structures/divided/pdb/%s/pdb%s.ent.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
+        path = f'{pdb_path}/data/structures/divided/pdb/{pdb_id[1:-1].lower()}/pdb{pdb_id.lower()}.ent.gz'
         if not os.path.isfile(path):
             pdb_id = getCurrentPDBID(pdb_id, pdb_path)
-            path = '%s/data/structures/divided/pdb/%s/pdb%s.ent.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
+            path = f'{pdb_path}/data/structures/divided/pdb/{pdb_id[1:-1].lower()}/pdb{pdb_id.lower()}.ent.gz'
             if not os.path.isfile(path):
-                url = 'https://files.rcsb.org/view/%s.pdb' % pdb_id
+                url = f'https://files.rcsb.org/view/{pdb_id}.pdb'
                 sdsc_utils.connection_sleep_cycle(verbosity, url)
                 if pdb_path != '' and verbosity >= 2:
                     print("Did not find asymetric unit entry in local pdb, searching online: ", url)
@@ -84,7 +89,7 @@ def getPDBBuffer(pdb_id: str, pdb_path: str, AU: bool =False, obsolete_check: bo
                     return urllib.request.urlopen(request, timeout=60)
                 except:
                     if verbosity >= 2:
-                        print("Did not find the PDB-file (AU is true): %s" % pdb_id)
+                        print(f"Did not find the PDB-file (AU is true): {pdb_id}")
                     if get_is_local:
                         return None, None
                     return None
@@ -98,15 +103,15 @@ def getPDBBuffer(pdb_id: str, pdb_path: str, AU: bool =False, obsolete_check: bo
                 return gzip.open(path, 'rb'), path
             return gzip.open(path, 'rb')
     else:
-        path = '%s/data/biounit/PDB/divided/%s/%s.pdb1.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
+        path = f'{pdb_path}/data/biounit/PDB/divided/{pdb_id[1:-1].lower()}/{pdb_id.lower()}.pdb1.gz'
         if not os.path.isfile(path):
             pdb_id = getCurrentPDBID(pdb_id, pdb_path)
-            path = '%s/data/biounit/PDB/divided/%s/%s.pdb1.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
+            path = f'{pdb_path}/data/biounit/PDB/divided/{pdb_id[1:-1].lower()}/{pdb_id.lower()}.pdb1.gz'
             if not os.path.isfile(path):
                 if test_for_AU(pdb_id, pdb_path):
                     return getPDBBuffer(pdb_id, pdb_path, AU=True, obsolete_check=obsolete_check, get_is_local=get_is_local, verbosity=verbosity)
 
-                url = 'https://files.rcsb.org/view/%s.pdb1' % pdb_id
+                url = f'https://files.rcsb.org/view/{pdb_id}.pdb1'
                 sdsc_utils.connection_sleep_cycle(verbosity, url)
                 if pdb_path != '' and verbosity >= 2:
                     print("Did not find entry in local pdb, searching online: ", url)
@@ -117,7 +122,7 @@ def getPDBBuffer(pdb_id: str, pdb_path: str, AU: bool =False, obsolete_check: bo
                     return urllib.request.urlopen(request, timeout=60)
                 except:
                     if verbosity >= 3:
-                        print("Did not find the PDB-file: %s, trying AU" % pdb_id)
+                        print(f"Did not find the PDB-file: {pdb_id}, trying AU")
                     return getPDBBuffer(pdb_id, pdb_path, AU=True, obsolete_check=obsolete_check, get_is_local=get_is_local, verbosity=verbosity)
             else:
                 if get_is_local:
@@ -129,107 +134,6 @@ def getPDBBuffer(pdb_id: str, pdb_path: str, AU: bool =False, obsolete_check: bo
                 return gzip.open(path, 'rb'), path
             return gzip.open(path, 'rb')
 
-# Newly Written
-def getMMCIFBuffer(pdb_id, pdb_path, AU=False, obsolete_check=False):
-    if obsolete_check:
-        pdb_id = getCurrentPDBID(pdb_id, pdb_path)
-
-    if AU:
-        path = '%s/data/structures/divided/pdb/%s/pdb%s.cif.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
-        if not os.path.isfile(path):
-            url = 'https://files.rcsb.org/view/%s.cif' % pdb_id
-
-            if path != '':
-                print("Did not find asymetric unit entry in local mmcif, searching online: ", url)
-            try:
-                request = urllib.request.Request(url)
-                return urllib.request.urlopen(request)
-            except:
-                print("Did not find the MMCIF-file: %s" % pdb_id)
-                return None
-        else:
-            return gzip.open(path, 'rb')
-    else:
-        path = '%s/data/biounit/PDB/divided/%s/%s.cif.gz' % (pdb_path, pdb_id[1:-1].lower(), pdb_id.lower())
-        if not os.path.isfile(path):
-            url = 'https://files.rcsb.org/view/%s.cif' % pdb_id
-
-            if pdb_path != '':
-                print("Did not find entry in local mmcif, searching online: ", url)
-            try:
-                request = urllib.request.Request(url)
-                print('this is request', request)
-                print('this is url open', urllib.request.urlopen(request))
-                return urllib.request.urlopen(request)
-            except:
-                print("Did not find the MMCIF-file: %s" % pdb_id)
-                return None
-        else:
-            return gzip.open(path, 'rb')
-
-
-# nucleic acid parser called by mmcif parser with only buf if chain is nuc acid
-def nuc_acid_parser(buf):
-    i = 1
-    res_pos_map = {}
-    seq = ""
-    used_res = ()
-    temp = 0
-
-    x = []
-    for line in open(buf):  # What is this?
-        splitted = line.split()
-        if len(line.strip()) == 0:
-            continue
-        if splitted[0] == 'ATOM' or splitted[0] == 'HETATM':
-            chain_id = splitted[6]
-            if chain_id != chain:  # BUG: undefined variable
-                continue
-            if temp == splitted[8]:
-                continue
-            res_name = splitted[5]
-            nuc = res_name
-            seq = seq + nuc
-            temp = splitted[8]
-            res_pos_map[splitted[8]] = i
-            i += 1
-    buf.close()
-    return seq, res_pos_map
-
-
-# mmcif parser with only takes buf as an argument
-def parseMMCIFSequence(buf):
-    i = 1
-    res_pos_map = {}
-    seq = ""
-    used_res = ()
-    temp = 0
-
-    x = []
-    for line in open(buf):
-        splitted = line.split()
-        if len(line.strip()) == 0:
-            continue
-        if splitted[0] == 'ATOM' or splitted[0] == 'HETATM':
-            chain_id = splitted[6]
-            nuc_acid = splitted[17]
-            if nuc_acid == 'T' or nuc_acid == 'C' or nuc_acid == 'G' or nuc_acid == 'U' or nuc_acid == 'A':
-                seq, res_pos_map = nuc_acid_parser(buf)
-                break
-            else:
-                res_name = splitted[5]
-                if res_name not in residue_consts.THREE_TO_ONE:
-                    continue
-                if temp == splitted[8]:
-                    continue
-                aa = residue_consts.THREE_TO_ONE[res_name]
-                seq = seq + aa
-                temp = splitted[8]
-                res_pos_map[splitted[8]] = i
-                i += 1
-    buf.close()
-    return seq, res_pos_map
-
 
 def getSequence(pdb_id: str, chains: set[str], pdb_path: str) -> dict[str, tuple[str, dict[str, int]]]:
     AU: bool = test_for_AU(pdb_id, pdb_path)
@@ -239,27 +143,38 @@ def getSequence(pdb_id: str, chains: set[str], pdb_path: str) -> dict[str, tuple
     if buf is None:
         return None
 
-    chain_seq_dict: dict[str, tuple[str, dict[str, int]]] = parsePDBSequence(buf, chains)
-    buf.close()
+    try:
+        chain_seq_dict: dict[str, tuple[str, dict[str, int]]] = parsePDBSequence(buf, chains)
+    finally:
+        buf.close()
 
     return chain_seq_dict
 
 # called by serializedPipeline
 
-def getSequences(pdb_id_tuples: list[str], pdb_path: str) -> list[tuple[str, str, dict]]:
+def getSequences(pdb_id_tuples: list[str], pdb_path: str, verbosity: int = 0) -> list[tuple[str, str, dict]]:
     pdb_sequences: list[tuple[str, str, dict]] = []
 
     pdb_chains_tuples: dict[str, set[str]] = {}
     for pdb_chain_tuple in pdb_id_tuples:
         [pdb, chain] = pdb_chain_tuple.split(':')
         if pdb not in pdb_chains_tuples:
-            pdb_chains_tuples[pdb] = set([chain])
+            pdb_chains_tuples[pdb] = {chain}
         else:
             pdb_chains_tuples[pdb].add(chain)
             
     for pdb in pdb_chains_tuples:
         chains: set[str] = pdb_chains_tuples[pdb]
-        chain_seq_dict: dict[str, tuple[str, dict[str, int]]] = getSequence(pdb, chains, pdb_path)
+        try:
+            chain_seq_dict: dict[str, tuple[str, dict[str, int]]] = getSequence(pdb, chains, pdb_path)
+        except OSError as e:
+            if verbosity >= 3:
+                print(f'[getSequences] OSError reading {pdb}: {e}', file=__import__('sys').stderr, flush=True)
+            continue
+        if chain_seq_dict is None:
+            if verbosity >= 3:
+                print(f'[getSequences] no buffer for {pdb} (file missing?)', file=__import__('sys').stderr, flush=True)
+            continue
         for chain in chain_seq_dict:
             seq, res_pos_map = chain_seq_dict[chain]
             pdb_chain_tuple = f'{pdb}:{chain}'
@@ -284,8 +199,8 @@ def parsePDBSequence(buf: gzip.GzipFile, chains: set[str]) -> dict[str, tuple[st
 
             if len(line) > 26:
                 record_name = line[0:6].strip()
-                if not record_name == 'ATOM' \
-                        and not record_name == 'HETATM':
+                if record_name != 'ATOM' \
+                        and record_name != 'HETATM':
                     continue
 
                 altLoc = line[16]
@@ -295,12 +210,11 @@ def parsePDBSequence(buf: gzip.GzipFile, chains: set[str]) -> dict[str, tuple[st
                     continue
 
                 res_name = line[17:20].strip()
-                if record_name == 'HETATM':
-                    if res_name not in residue_consts.THREE_TO_ONE:
-                        continue
+                if record_name == 'HETATM' and res_name not in residue_consts.THREE_TO_ONE:
+                    continue
 
                 chain_id = line[21]
-                if not chain_id in chains:
+                if chain_id not in chains:
                     continue
                 if chain_id not in chain_seq_dict:
                     chain_seq_dict[chain_id] = ([], {})
@@ -365,7 +279,7 @@ def parse_chaintype_map(input_page):
         if len(line) > 20:
             atom_nr = line[6:11].replace(" ", "")
             if record_name.count('ATOM') > 0 and record_name != 'ATOM':  # 100k atom bug fix
-                atom_nr = '%s%s' % (record_name[4:], atom_nr)
+                atom_nr = f'{record_name[4:]}{atom_nr}'
                 record_name = 'ATOM'
 
             res_name = line[17:20].replace(" ", "")
@@ -425,9 +339,7 @@ def parse_chaintype_map(input_page):
     for chain_id in peptide_count:
         if chain_type_map[chain_id] == 'DNA' or chain_type_map[chain_id] == 'RNA':
             continue
-        if peptide_count[chain_id][0] <= peptide_count[chain_id][1] * 2:
-            chain_type_map[chain_id] = 'Peptide'
-        elif (peptide_count[chain_id][0] + peptide_count[chain_id][1]) < 150:  # Total number of atoms
+        if peptide_count[chain_id][0] <= peptide_count[chain_id][1] * 2 or (peptide_count[chain_id][0] + peptide_count[chain_id][1]) < 150:
             chain_type_map[chain_id] = 'Peptide'
 
     return chain_type_map
@@ -443,70 +355,7 @@ def get_all_chains(buf):
             chains.add(chain_id)
     return chains
 
-# NewMMCIFParser
-def nuc_acid_parser(buf, chain):
-    i = 1
-    res_pos_map = {}
-    seq = ""
-    used_res = ()
-    temp = 0
 
-    x = []
-    for line in buf:
-        line = line.decode('ascii')
-        splitted = line.split()
-        if len(line.strip()) == 0:
-            continue
-        if splitted[0] == 'ATOM' or splitted[0] == 'HETATM':
-            chain_id = splitted[6]
-            if chain_id != chain:
-                continue
-            if temp == splitted[8]:
-                continue
-            res_name = splitted[5]
-            nuc = res_name
-            seq = seq + nuc
-            temp = splitted[8]
-            res_pos_map[splitted[8]] = i
-            i += 1
-
-    return seq, res_pos_map
-
-
-def parseMMCIFSequence(buf, chain):
-    i = 1
-    res_pos_map = {}
-    seq = ""
-    used_res = ()
-    temp = 0
-
-    x = []
-    for line in buf:
-        line = line.decode('ascii')
-        splitted = line.split()
-        if len(line.strip()) == 0:
-            continue
-        if splitted[0] == 'ATOM' or splitted[0] == 'HETATM':
-            chain_id = splitted[6]
-            if chain_id != chain:
-                continue
-            nuc_acid = splitted[17]
-            if nuc_acid == 'T' or nuc_acid == 'C' or nuc_acid == 'G' or nuc_acid == 'U' or nuc_acid == 'A':
-                seq, res_pos_map = nuc_acid_parser(buf, chain)
-                break
-            else:
-                res_name = splitted[5]
-                if res_name not in residue_consts.THREE_TO_ONE:
-                    continue
-                if temp == splitted[8]:
-                    continue
-                aa = residue_consts.THREE_TO_ONE[res_name]
-                seq = seq + aa
-                temp = splitted[8]
-                res_pos_map[splitted[8]] = i
-                i += 1
-
-    return seq, res_pos_map
 
 # called by serializedPipeline
 # called by templateFiltering
@@ -536,14 +385,10 @@ def standardParsePDB(
     if buf is None:
         if return_10k_bool and get_is_local:
             return '', None, None, 0
-        elif return_10k_bool:
-            return '', None, 0
-        elif get_is_local:
+        elif return_10k_bool or get_is_local:
             return '', None, 0
         return '', 0
-    # Added automatization here, if pdb file not exist, automatically calls MMCIF version
-    #    print('PDB file does not exist, trying MMCIF file')
-    #    return standardParseMMCIF(pdb_id,config.pdb_path,obsolete_check=False)
+
 
     chain_ids = set()
     rare_residues = set()
@@ -561,6 +406,7 @@ def standardParsePDB(
 
     current_serial = 1
     firstAltLoc = None
+    unusable_chain_id_lines = 0
     for line in buf:
         if len(line) >= 27:
             record_name = line[0:6].rstrip()
@@ -610,16 +456,7 @@ def standardParsePDB(
                     continue
                 if tlc not in residue_consts.THREE_TO_ONE:
                     rare_residues.add(tlc)
-        elif record_name == b'SSBOND':
-            newlines.append(line)
-            continue
-        elif record_name == b'LINK  ':
-            newlines.append(line)
-            continue
-        elif record_name == b'CISPEP':
-            newlines.append(line)
-            continue
-        elif record_name == b'SEQRES':
+        elif record_name == b'SSBOND' or record_name == b'LINK  ' or record_name == b'CISPEP' or record_name == b'SEQRES':
             newlines.append(line)
             continue
         elif record_name == b'TER':
@@ -638,9 +475,14 @@ def standardParsePDB(
             res_name = line[17:20].strip().decode('ascii')
             chain_id = line[21:22].decode('ascii')
 
-            if record_name == b'HETATM':
-                if res_name not in residue_consts.THREE_TO_ONE and sdsc_utils.boring(res_name) and (len(res_name) == 3) and (res_name not in rare_residues):
-                    continue
+            # See base_utils.chain_consts: a chain id outside the fixed alphabet has
+            # no chain number, so the line is dropped instead of entering the page.
+            if not is_usable_chain_id(chain_id):
+                unusable_chain_id_lines += 1
+                continue
+
+            if record_name == b'HETATM' and res_name not in residue_consts.THREE_TO_ONE and sdsc_utils.boring(res_name) and (len(res_name) == 3) and (res_name not in rare_residues):
+                continue
 
             if chain_id not in chain_ids:
                 chain_ids.add(chain_id)
@@ -659,8 +501,8 @@ def standardParsePDB(
 
         else:
             # We are not interested in other record types
-            if model_path is not None:
-                print(f'Strange record in model: {pdb_id=} {model_path=} {record_name=}')
+            #if model_path is not None:
+                #print(f'Strange record in model: {pdb_id=} {model_path=} {record_name=}')
             continue
 
         # Adjust serials after skipping records
@@ -686,6 +528,12 @@ def standardParsePDB(
         template_page = b'\n'.join(newlines).decode('ascii')
 
     buf.close()
+
+    if unusable_chain_id_lines > 0 and config.verbosity >= 2:
+        # Dropping these is deliberate, but it should not be silent: a chain id outside
+        # CHAIN_ID_ORDER means atoms were discarded from this structure.
+        config.logger.info(
+            f'[chain_ids] {pdb_id}: dropped {unusable_chain_id_lines} atom lines with an unusable chain id')
 
     if return_10k_bool and get_is_local:
         return template_page, page_altered, path, current_serial
@@ -723,9 +571,8 @@ def relocate_hetatm(page, filter_chains=None, filter_het=None):
         elif record_name == 'ATOM' or record_name == 'HETATM':
             chain_id = line[21:22]
 
-            if filter_chains is not None:
-                if chain_id not in filter_chains:
-                    continue
+            if filter_chains is not None and chain_id not in filter_chains:
+                continue
 
             if filter_het is not None:
                 res_name = line[17:20].strip()
@@ -744,9 +591,8 @@ def relocate_hetatm(page, filter_chains=None, filter_het=None):
             #    continue
             res_name = line[17:20].strip()
 
-            if record_name == 'HETATM':
-                if res_name not in residue_consts.THREE_TO_ONE and sdsc_utils.boring(res_name) and (res_name not in rare_residues):
-                    continue
+            if record_name == 'HETATM' and res_name not in residue_consts.THREE_TO_ONE and sdsc_utils.boring(res_name) and (res_name not in rare_residues):
+                continue
 
             if chain_id not in chain_lines:
                 chain_lines[chain_id] = []
@@ -758,78 +604,6 @@ def relocate_hetatm(page, filter_chains=None, filter_het=None):
         new_page += '\n'.join(chain_lines[chain]) + '\nTER\n'
     new_page += 'ENDMDL\n'
     return new_page, removed_ligands
-
-
-# Called by standardParsePDB if PDB file does not exist
-def standardParseMMCIF(pdb_id, pdb_path, obsolete_check=False):
-    AU = False
-    if pdb_id.count('_AU') == 1:
-        pdb_id = pdb_id[0:4]
-        AU = True
-
-    buf = getMMCIFBuffer(pdb_id, pdb_path, AU=AU, obsolete_check=obsolete_check)
-
-    if buf is None:
-        return None
-
-    chain_ids = set()
-    newlines = []
-
-    current_serial = 1
-    firstAltLoc = None
-    for line in buf:
-        if len(line) >= 27:
-            record_name = line[0:6].rstrip()
-            line = line.rstrip(b'\n')
-            splitted = line.split()
-        else:
-            continue
-
-        if record_name == b'ENDMDL':
-            newlines.append(line)
-            break
-        elif record_name == b'TER':
-            # This can happen, if the whole chain consists of boring ligands,
-            # which is very boring
-            if chain_id not in chain_ids:
-                continue
-        elif record_name == b'MODRES':
-            pass
-        elif record_name == b'ATOM' or record_name == b'HETATM':
-            altLoc = chr(line[17])
-            if firstAltLoc is None and altLoc != ' ':
-                firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
-            if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
-                continue
-            res_name = splitted[5]
-            chain_id = splitted[6]
-            res_nr = splitted[8]
-
-            if record_name == b'HETATM':
-                if res_name not in residue_consts.THREE_TO_ONE and sdsc_utils.boring(res_name):
-                    continue
-
-            if chain_id not in chain_ids:
-                chain_ids.add(chain_id)
-
-        else:
-            # We are not interested in other record types
-            continue
-
-        # Adjust serials after skipping records
-        if current_serial > 99999:
-            newline = record_name[0:5].ljust(5, b' ') + str(current_serial).encode('ascii').rjust(6, b' ')
-        else:
-            newline = record_name.ljust(6, b' ') + str(current_serial).encode('ascii').rjust(5, b' ')
-        newline += line[11:]
-        newlines.append(newline)
-        current_serial += 1
-
-    template_page = b'\n'.join(newlines).decode('ascii')
-
-    buf.close()
-
-    return template_page
 
 def toOne(res_name: str, only_natural: bool = False) -> str:
     if only_natural:
@@ -853,7 +627,7 @@ def getStandardizedPdbFile(
         ) -> tuple[list[bytes], list, dict[str, str], set[str], int, list[str], set[str]]:
 
     t0 = time.time()
-    times: list[float] = []
+    times: list[tuple[float, str]] = []
 
     AU: bool = False
 
@@ -864,14 +638,12 @@ def getStandardizedPdbFile(
     buf = getStructureBuffer(pdb_id, config, AU=AU, obsolete_check=obsolete_check, model_path = model_path)
 
     if buf is None:
-        # Added automatization here, if pdb file not exist, automatically calls MMCIF version
-        #print('PDB file does not found, trying MMCIF file')
-        # return getStandardizedMMCIFFile(pdb_id=pdb_id,pdb_path=pdb_path)
-        return 'Buffer was None'
+
+        raise ValueError(f'Buffer was None for {pdb_id=} {model_path=}')
 
     chain_type_map: dict[str, str] = {}
     chain_list: list[str] = []
-    modres_map: dict[str, residue_package.Residue_Map] = {}
+    modres_map: dict[str, Residue_Map] = {}
 
     lig_set: dict[str, set[int | bytes]] = {}
 
@@ -895,10 +667,9 @@ def getStandardizedPdbFile(
     first_residues: dict[str, int | str] = {}
     last_residues: dict[str, int | str] = {}
     seqs: dict[str, str] = {}
+    chain_id: str = None
 
-    t1 = time.time()
-    times.append(t1-t0)
-
+    t0 = add_to_times(times, t0, 'get buffer')
     #total_subtimes = []
 
     for line in buf:
@@ -968,7 +739,7 @@ def getStandardizedPdbFile(
                 res_nr: str = line[18:23].strip().decode('ascii')
                 res_name: str = line[24:27].strip().decode('ascii')
                 if chain_id not in modres_map:
-                    modres_map[chain_id] = residue_package.Residue_Map()
+                    modres_map[chain_id] = Residue_Map()
                 modres_map[chain_id].add_item(res_nr, res_name)
 
             case b'ATOM':
@@ -978,6 +749,11 @@ def getStandardizedPdbFile(
                 if altLoc != b' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
                     continue
                 
+                atom_name: bytes = line[12:16].strip()
+                # ignore hydrogen
+                if atom_name[0:1] in (b'H', b'D', b''):
+                    continue
+
                 chain_id: str = line[21:22].decode('ascii')
 
                 if chain_id not in chain_ids:
@@ -1129,11 +905,7 @@ def getStandardizedPdbFile(
         #total_subtimes = aggregate_times(total_subtimes, subtimes)
         
 
-    #for t in total_subtimes:
-    #    times.append(t)
-
-    t2 = time.time()
-    times.append(t2-t1)
+    t0 = add_to_times(times, t0, 'main parse loop')
 
     buf.close()
 
@@ -1165,166 +937,10 @@ def getStandardizedPdbFile(
     for chain in irregular_homo_chains:
         oligo.remove(chain)
 
-    t3 = time.time()
-    times.append(t3-t2)
+    t0 = add_to_times(times, t0, 'post process parse results')
 
     return interaction_partners, chain_type_map, oligo, current_serial, chain_list, rare_residues, times, seq_res_maps, first_residues, last_residues, seqs
 
-# Newly written MMCIF version
-# Called by getStandardizedPDBFile if PDB file does not exist
-
-
-def getStandardizedMMCIFFile(pdb_id, chain, structure, pdb_path):
-    times = [0.0, 0.0, 0.0]
-    t0 = time.time()
-    AU = False
-
-    if pdb_id.count('_AU') == 1:
-        pdb_id = pdb_id[0:4]
-        AU = True
-
-    buf = getMMCIFBuffer(pdb_id, pdb_path, AU)
-
-    if buf is None:
-        return "", '', "Did not find the MMCIF-file: %s" % (pdb_id), times
-
-    structure['IAP'] = []
-    t1 = time.time()
-
-    chain_type_map = {}
-    modres_map = {}
-
-    lig_set = {}
-
-    newlines = []
-
-    current_serial = 1
-    firstAltLoc = None
-    for line in buf:
-        line = line.decode('ascii')
-        if len(line) >= 27:
-            record_name = line[0:6].rstrip()
-            line = line.rstrip('\n')
-            splitted = line.split()
-        else:
-            continue
-
-        if record_name == 'ENDMDL':
-            newlines.append(line)
-            break
-        elif record_name == 'TER':
-            # This can happen, if the whole chain consists of boring ligands,
-            # which is very boring
-            if chain_id not in chain_type_map:
-                continue
-        # No idea id there is modres in mmcif, should check
-        elif record_name == 'MODRES':
-            chain_id = line[16]
-            res_nr = line[18:23].strip()
-            res_name = line[24:27].strip()
-            if (chain_id, res_nr) not in modres_map:
-                modres_map[(chain_id, res_nr)] = res_name
-        elif record_name == 'ATOM' or record_name == 'HETATM':
-            altLoc = line[17]  # Check
-            if firstAltLoc is None and altLoc != ' ':
-                firstAltLoc = altLoc  # The first found alternative Location ID is set as the major alternative location ID or firstAltLoc
-            if altLoc != ' ' and altLoc != firstAltLoc:  # Whenever an alternative Location ID is found, which is not firstAltLoc, then skip the line
-                continue
-            res_name = splitted[5]
-            chain_id = splitted[6]
-            res_nr = splitted[8]
-
-            #occupancy = float(line[54:60].replace(" ",""))
-
-            if chain_id not in chain_type_map:
-                if record_name == 'ATOM':
-                    if len(res_name) == 1:
-                        chain_type = 'RNA'
-                    elif len(res_name) == 2:
-                        chain_type = 'DNA'
-                    elif len(res_name) == 3:
-                        chain_type = 'Protein'
-                    chain_type_map[chain_id] = chain_type
-                elif record_name == 'HETATM':
-                    # For a hetero peptide 'boring' hetero amino acids are
-                    # allowed as well as other non boring molecules not in
-                    # residue_consts.THREE_TO_ONE, which are hopefully some kind of anormal amino
-                    # acids
-                    if res_name in residue_consts.THREE_TO_ONE or not sdsc_utils.boring(res_name):
-                        chain_type = 'Peptide'
-                        chain_type_map[chain_id] = chain_type
-            elif record_name == 'ATOM' and chain_type_map[chain_id] == 'Peptide':
-                if len(res_name) == 1:
-                    chain_type = "RNA"
-                elif len(res_name) == 2:
-                    chain_type = "DNA"
-                elif len(res_name) == 3:
-                    chain_type = "Protein"
-                chain_type_map[chain_id] = chain_type
-
-            if record_name == 'HETATM':
-                # modified residue are not parsed as ligands
-                if res_name not in residue_consts.THREE_TO_ONE and not sdsc_utils.boring(res_name):
-                    if chain_id not in lig_set:
-                        lig_set[chain_id] = set()
-                    if res_nr not in lig_set[chain_id]:
-                        lig_set[chain_id].add(res_nr)
-
-                        if (chain_id, res_nr) in modres_map:
-                            continue
-
-                        structure['IAP'].append(["Ligand", res_name, res_nr, chain_id])
-
-        else:
-            # We are not interested in other record types
-            continue
-
-        # Adjust serials after skipping records
-        if current_serial > 99999:
-            newline = record_name[0:5].ljust(5, ' ') + str(current_serial).rjust(6, ' ')
-        else:
-            newline = record_name.ljust(6, ' ') + str(current_serial).rjust(5, ' ')
-        newline += line[11:]
-        newlines.append(newline)
-        current_serial += 1
-
-    pep_not_lig = []
-    for chain_id in chain_type_map:
-        chain_type = chain_type_map[chain_id]
-        structure['IAP'].append([chain_type, chain_id])
-
-    for chain_id in chain_type_map:
-        chain_type = chain_type_map[chain_id]
-        if chain_type == 'Peptide':
-            for i, iap in enumerate(structure['IAP']):
-                if iap[0] == 'Ligand':
-                    if iap[3] == chain_id:
-                        pep_not_lig.append(i)
-
-    pep_not_lig = sorted(pep_not_lig, reverse=True)
-
-    for i in pep_not_lig:
-        del structure['IAP'][i]
-
-    # Happens for repeated chains in asymetric units, which do not occur in the
-    # biological assembly
-    irregular_homo_chains = []
-    for i, homo_chain in enumerate(structure['Oligo']):
-        if homo_chain not in chain_type_map:
-            irregular_homo_chains.append(i)
-
-    irregular_homo_chains = sorted(irregular_homo_chains, reverse=True)
-    for i in irregular_homo_chains:
-        del structure['Oligo'][i]
-
-    t2 = time.time()
-
-    template_page = '\n'.join(newlines)
-
-    t3 = time.time()
-    times = [t1 - t0, t2 - t1, t3 - t2]
-
-    return template_page, None, times, interaction_partners, chain_type_map, oligo  # BUG: undefined variable
 
 
 # called by database
@@ -1592,4 +1208,4 @@ def getInfo(pdb_id, pdb_path) -> tuple[float | None, dict[str, set[str]], dict[s
     return resolution, homomer_dict, chain_names
 
 
-chain_id_list = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]
+# The canonical ordering now lives in base_utils.chain_consts.CHAIN_ID_ORDER.

@@ -1,4 +1,4 @@
-from structman.lib.sdsc.sdsc_utils import Slotted_obj
+from structman.base_utils.base_utils import Slotted_obj
 
 class Gene(Slotted_obj):
     __slots__ = [

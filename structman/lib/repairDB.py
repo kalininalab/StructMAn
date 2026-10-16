@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+﻿#!/usr/bin/python3
 import getopt
 import gzip
 import os
@@ -7,6 +7,7 @@ import sys
 import traceback
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 import ray
 
 from structman.lib.database.database_core_functions import binningSelect, select, remove, insert
@@ -15,9 +16,49 @@ from structman.lib.database.database_core_functions import binningSelect, select
 from structman import _version
 
 table_names =    [
-            'Protein', 'Gene', 'Position', 'Interface', 'SNV', 'Multi_Mutation',
-            'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session', 'Alignment',
-            'Position_Position_Interaction',
+            'Protein', 'Gene',
+            'Position_0',
+            'Position_1',
+            'Position_2',
+            'Position_3',
+            'Position_4',
+            'Position_5',
+            'Position_6',
+            'Position_7',
+            'Position_8',
+            'Position_9',
+            'Position_10',
+            'Position_11',
+            'Position_12',
+            'Position_13',
+            'Position_14',
+            'Position_15',
+            'Position_16',
+            'Position_17',
+            'Position_18',
+            'Position_19',
+            'Interface', 'SNV', 'Multi_Mutation',
+            'RS_Isoform', 'Indel', 'GO_Term', 'Pathway', 'Session',
+            'Alignment_0',
+            'Alignment_1',
+            'Alignment_2',
+            'Alignment_3',
+            'Alignment_4',
+            'Alignment_5',
+            'Alignment_6',
+            'Alignment_7',
+            'Alignment_8',
+            'Alignment_9',
+            'Alignment_10',
+            'Alignment_11',
+            'Alignment_12',
+            'Alignment_13',
+            'Alignment_14',
+            'Alignment_15',
+            'Alignment_16',
+            'Alignment_17',
+            'Alignment_18',
+            'Alignment_19',
             'Protein_Protein_Interaction_0', 
             'Protein_Protein_Interaction_1', 
             'Protein_Protein_Interaction_2', 
@@ -27,15 +68,45 @@ table_names =    [
             'Protein_Protein_Interaction_6', 
             'Protein_Protein_Interaction_7', 
             'Protein_Protein_Interaction_8', 
-            'Protein_Protein_Interaction_9', 
+            'Protein_Protein_Interaction_9',
+            'Protein_Protein_Interaction_10', 
+            'Protein_Protein_Interaction_11', 
+            'Protein_Protein_Interaction_12', 
+            'Protein_Protein_Interaction_13', 
+            'Protein_Protein_Interaction_14', 
+            'Protein_Protein_Interaction_15', 
+            'Protein_Protein_Interaction_16', 
+            'Protein_Protein_Interaction_17', 
+            'Protein_Protein_Interaction_18', 
+            'Protein_Protein_Interaction_19', 
             'RS_Protein_Session', 'RS_Protein_GO_Term', 'RS_Position_Session',
             'RS_Position_Interface', 'RS_SNV_Session', 'RS_Multi_Mutation_Session', 
             'RS_Indel_Session', 'RS_Protein_Pathway'
             ]
 
 structure_table_names = [
-        'Ligand', 'Structure', 'Residue', 'Complex', 'RS_Ligand_Structure',
-        'RS_Residue_Residue', 'RS_Residue_Interface'
+        'Ligand',
+        'Structure_0',
+        'Structure_1',
+        'Structure_2',
+        'Structure_3',
+        'Structure_4',
+        'Structure_5',
+        'Structure_6',
+        'Structure_7',
+        'Structure_8',
+        'Structure_9',
+        'Structure_10',
+        'Structure_11',
+        'Structure_12',
+        'Structure_13',
+        'Structure_14',
+        'Structure_15',
+        'Structure_16',
+        'Structure_17',
+        'Structure_18',
+        'Structure_19',
+        'Complex', 'RS_Ligand_Structure',
     ]
 
 session_tables = [
@@ -47,14 +118,74 @@ session_tables = [
 
 table_names_in_order = [
             [
-                'Gene', 'Complex', 'Structure', 'Session', 'GO_Term', 'Pathway', 'Ligand',
+                'Gene', 'Complex',
+                'Structure_0',
+            'Structure_1',
+            'Structure_2',
+            'Structure_3',
+            'Structure_4',
+            'Structure_5',
+            'Structure_6',
+            'Structure_7',
+            'Structure_8',
+            'Structure_9',
+            'Structure_10',
+            'Structure_11',
+            'Structure_12',
+            'Structure_13',
+            'Structure_14',
+            'Structure_15',
+            'Structure_16',
+            'Structure_17',
+            'Structure_18',
+            'Structure_19',
+            'Session', 'GO_Term', 'Pathway', 'Ligand', 'Database_Metadata'
             ],
             [
-                'Protein', 'Interface', 'Residue', 'RS_Ligand_Structure', 
+                'Protein', 'Interface', 'RS_Ligand_Structure', 
             ],
             [
-                'Alignment', 'RS_Residue_Interface',
-                'Position', 'Multi_Mutation',
+                'Alignment_0',
+                'Alignment_1',
+                'Alignment_2',
+                'Alignment_3',
+                'Alignment_4',
+                'Alignment_5',
+                'Alignment_6',
+                'Alignment_7',
+                'Alignment_8',
+                'Alignment_9',
+                'Alignment_10',
+                'Alignment_11',
+                'Alignment_12',
+                'Alignment_13',
+                'Alignment_14',
+                'Alignment_15',
+                'Alignment_16',
+                'Alignment_17',
+                'Alignment_18',
+                'Alignment_19',
+                'Position_0',
+                'Position_1',
+                'Position_2',
+                'Position_3',
+                'Position_4',
+                'Position_5',
+                'Position_6',
+                'Position_7',
+                'Position_8',
+                'Position_9',
+                'Position_10',
+                'Position_11',
+                'Position_12',
+                'Position_13',
+                'Position_14',
+                'Position_15',
+                'Position_16',
+                'Position_17',
+                'Position_18',
+                'Position_19',
+                'Multi_Mutation',
                 'Protein_Protein_Interaction_0', 
                 'Protein_Protein_Interaction_1', 
                 'Protein_Protein_Interaction_2', 
@@ -65,12 +196,21 @@ table_names_in_order = [
                 'Protein_Protein_Interaction_7', 
                 'Protein_Protein_Interaction_8', 
                 'Protein_Protein_Interaction_9',
+                'Protein_Protein_Interaction_10', 
+                'Protein_Protein_Interaction_11', 
+                'Protein_Protein_Interaction_12', 
+                'Protein_Protein_Interaction_13', 
+                'Protein_Protein_Interaction_14', 
+                'Protein_Protein_Interaction_15', 
+                'Protein_Protein_Interaction_16', 
+                'Protein_Protein_Interaction_17', 
+                'Protein_Protein_Interaction_18', 
+                'Protein_Protein_Interaction_19',
                 'RS_Protein_Session', 'Indel',
                 'RS_Protein_GO_Term', 'RS_Protein_Pathway', 
             ],
             [
-                'Position_Position_Interaction', 'SNV',
-                'RS_Residue_Residue', 
+                'SNV',
                 'RS_Position_Session',
                 'RS_Multi_Mutation_Session', 
                 'RS_Indel_Session', 'RS_Position_Interface',
@@ -80,32 +220,6 @@ table_names_in_order = [
                 'RS_SNV_Session'
             ]
         ]
-
-
-# Tries to reclassify all positions with no classification in the database
-# Usefull when,
-#   - There was an error in insertClassifications
-def reclass_null(config):
-    db = MySQLdb.connect(config.db_address, config.db_user_name, config.db_password, config.db_name)
-    cursor = db.cursor()
-    # get all positions without classifications (together with their protein id)
-    columns = ['Position_Id', 'Gene']
-    table = 'Position'
-    null_columns = set(['Class'])
-    results = select(db, cursor, columns, table, null_columns=null_columns)
-
-    prot_ids = set()
-    for row in results:
-        prot_ids.add(row[1])
-
-    # for all proteins search for alignments in the database
-
-    rows = ['Gene', 'Structure', 'Alignment']
-    table = 'Alignment'
-    results = binningSelect(prot_ids, rows, table, db, cursor)
-
-    # try to map the positions into the alignments
-    # for all positions, which could be mapped, reclassify
 
 
 def remove_sessions(config):
@@ -139,9 +253,11 @@ def remove_sessions(config):
             # Rollback in case there is any error
             # db.rollback()
             [e, f, g] = sys.exc_info()
-            g = traceback.format_exc(g)
+            g = traceback.format_exc()
             print("Error: ", e, f, g)
 
+    # TRUNCATE commits on its own in MySQL, but SQLite's DELETE FROM is rolled back on close.
+    db.commit()
     db.close()
     return
 
@@ -471,7 +587,7 @@ def remove_empty_structures(config):
 
     empty_structures = []
     for structure_id in stored_structures:
-        if not structure_id in structures_with_residues:
+        if structure_id not in structures_with_residues:
             empty_structures.append(structure_id)
 
     remove(config, 'Structure', in_rows={'Structure_Id' : empty_structures})
@@ -491,7 +607,7 @@ def reroll(config):
         elif last_session < row[0]:
             last_session = row[0]
 
-@ray.remote
+@ray.remote(max_calls=1)
 def r_clone_table(config: any, table_name: str, target_db: str, template_db: str) -> None:
     clone_table_v2(config, table_name, target_db, template_db)
 
@@ -549,10 +665,13 @@ def clone_table_v2(config, table_name, target_db, template_db):
 
     db.close()
 
-def clone_afdb(config, target_db_name: str):
-    db, cursor = config.getDB(server_connection=True, db_name=config.afdb)
-    cursor.execute(f"SHOW TABLES FROM {config.afdb}")
-    
+def clone_afdb(config, target_db_name: str, template_db: str | None = None):
+    if template_db is None:
+        template_db = config.afdb
+
+    db, cursor = config.getDB(server_connection=True, db_name=template_db)
+    cursor.execute(f"SHOW TABLES FROM {template_db}")
+
     tables = [[], [], [], []]
     alternate = 0
     for row in cursor.fetchall():
@@ -563,7 +682,7 @@ def clone_afdb(config, target_db_name: str):
 
     db.close()
 
-    clone_db(config, target_db_name, tables = tables, template_db=config.afdb)
+    clone_db(config, target_db_name, tables = tables, template_db=template_db)
 
 def clone_db(config, target_db_name: str, tables: None | list[list[str]] = None, template_db: str | None = None) -> None:
     t0 = time.time()
@@ -576,9 +695,14 @@ def clone_db(config, target_db_name: str, tables: None | list[list[str]] = None,
     print('============ Database clone ===============')
     print(f'From {template_db} to {target_db_name}\n')
 
+    # Standalone entry point, so ray is usually down here; an unguarded put would
+    # auto-start an unconfigured cluster (see structman/__init__.py). Imported here
+    # rather than at module level: config_class imports this module, so a top level
+    # ray_utils import would close the circle config_class -> repairDB -> ray_utils.
+    from structman.base_utils.ray_utils import ray_init
+    ray_init(config, stop_existing = False)
     conf_dump = ray.put(config)
 
-    
     db, cursor = config.getDB(server_connection=True)
     sql = f'CREATE DATABASE `{target_db_name}`'
 
@@ -597,6 +721,416 @@ def clone_db(config, target_db_name: str, tables: None | list[list[str]] = None,
 
     t1 = time.time()
     print(f'Total time for cloning: {t1-t0}')
+
+# ---------------------------------------------------------------------------------------------
+# database repair: remove the proteins a crashed run left unfinished
+# ---------------------------------------------------------------------------------------------
+#
+# A chunk that dies after protCheck leaves its new proteins stored but unfinished, and a rerun
+# cannot repair that by itself: protCheck finds the Protein row, positionCheck then marks the
+# protein completely stored, and alignment and classification both skip stored proteins - so it
+# stays unclassified for good. Removing exactly those proteins, with every row that hangs off
+# them, turns the rerun into a resume: they come back as new and get computed, while everything
+# that finished is found stored and skipped.
+#
+# What tells them apart: classification writes Position_Data for every position of every protein
+# it classifies (an uncovered position gets a packed (None, None), not NULL), and all alignments
+# are written before structural analysis begins. A protein with alignments and a position without
+# Position_Data was therefore cut off in structural analysis or classification. Proteins without
+# templates have no alignments and are never flagged. A crash before the alignments were written
+# leaves proteins that look exactly like template-less ones; for that, from_protein_id names the
+# chunk's first protein id (protCheck logs it), and every protein from there on that did not
+# finish goes too.
+
+REPAIR_SHARDS = 20
+REPAIR_BATCH_SIZE = 500
+
+
+def _wildcard(config) -> str:
+    return '?' if config.db_address == '-' else '%s'
+
+
+def _in_size(config) -> int:
+    # sqlite caps the parameters of one statement (999 before 3.32).
+    return 900 if config.db_address == '-' else 5000
+
+
+def _connect(config):
+    db, cursor = config.getDB()
+    if cursor is None:
+        if db is not None:
+            db.close()
+        raise ConnectionError(f'No database connection ({config.db_address}, {config.db_name})')
+    return db, cursor
+
+
+def _select_in(cursor, config, columns: str, table: str, key: str, values, condition: str = '') -> list:
+    """SELECT columns FROM table WHERE key IN (values) [condition], in parts of _in_size."""
+    values = sorted(set(values))
+    wildcard = _wildcard(config)
+    size = _in_size(config)
+    rows = []
+    for start in range(0, len(values), size):
+        part = values[start:start + size]
+        cursor.execute(
+            f'SELECT {columns} FROM {table} WHERE {key} IN ({",".join([wildcard] * len(part))}){condition}', part)
+        rows.extend(cursor.fetchall())
+    return rows
+
+
+def _delete_in(cursor, config, table: str, key: str, values) -> int:
+    """DELETE FROM table WHERE key IN (values), in parts of _in_size. Returns the rows deleted."""
+    values = sorted(set(values))
+    wildcard = _wildcard(config)
+    size = _in_size(config)
+    deleted = 0
+    for start in range(0, len(values), size):
+        part = values[start:start + size]
+        cursor.execute(f'DELETE FROM {table} WHERE {key} IN ({",".join([wildcard] * len(part))})', part)
+        deleted += max(cursor.rowcount, 0)
+    return deleted
+
+
+def _existing_tables(config) -> set[str]:
+    db, cursor = _connect(config)
+    try:
+        if config.db_address == '-':
+            cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        else:
+            cursor.execute('SHOW TABLES')
+        return {row[0] for row in cursor.fetchall()}
+    finally:
+        db.close()
+
+
+def _all_sessions(config) -> list[tuple[int, str]]:
+    db, cursor = _connect(config)
+    try:
+        cursor.execute('SELECT Session_Id, Input_File FROM Session')
+        return sorted((row[0], row[1]) for row in cursor.fetchall())
+    finally:
+        db.close()
+
+
+def _by_shard(prot_ids) -> dict[int, list[int]]:
+    shards: dict[int, list[int]] = {}
+    for prot_id in prot_ids:
+        shards.setdefault(prot_id % REPAIR_SHARDS, []).append(prot_id)
+    return shards
+
+
+def _table_label(table: str) -> str:
+    # The 20 shards of a table are reported as one.
+    head, _, tail = table.rpartition('_')
+    return f'{head}_n' if tail.isdigit() else table
+
+
+def sessions_of_proteins(config) -> list[tuple[int, int, int, int, str | None]]:
+    """(session id, proteins, lowest and highest Protein_Id, input file) per session that first
+    stored proteins, from Protein.Original_Session. That column outlives the session tables, so
+    this still names the sessions after a truncation; their input file is then None. It is what
+    --session_id takes once -i can no longer find a session."""
+    db, cursor = _connect(config)
+    try:
+        cursor.execute('SELECT Original_Session, COUNT(*), MIN(Protein_Id), MAX(Protein_Id) FROM Protein '
+                       'WHERE Original_Session IS NOT NULL GROUP BY Original_Session')
+        per_session = [tuple(int(value) for value in row) for row in cursor.fetchall()]
+        cursor.execute('SELECT Session_Id, Input_File FROM Session')
+        input_files = {row[0]: row[1] for row in cursor.fetchall()}
+    finally:
+        db.close()
+    return sorted(row + (input_files.get(row[0]),) for row in per_session)
+
+
+def print_sessions_of_proteins(config) -> None:
+    rows = sessions_of_proteins(config)
+    if len(rows) == 0:
+        print('No protein in the database names the session that stored it.')
+        return
+    print('Sessions that stored proteins (Protein.Original_Session):')
+    for session, n, lowest, highest, input_file in rows:
+        source = input_file if input_file is not None else 'no Session row any more'
+        print(f'  session {session}: {n} proteins, Protein_Id {lowest} .. {highest}, {source}')
+    print('Session ids start again at 1 once the session tables are truncated, so one id can name an old '
+          'and a new run: add --from_protein_id to keep to one of them.')
+
+
+def _candidate_protein_ids(config, session_id, from_protein_id, original_session=None) -> list[int]:
+    wildcard = _wildcard(config)
+    db, cursor = _connect(config)
+    try:
+        if original_session is not None:
+            cursor.execute(f'SELECT Protein_Id FROM Protein WHERE Original_Session = {wildcard}', (original_session,))
+        elif session_id is not None:
+            cursor.execute(f'SELECT DISTINCT Protein FROM RS_Protein_Session WHERE Session = {wildcard}', (session_id,))
+        elif from_protein_id is not None:
+            cursor.execute(f'SELECT Protein_Id FROM Protein WHERE Protein_Id >= {wildcard}', (from_protein_id,))
+        else:
+            cursor.execute('SELECT Protein_Id FROM Protein')
+        prot_ids = {int(row[0]) for row in cursor.fetchall()}
+    finally:
+        db.close()
+    if from_protein_id is not None:
+        prot_ids = {prot_id for prot_id in prot_ids if prot_id >= from_protein_id}
+    return sorted(prot_ids)
+
+
+def _scan_shard(config, shard: int, prot_ids: list[int]) -> tuple[set[int], set[int]]:
+    """Of one shard's proteins: those with alignments, and those of them that have a position
+    without Position_Data."""
+    db, cursor = _connect(config)
+    try:
+        aligned = {row[0] for row in _select_in(
+            cursor, config, 'DISTINCT Protein', f'Alignment_{shard}', 'Protein', prot_ids)}
+        unfinished = {row[0] for row in _select_in(
+            cursor, config, 'DISTINCT Protein', f'Position_{shard}', 'Protein', aligned,
+            condition=' AND Position_Data IS NULL')}
+    finally:
+        db.close()
+    return aligned, unfinished
+
+
+def find_unfinished_proteins(config, session_id=None, from_protein_id=None,
+                             original_session=None) -> tuple[list[int], int]:
+    """The proteins a crashed run left unfinished, and how many proteins were checked.
+
+    Without from_protein_id or original_session: every protein with alignments and a position
+    without Position_Data. With either: every protein from that id on, or stored first by that
+    session, that is not finished - which also takes the ones whose chunk died before their
+    alignments were written.
+    """
+    candidates = _candidate_protein_ids(config, session_id, from_protein_id, original_session)
+    jobs = sorted(_by_shard(candidates).items())
+
+    # Reads only, one connection per shard. sqlite gets a single thread: its file lock would
+    # serialise them anyway.
+    if config.db_address == '-' or len(jobs) <= 1:
+        results = [_scan_shard(config, shard, prot_ids) for shard, prot_ids in jobs]
+    else:
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            results = list(pool.map(lambda job: _scan_shard(config, *job), jobs))
+
+    aligned: set[int] = set()
+    unfinished: set[int] = set()
+    for shard_aligned, shard_unfinished in results:
+        aligned |= shard_aligned
+        unfinished |= shard_unfinished
+
+    if from_protein_id is None and original_session is None:
+        victims = unfinished
+    else:
+        victims = set(candidates) - (aligned - unfinished)
+    return sorted(victims), len(candidates)
+
+
+def describe_unfinished_proteins(config, prot_ids: list[int], tables: set[str]) -> dict:
+    """What the repair report shows: example identifiers, the sessions the proteins belong to,
+    and how many structures aligned to them have no residue data."""
+    info = {'examples': [], 'sessions': {}, 'structures': 0, 'structures_without_residues': 0}
+    if len(prot_ids) == 0:
+        return info
+
+    db, cursor = _connect(config)
+    try:
+        info['examples'] = sorted(
+            (row[0], row[1]) for row in _select_in(
+                cursor, config, 'Protein_Id,Primary_Protein_Id', 'Protein', 'Protein_Id', prot_ids[:10]))
+
+        proteins_per_session: dict[int, int] = {}
+        for session, _prot_id in set(_select_in(
+                cursor, config, 'Session,Protein', 'RS_Protein_Session', 'Protein', prot_ids)):
+            proteins_per_session[session] = proteins_per_session.get(session, 0) + 1
+        input_files = {row[0]: row[1] for row in _select_in(
+            cursor, config, 'Session_Id,Input_File', 'Session', 'Session_Id', proteins_per_session.keys())}
+        info['sessions'] = {
+            session: (input_files.get(session), n) for session, n in proteins_per_session.items()}
+
+        # Complex and Structure rows are written during alignment, their residues only during
+        # structural analysis. A crash in between leaves structures that a rerun takes as stored
+        # and never analyses. They are shared with the alignments of other proteins, so the
+        # repair leaves them alone and only counts them. Structure ids are 100 * Structure_Id +
+        # shard here, as everywhere else.
+        structure_ids: set[int] = set()
+        for shard, shard_prot_ids in _by_shard(prot_ids).items():
+            structure_ids.update(row[0] for row in _select_in(
+                cursor, config, 'DISTINCT Structure', f'Alignment_{shard}', 'Protein', shard_prot_ids))
+        info['structures'] = len(structure_ids)
+
+        per_structure_shard: dict[int, list[int]] = {}
+        for internal_id in structure_ids:
+            per_structure_shard.setdefault(internal_id % 100, []).append(internal_id // 100)
+        for shard, ids in per_structure_shard.items():
+            table = f'Structure_{shard}'
+            if table not in tables:
+                continue
+            info['structures_without_residues'] += len(_select_in(
+                cursor, config, 'Structure_Id', table, 'Structure_Id', ids, condition=' AND Residue_Data IS NULL'))
+    finally:
+        db.close()
+    return info
+
+
+def delete_proteins(config, prot_ids: list[int], tables: set[str]) -> dict[str, int]:
+    """Delete these proteins and every row that hangs off them, in one transaction.
+
+    One connection and one commit: if anything fails, the rollback leaves the batch exactly as it
+    was, so the next repair finds it again and nothing is ever left half deleted. Returns the
+    rows deleted per table, the shards of a table counted together.
+
+    The session tables are left alone: the repair truncates them as a whole once every batch is
+    through, which is far cheaper than deleting their rows protein by protein.
+    """
+    by_shard = _by_shard(prot_ids)
+    deleted: dict[str, int] = {}
+    db, cursor = _connect(config)
+    try:
+        def ids_of(column: str, table: str, key: str, values) -> set:
+            if table not in tables or len(values) == 0:
+                return set()
+            return {row[0] for row in _select_in(cursor, config, column, table, key, values)}
+
+        # Positions are referenced as 100 * Position_Id + shard, as everywhere else.
+        position_ids = []
+        for shard, shard_prot_ids in by_shard.items():
+            position_ids.extend(100 * row[0] + shard for row in _select_in(
+                cursor, config, 'Position_Id', f'Position_{shard}', 'Protein', shard_prot_ids))
+
+        interface_ids = ids_of('Interface_Id', 'Interface', 'Protein', prot_ids)
+        snv_ids = ids_of('SNV_Id', 'SNV', 'Position', position_ids)
+        multi_mutation_ids = (ids_of('Multi_Mutation_Id', 'Multi_Mutation', 'Wildtype_Protein', prot_ids)
+                              | ids_of('Multi_Mutation_Id', 'Multi_Mutation', 'Mutant_Protein', prot_ids))
+        indel_ids = (ids_of('Indel_Id', 'Indel', 'Wildtype_Protein', prot_ids)
+                     | ids_of('Indel_Id', 'Indel', 'Mutant_Protein', prot_ids))
+
+        deletes = [(f'Protein_Protein_Interaction_{shard}', 'Protein_A', shard_prot_ids)
+                   for shard, shard_prot_ids in by_shard.items()]
+        # A PPI row is written from one side only, so a finished protein's row can name a
+        # protein removed here as Protein_B - an id that would no longer exist. The removed
+        # protein writes the interaction again from its own side when it is recomputed.
+        deletes += [(f'Protein_Protein_Interaction_{shard}', 'Protein_B', prot_ids)
+                    for shard in range(REPAIR_SHARDS)]
+        deletes += [
+            ('RS_Position_Interface', 'Interface', interface_ids),
+            ('Interface', 'Interface_Id', interface_ids),
+            ('SNV', 'SNV_Id', snv_ids),
+            ('RS_Isoform', 'Multi_Mutation', multi_mutation_ids),
+            ('RS_Isoform', 'Protein_A', prot_ids),
+            ('RS_Isoform', 'Protein_B', prot_ids),
+            ('Multi_Mutation', 'Multi_Mutation_Id', multi_mutation_ids),
+            ('Indel', 'Indel_Id', indel_ids),
+            ('RS_Protein_GO_Term', 'Protein', prot_ids),
+            ('RS_Protein_Pathway', 'Protein', prot_ids),
+        ]
+        for shard, shard_prot_ids in by_shard.items():
+            deletes.append((f'Alignment_{shard}', 'Protein', shard_prot_ids))
+            deletes.append((f'Position_{shard}', 'Protein', shard_prot_ids))
+        deletes.append(('Protein', 'Protein_Id', prot_ids))
+
+        for table, key, values in deletes:
+            if table not in tables or len(values) == 0:
+                continue
+            label = _table_label(table)
+            deleted[label] = deleted.get(label, 0) + _delete_in(cursor, config, table, key, values)
+
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return deleted
+
+
+def repair_crashed_chunks(config, session_id=None, from_protein_id=None, apply: bool = False,
+                          batch_size: int = REPAIR_BATCH_SIZE, original_session=None) -> dict:
+    """structman database repair: find the proteins a crashed run left unfinished, report them,
+    and with apply remove them, so that rerunning the input computes them again.
+
+    With apply it then truncates Session and the RS_*_Session tables (session_tables, as
+    'database remove_sessions' does), so that every session is gone and a rerun links its proteins
+    exactly once, instead of a second time on top of the links the crashed run left. That comes
+    last, after every batch: an interrupted repair still finds its session to be resumed with.
+
+    session_id scopes the search to the proteins linked to a session (-i); original_session to
+    the proteins a session stored first (--session_id), which still works once the session
+    tables are gone.
+
+    Genes and all structure tables are kept. Returns what was found and deleted.
+    """
+    t0 = time.time()
+    tables = _existing_tables(config)
+
+    if original_session is not None:
+        scope = f'the proteins session {original_session} stored first'
+    elif session_id is not None:
+        scope = f'session {session_id}'
+    else:
+        scope = 'the whole database'
+    if from_protein_id is not None:
+        scope = f'{scope}, Protein_Id >= {from_protein_id}'
+    print(f'Looking for unfinished proteins in {scope} of {config.db_name} ...', flush=True)
+
+    victims, n_checked = find_unfinished_proteins(config, session_id, from_protein_id, original_session)
+    print(f'{n_checked} proteins checked in {time.time() - t0:.1f}s, {len(victims)} of them unfinished', flush=True)
+    if original_session is not None and n_checked == 0:
+        print_sessions_of_proteins(config)
+
+    summary = {'victims': victims, 'deleted': {}, 'sessions_removed': 0}
+    info = describe_unfinished_proteins(config, victims, tables)
+    summary.update(info)
+
+    if len(victims) > 0:
+        print(f'  Protein_Id {victims[0]} .. {victims[-1]}, for example '
+              + ', '.join(f'{primary_id} ({prot_id})' for prot_id, primary_id in info['examples']))
+    for session, (input_file, n) in sorted(info['sessions'].items()):
+        print(f'  {n} of them belong to session {session}: {input_file}')
+    if info['structures_without_residues'] > 0:
+        print(f'  Warning: {info["structures_without_residues"]} of the {info["structures"]} structures aligned to '
+              'them have no residue data. If the run crashed before its structural analysis finished, a rerun '
+              'takes these structures as stored and does not analyse them again. Structures whose analysis '
+              'failed are counted here too.')
+
+    all_sessions = _all_sessions(config) if 'Session' in tables else []
+
+    if not apply:
+        print(f'\nDry run, nothing was changed. --apply removes these proteins and then truncates '
+              f'{", ".join(session_tables)}: all {len(all_sessions)} session(s) go, and every input has to be rerun '
+              'for its output. Use it while no StructMAn run uses this database.')
+        return summary
+
+    t_apply = time.time()
+    n_batches = (len(victims) + batch_size - 1) // batch_size
+    report_every = max(1, n_batches // 20)
+    deleted: dict[str, int] = {}
+    for batch_nr, start in enumerate(range(0, len(victims), batch_size), start=1):
+        batch = victims[start:start + batch_size]
+        try:
+            batch_deleted = delete_proteins(config, batch, tables)
+        except BaseException:
+            print(f'Batch {batch_nr}/{n_batches} failed and was rolled back. The {start} proteins removed before it '
+                  'stay removed; run the repair again to continue.', flush=True)
+            raise
+        for label, n in batch_deleted.items():
+            deleted[label] = deleted.get(label, 0) + n
+        if batch_nr % report_every == 0 or batch_nr == n_batches:
+            print(f'  {start + len(batch)}/{len(victims)} proteins removed ({time.time() - t_apply:.0f}s)', flush=True)
+
+    summary['deleted'] = deleted
+    if len(deleted) > 0:
+        print('Rows removed: ' + ', '.join(f'{label} {n}' for label, n in sorted(deleted.items()) if n > 0))
+
+    remove_sessions(config)
+    summary['sessions_removed'] = len(all_sessions)
+    print(f'Truncated {", ".join(session_tables)}: {len(all_sessions)} session(s) removed.')
+
+    print('Rerun the inputs you need output for, with the command they were run with. Finished proteins are '
+          'found stored and skipped, removed ones are computed again' + (':' if len(all_sessions) > 0 else '.'))
+    for _session, input_file in all_sessions[:20]:
+        print(f'  {input_file}')
+    if len(all_sessions) > 20:
+        print(f'  ... and {len(all_sessions) - 20} more')
+    return summary
+
 
 def main(config, reclassify_null=False):
     # called with --rcn

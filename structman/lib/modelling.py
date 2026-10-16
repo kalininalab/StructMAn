@@ -1,8 +1,7 @@
-
+﻿
 import contextlib
 import os
 import sys
-import psutil
 import ray
 import time
 import traceback
@@ -18,9 +17,11 @@ from structman.lib import globalAlignment, pdbParser, serializedPipeline, templa
 from structman.lib.sdsc import structure as structure_package
 from structman.lib.sdsc import complex as complex_package
 from structman.lib import model as model_class
-from structman.lib.sdsc.consts import residues as residue_consts
+from structman.base_utils import residue_consts
+from structman.base_utils.chain_consts import CHAIN_ID_ORDER
 
-modeller_chains_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
+# Modeller output chains are handed out by index from the shared ordering.
+modeller_chains_order = CHAIN_ID_ORDER
 
 
 def create_chain_map(chains):
@@ -157,7 +158,12 @@ def createFullAlignment(config, pdb_id, prot_id, first_residue, last_residue, ch
 
 @ray.remote(num_cpus = 1, max_calls = 1)
 def model_remote_wrapper(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=False, force_modelling=False, mutation_positions = None, label_add = '', target_path = None):
-    #print(complex_package.Complex.slot_mask)
+    # massmodel packs the Complex with its slot mask deactivated, so the payload holds
+    # all 17 slots. slot_mask is a class attribute and this is a fresh process holding
+    # the class default of 3, which read the payload one slot out of step - pdb_id
+    # arrived as resolution and so on. The receiver has to agree with the sender.
+    # max_calls is 1, so this cannot outlive the call.
+    complex_package.Complex().deactivate_slot_mask()
     return model(config, unpack(compl_obj), unpack(structures), alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, skip_analysis=skip_analysis, force_modelling=force_modelling, mutation_positions = mutation_positions, label_add = label_add, target_path = target_path)
 
 def model(
@@ -269,7 +275,13 @@ def model(
         template_page_b = compl_obj.getPage(config)
     template_page = template_page_b.decode('ascii')
 
-    (_, res_contig_map, _, _, _, box_map, _, _, _, _, _, _, _, _) = templateFiltering.parsePDB(template_page)
+    # parsePDB returns thirteen values; this unpacked fourteen and raised
+    # ValueError every time it ran. Named rather than positional now, so the arity
+    # cannot drift again.
+    parsed = templateFiltering.parsePDB(template_page)
+    res_contig_map = parsed.res_contig_map()
+    box_map = {parsed.chain_id(number): parsed.box[number]
+               for number in parsed.chain_numbers.tolist()}
 
     chains = compl_obj.chainlist
     reduced_chains = []

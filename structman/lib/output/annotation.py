@@ -1,6 +1,7 @@
 import os
 from structman.lib.database import database
 from structman.lib.output import out_generator
+from structman.lib.output import out_utils
 
 # called by structman_main
 def create_annotation_table(session, config, outfile):
@@ -27,16 +28,20 @@ def create_annotation_table(session, config, outfile):
     n_positions = 0
 
     for prot_id in prot_ids:
-        annotation_list = proteins.get_protein_annotation_list(prot_id)
+        annotation_list = proteins[prot_id].structure_annotations
         input_id = proteins[prot_id].input_id
         positions = proteins.get_position_ids(prot_id)
         n_annos += len(annotation_list)
         n_positions += len(positions)
-        for (pdb_id, chain) in annotation_list:
-            sub_infos = proteins.get_sub_infos(prot_id, pdb_id, chain)
-            resolution = proteins.complexes[pdb_id].resolution
-            sequence_id = proteins[prot_id].structure_annotations[(pdb_id, chain)].sequence_identity
-            coverage = proteins[prot_id].structure_annotations[(pdb_id, chain)].coverage
+        # Everything this loop needs is on the annotation itself, so iterating the
+        # annotations replaces a (pdb_id, chain) key plus three lookups per row.
+        for annotation in annotation_list:
+            pdb_id, chain = annotation.pdb_id, annotation.chain
+            sub_infos = annotation.get_sub_infos()
+            resolution = out_utils.hide_emulated_resolution(
+                pdb_id, proteins.complexes[pdb_id].resolution)
+            sequence_id = annotation.sequence_identity
+            coverage = annotation.coverage
 
             for pos in positions:
                 if sub_infos[pos] is None:

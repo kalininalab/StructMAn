@@ -4,6 +4,8 @@ include structman/lib/rinerator/reduce_wwPDB_het_dict.txt
 include structman/scripts/pdb-rsync.sh
 include structman/scripts/struct_man_db_uniprot.sql
 include structman/scripts/database_structure.sql
+include structman/scripts/add_simple_class_data.sql
+include structman/scripts/add_protein_identifiers.sql
 include structman/scripts/sqlite_database_structure.sql
 include structman/scripts/structguy_project_template.conf
 include structman/resources/Components-smiles-stereo-oe.smi

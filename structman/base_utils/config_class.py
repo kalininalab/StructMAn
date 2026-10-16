@@ -1,4 +1,5 @@
 import os
+import random
 import sys
 import time
 import configparser
@@ -6,8 +7,9 @@ import traceback
 import multiprocessing
 import subprocess
 import sqlite3
+import logging
 
-import pymysql as MySQLdb
+import structman.base_utils.mysql_driver as MySQLdb
 import ray
 
 from structman.base_utils.base_utils import resolve_path, is_alphafold_db_valid, Errorlog
@@ -42,6 +44,11 @@ class Config:
             print(f'Got KeyError in config_parser: {config_path=}')
             return None
 
+        main_logger = logging.getLogger(__name__)
+
+        self.logfile: str = f'{os.path.dirname(config_path)}/default_log.log'
+        logging.basicConfig(filename=self.logfile, encoding='utf-8', level=logging.DEBUG)
+        self.logger: logging.Logger = main_logger
 
         # fix typo `adress` -> `address`, but want old configs to still work, so also check for unfixed name
         old_address_name = cfg.get('db_adress', fallback='-')
@@ -66,6 +73,11 @@ class Config:
         self.ignore_local_mapping_db = False
         self.ray_local_mode = False
         self.python_env_expanded_for_ray = False
+        # Set by the pipeline for inputs small enough that the ray cold start is not
+        # worth paying before it is known whether there is any new work at all. While
+        # it is True, parallel_db_access reports False and nothing starts a cluster;
+        # core() clears it right after protCheck if the input brought new proteins.
+        self.defer_ray_init = False
         self.user_mail = cfg.get('mail', fallback='')
 
         self.outfolder = resolve_path(output_path)
@@ -91,6 +103,40 @@ class Config:
         self.option_seq_thresh = cfg.getfloat('seq_thresh', fallback=35.0)
         if self.option_seq_thresh <= 1.0:
             self.option_seq_thresh *= 100.0
+        # Pre-filter for the mmseqs search, as a fraction (mmseqs --min-seq-id).
+        # Hits below option_seq_thresh identity are discarded after the global
+        # alignment anyway, so anything mmseqs drops here saves parsing, an
+        # annotation object and a full alignment. The default keeps a wide margin
+        # below option_seq_thresh because mmseqs measures identity on its own
+        # local alignment rather than on the global one used for the decision.
+        # Set to 0 to restore the unfiltered behaviour.
+        self.mmseqs_min_seq_id = cfg.getfloat('mmseqs_min_seq_id', fallback=0.25)
+        if self.mmseqs_min_seq_id > 1.0:
+            self.mmseqs_min_seq_id *= 0.01
+        # Retrieval of the stored residue matrices is the single most memory hungry
+        # step of the aggregation: every running select task holds the packed rows,
+        # the unpacked per-structure arrays and the concatenated result at the same
+        # time. These two knobs cap that peak independently of proc_n, which is far
+        # too large a parallelism for this particular workload on big inputs.
+        self.max_structures_per_select_package = cfg.getint('max_structures_per_select_package', fallback=20000)
+        self.max_parallel_structure_selects = cfg.getint('max_parallel_structure_selects', fallback=20)
+
+        # Residue data holds nothing that needs 64 bit floats: accessibilities,
+        # angles, distances, small interaction counts and the integer codes for
+        # SSA/aa/modres, all exact in float32. It is written as float32 since
+        # Residue.encode_to_numpy() was narrowed, so this only still matters for
+        # rows written before that change - retrieved residue matrices are the
+        # bulk of the ray object store during aggregation, and narrowing those
+        # legacy rows on read halves that footprint. Set to false to keep them
+        # as they were stored.
+        self.residue_data_float32 = cfg.getboolean('residue_data_float32', fallback=True)
+
+        # Every remote task opens its own connections, so with a few hundred
+        # workers the server hands out 'Too many connections' regularly. That is
+        # transient, so it is worth waiting it out rather than failing the task.
+        self.db_connection_trials = cfg.getint('db_connection_trials', fallback=12)
+        self.db_connection_max_backoff = cfg.getfloat('db_connection_max_backoff', fallback=5.0)
+
         self.option_res_thresh = cfg.getfloat('res_thresh', fallback=4.5)
         self.option_ral_thresh = cfg.getfloat('cov_thresh', fallback=0.5)
         if self.option_ral_thresh > 1.0:
@@ -111,16 +157,21 @@ class Config:
         self.output_path = cfg.get('output_path', fallback='')
         self.pdb_path = cfg.get('pdb_path', fallback='')
         self.path_to_model_db = cfg.get('path_to_model_db', fallback='')
+        self.path_to_af_complex_db = cfg.get('path_to_af_complex_db', fallback=None)
         self.mmseqs2_db_path = cfg.get('mmseqs2_db_path', fallback='')
         self.mmseqs2_model_db_path = cfg.get('mmseqs2_model_db_path', fallback='')
         self.complex_model_db_path = cfg.get('complex_model_db_path', fallback='')
         self.mmseqs2_complex_model_db_path = cfg.get('mmseqs2_complex_model_db_path', fallback='')
 
         self.model_db_active = os.path.exists(self.mmseqs2_model_db_path)
-        if not is_alphafold_db_valid(self):
-            self.model_db_active = False
-
         self.afdb = cfg.get('afdb', fallback=None)
+        self.afdb_hetero = cfg.get('afdb_hetero', fallback=None)
+        self.afdb_homo = cfg.get('afdb_homo', fallback=None)
+        self.afdb_hetero_mmseqs_path = cfg.get('afdb_hetero_mmseqs_path', fallback=None)
+        self.afdb_homo_mmseqs_path = cfg.get('afdb_homo_mmseqs_path', fallback=None)
+
+        if not is_alphafold_db_valid(self) and self.afdb is None:
+            self.model_db_active = False
 
         self.read_only_mode = cfg.getboolean('read_only_mode', fallback=False)
         self.read_hybrid_mode = cfg.getboolean('read_hybrid_mode', fallback=False)
@@ -150,6 +201,9 @@ class Config:
         self.intra_milieu_threshold = cfg.getfloat('intra_milieu_threshold', fallback=15.0)
         self.proteome = cfg.getboolean('proteome', fallback=False)
         self.intertable_conf = cfg.getboolean('intertable', fallback=False)
+        # Per-protein alignment matrices. Also settable as --fetch_alignments; defined
+        # here so the attribute exists for programmatically built Config objects too.
+        self.fetch_alignments = cfg.getboolean('fetch_alignments', fallback=False)
         self.overwrite_incorrect_wt_aa = cfg.getboolean('overwrite_incorrect_wt_aa', fallback=False)
 
         self.microminer_exe = cfg.get('microminer_exe', fallback = '')
@@ -180,6 +234,21 @@ class Config:
         self.fasta_input = cfg.getboolean('fasta_input', fallback=False)
 
         self.compute_ppi = compute_ppi
+        self.isolate_ppi = False
+
+        # How many of a protein's structure annotations take part in the interface
+        # calculation: get a backmap stored, and go into calculate_aggregated_interface_map.
+        # Annotations of single-protein-chain complexes never do. Of the rest, up to
+        # interface_annotations_keep_all are all taken; above that the keep_all best by
+        # sequence identity plus every one above interface_annotations_min_seq_id; above
+        # interface_annotations_max only the max best. See
+        # interface.select_interface_annotations.
+        self.interface_annotations_keep_all = cfg.getint('interface_annotations_keep_all', fallback=100)
+        self.interface_annotations_max = cfg.getint('interface_annotations_max', fallback=1000)
+        # A fraction, like the stored Sequence_Identity.
+        self.interface_annotations_min_seq_id = cfg.getfloat('interface_annotations_min_seq_id', fallback=0.5)
+        if self.interface_annotations_min_seq_id > 1.0:
+            self.interface_annotations_min_seq_id *= 0.01
 
         if verbosity is not None:
             self.verbosity = verbosity
@@ -223,6 +292,186 @@ class Config:
                 print('Need writing rights in the MMSEQS temp folder, please check the path')
                 sys.exit()
 
+        # Memory ray is allowed to size itself against, in GiB. Leave at 0 to
+        # autodetect (cgroup limit if there is one, else system memory). Set it
+        # when the effective ceiling is not visible in the cgroup files - for
+        # example a systemd MemoryHigh, which cgroup v1 does not expose.
+        self.ray_memory_limit_gigs = cfg.getfloat('ray_memory_limit_gigs', fallback=0.0)
+
+        # Share of that memory handed to ray's object store, before the
+        # total_memory_quantile (0.9) is applied - so the default 0.5 means the
+        # store gets 45% of the effective memory, unchanged from before this was
+        # configurable. The rest has to cover the driver and every worker heap,
+        # so a store sized close to the working set leaves the node with nothing
+        # to breathe with: once the store fills and nothing in it is evictable,
+        # puts block and the raylet starts missing its heartbeats.
+        self.ray_object_store_fraction = cfg.getfloat('ray_object_store_fraction', fallback=0.5)
+
+        # Ceiling on the atom count paraAnnotate packs into one annotation chunk.
+        # Without it the chunk is total_cost // (8 * proc_n), which grows with the
+        # input: a whole-PDB run asked for 2.08M atoms per chunk, and annotate holds
+        # a chunk's whole structural_analysis_list in RAM before inserting it. 255 of
+        # those at once, on top of the driver and the object store, left the cgroup
+        # with no room to start the next worker process, and ray gave up with
+        # "Failed to startup worker after retrying 5 times". Capped, per-worker peak
+        # memory no longer depends on how big the input is. 0 disables the cap.
+        self.annotation_chunk_atom_cap = cfg.getint('annotation_chunk_atom_cap', fallback=250000)
+
+        # How often one annotation chunk may be resubmitted after ray failed to start
+        # a worker for it. Only that failure is retried - it means the task never ran,
+        # so nothing was half-inserted.
+        self.annotation_retry_limit = cfg.getint('annotation_retry_limit', fallback=3)
+
+        # How many ray worker processes may start at once. Most stages start a fresh process per
+        # task (max_calls=1), from an environment on NFS, and Ray's default of one per CPU made
+        # 255 start together; 512 of them missed their registration deadline in one chunk's
+        # structural analysis. -1: proc_n // 4 (at least 8), the throttle para_parse_pdb already
+        # used for its first burst. 0: Ray's default.
+        self.ray_worker_startup_concurrency = cfg.getint('ray_worker_startup_concurrency', fallback=-1)
+
+        # Seconds a new ray worker has to register before its start counts as failed (Ray's
+        # default: 60), so a slow but healthy start under load is not thrown away. 0: Ray's default.
+        self.ray_worker_register_timeout_seconds = cfg.getint('ray_worker_register_timeout_seconds', fallback=300)
+
+        # Ray puts its session directory, its logs and - most importantly - its
+        # spilled objects under /tmp by default. Object spilling on large inputs
+        # writes hundreds of gigabytes, which /tmp usually cannot take; the
+        # resulting ENOSPC surfaces as an unrelated-looking IO worker error.
+        # Point this at a directory on a large filesystem.
+        self.ray_temp_dir = cfg.get('ray_temp_dir', fallback=None)
+        if self.ray_temp_dir:
+            self.ray_temp_dir = resolve_path(self.ray_temp_dir)
+            if not os.path.isdir(self.ray_temp_dir):
+                try:
+                    os.makedirs(self.ray_temp_dir, exist_ok=True)
+                except OSError as err:
+                    print(f'Could not create ray_temp_dir {self.ray_temp_dir}: {err}')
+                    sys.exit()
+            if not os.access(self.ray_temp_dir, os.W_OK):
+                print(f'Need writing rights in ray_temp_dir {self.ray_temp_dir}')
+                sys.exit()
+
+        # Whether ray may spill objects to disk when the object store is full. Off by
+        # default: spilling goes to the session directory under /tmp/ray, which a large
+        # run fills until it dies with ENOSPC hours later, after the run has already
+        # crawled at spill speed. With it off, ray_utils' watchdog stops the run the
+        # moment the store overflows (spilled or fallback-allocated bytes appear), so
+        # the problem surfaces immediately and with a message that names it.
+        self.ray_allow_spilling = cfg.getboolean('ray_allow_spilling', fallback=False)
+
+        # ray_init splits the effective memory limit into the object store's appetite,
+        # what the driver holds, and the pool ray admits task memory= requests against.
+        # The pool used to be a hardcoded half of the machine, which on a 1435 GiB node
+        # capped it at 646 GiB while the store was using 12 of the 646 GiB reserved for
+        # it. These two say what to subtract instead.
+        #
+        # The store allowance is a ceiling on what the store is expected to *hold*, not
+        # its reservation: a whole-PDB chunk measured 72.6 GiB of residue blobs plus
+        # 60 GiB of backmaps.
+        self.ray_store_allowance_gigs = cfg.getfloat('ray_store_allowance_gigs', fallback=200.0)
+        # What the driver keeps out of reach of the workers. Its Proteins container and
+        # annotation graph reached ~93 GiB on a whole-PDB chunk.
+        self.ray_driver_allowance_gigs = cfg.getfloat('ray_driver_allowance_gigs', fallback=120.0)
+        # Both allowances are ceilings that scale down with the machine: taking 120 GiB
+        # literally on a 100 GiB node subtracts more than exists.
+        self.ray_driver_allowance_share = cfg.getfloat('ray_driver_allowance_share', fallback=0.15)
+        # Never hand ray a pool smaller than this, or a task that reserves anything at
+        # all could never be scheduled on a small or heavily reserved machine.
+        self.ray_task_memory_floor_gigs = cfg.getfloat('ray_task_memory_floor_gigs', fallback=8.0)
+
+        # Share of the object store that the retrieval of stored residue data may hold.
+        # It is the first big consumer of the store, and a whole-PDB run filled it to
+        # 99%, leaving nothing for getBackmaps and the classification packages that
+        # follow - so the run died later, somewhere that said nothing about the cause.
+        # Passing this stops the run in the stage that consumed the store. 0 disables
+        # the check.
+        self.ray_residue_store_share = cfg.getfloat('ray_residue_store_share', fallback=0.7)
+
+        # Per classification task, the budget for decoded structures that proteins of
+        # the same package can reuse (aggregation.DecodedStructureCache). Every task has
+        # one, so the worst case is this times the number of cores.
+        self.aggregation_decode_cache_mb = cfg.getint('aggregation_decode_cache_mb', fallback=256)
+
+        # Memory each para_classify task reserves from ray's memory resource, per
+        # million units of package cost (positions x annotations). Ray only starts a
+        # task once its reservation fits, which is what bounds the stage: its memory is
+        # set by the heaviest proteins, not by the chunk, so chunksize cannot.
+        #
+        # Calibrate from the uss= field of the [para_classify][worker] done lines, not
+        # rss=. A worker maps the backmap and residue stores out of the object store and
+        # its rss grows by tens of GB as it touches them, but those pages are shared -
+        # 255 workers touching them cost the node one copy. The 2026-09-23 run showed
+        # rss growth of ~50 GB per task correlating with elapsed time (+0.78) and not
+        # with cost (-0.16), and an earlier 0.46 GiB per Mcost read off rss was what
+        # left the reservation ~10x too small and OOMed the node at 255 tasks.
+        # 0 disables the reservation.
+        #
+        # This wants re-measuring: classification_batch_size took the residue matrix off
+        # the per-task peak, so the peak_uss the current 1.0 was fitted to is no longer
+        # the peak the same package reaches. Re-fit it from peak_uss against cost on a
+        # verbosity-4 run and lower it, or the reservation keeps holding back tasks that
+        # would now fit.
+        self.classification_gib_per_mcost = cfg.getfloat('classification_gib_per_mcost', fallback=1.0)
+
+        # Backstop independent of that calibration: para_classify holds dispatch when
+        # the cgroup is this full, and resumes as tasks return. Ray's own OOM killer
+        # fires at 95% and takes the raylet with it, so this stays well below.
+        self.classification_dispatch_memory_percent = cfg.getfloat(
+            'classification_dispatch_memory_percent', fallback=78.0)
+
+        # Annotations whose residue data one para_classify batch decodes. The whole of a
+        # heavy whole-PDB protein reaches 8.6 GiB, which is what held classification to
+        # ~70 of 255 cores; a batch of a thousand structures is about 150 MB. Lower it if
+        # a task still peaks too high, raise it if the per-batch python overhead shows up
+        # (the position loop runs once per batch).
+        self.classification_batch_size = cfg.getint('classification_batch_size', fallback=1000)
+
+        # Smallest reservation of a para_classify task, in GiB: the worker's fixed cost -
+        # interpreter, imports, numba, the decode cache - which every task pays afresh, since
+        # max_calls=1 starts a new worker for each. Fitted as the intercept of peak USS over
+        # 9,022 tasks of a whole-PDB chunk (2026-09-24): 1909 MB. The earlier 1.0 was read off
+        # a single fresh worker and left 61% of tasks above their estimate.
+        self.classification_min_task_gib = cfg.getfloat('classification_min_task_gib', fallback=1.9)
+
+        # What a para_classify task's memory is actually made of. cost is
+        # positions x annotations, which drives how long a task runs but not how much it
+        # decodes - measured peak_rss per 1M cost spanned 186 MB to 4748 MB, a 25x spread,
+        # and 7JWB:D reserved 12.8 GB against a 49 GB peak while 9CI3:A reserved 37 GB to
+        # use 7. build_local_stores decodes one residue matrix per annotated structure and
+        # the interface entries of every chain of their complexes, so those two counts are
+        # what the footprint follows.
+        #
+        # Both coefficients are fitted, with the intercept above, to the peak USS the workers
+        # of that chunk reported against their counts: peak_uss = 1909 MB + 0.1915 MB x
+        # annotations + 0.035 MB x interface chains, R^2 0.79 over 9,022 tasks. USS rather than
+        # RSS, because RSS also counts the object-store pages a worker maps, and the node holds
+        # one copy of those however many workers map them. No margin is added: the budget sums
+        # tasks whose peaks do not coincide, and the cgroup backstop covers the per-task tail
+        # (p95 of actual/fitted is 1.6).
+        #
+        # Per annotated structure, in MB: its decoded residue matrix.
+        self.classification_mb_per_annotation = cfg.getfloat('classification_mb_per_annotation', fallback=0.19)
+
+        # Per interface chain, in MB: one chain's combined_keys (int64) and scores
+        # (float32) entries.
+        self.classification_mb_per_interface_chain = cfg.getfloat(
+            'classification_mb_per_interface_chain', fallback=0.035)
+
+        # The coefficients above are the static prior. Every task reports its peak, and the driver
+        # refits the model on (1, annotations, chains, cost) from the finished tasks - the batched
+        # rewrite of para_classify added a cost-driven term the prior lacks - then scales the fit
+        # by this quantile of peak / fitted (at least 1). The result only ever raises the prior.
+        # Higher: fewer tasks at once, fewer OOM kills.
+        self.classification_estimate_quantile = cfg.getfloat('classification_estimate_quantile', fallback=0.9)
+
+        # What lowers it instead: no task is estimated at more than this margin over the highest
+        # peak seen, once at least classification_ceiling_min_samples finished tasks that were
+        # estimated above that peaked below it (ClassificationMemoryModel.ceiling). Since the
+        # batched para_classify and the interface limit, peaks plateau - 3.8 GiB at most on a
+        # whole-PDB chunk whose heaviest tasks were estimated at 15 GiB. 0 switches the cap off.
+        self.classification_ceiling_margin = cfg.getfloat('classification_ceiling_margin', fallback=1.5)
+        self.classification_ceiling_min_samples = cfg.getint('classification_ceiling_min_samples', fallback=20)
+
         self.smiles_path = f'{RESOURCES_DIR}/Components-smiles-stereo-oe.smi'
         self.inchi_path = f'{RESOURCES_DIR}/inchi_base.tsv'
 
@@ -249,11 +498,19 @@ class Config:
         else:
             self.chunksize = int(min([1500, max([((self.gigs_of_ram * 100) // self.proc_n) - 60, 120 // self.proc_n, 1])]))
 
+        # RAM-based per-task size, kept separate from self.chunksize so a user-supplied --chunksize
+        # (which only controls how much gets read per outer batch) can't inflate the memory footprint
+        # of any single concurrently-running Ray task.
+        self.safe_task_chunksize = self.chunksize
+
         if not util_mode:
             if not external_call and not os.path.exists(self.outfolder):
                 os.makedirs(self.outfolder)
             if self.verbosity >= 1:
                 print(f'Using {self.proc_n} core(s), verbosity level: {self.verbosity}')
+                # mysqlclient escapes bulk-insert parameters in C; pymysql does it
+                # in pure Python. Surfaced here so it is visible which one a run used.
+                print(f'MySQL driver: {MySQLdb.DRIVER_NAME}')
             if (not external_call) and (not print_all_warns):  # no need for errorlogs, when the config is generated not from the main script
                 self.errorlog_path = os.path.join(self.outfolder, 'errorlogs', 'errorlog.txt')
                 self.warnlog_path = os.path.join(self.outfolder, 'errorlogs', 'warnlog.txt')
@@ -352,6 +609,25 @@ class Config:
             except:
                 pass
 
+    @property
+    def ppi_data_available(self) -> bool:
+        """Whether the PPI tables can actually hold data for this run.
+
+        compute_ppi alone is not enough to decide that. fast_pdb_annotation skips
+        getBackmaps, so aggregation skips the whole interface block that fills
+        Interface, RS_Position_Interface and Protein_Protein_Interaction_N (see
+        aggregation.para_classify). The output stage used to test compute_ppi on its
+        own and then select those tables anyway - against position id sets that in a
+        whole-PDB run are hundreds of millions of ids wide, for results that could
+        only ever be empty.
+
+        compute_ppi cannot simply be cleared for fast runs instead: it is forced back
+        on by repairDB.check_structman_version whenever the database reports the PPI
+        feature, and that runs during __init__, before structman_main gets to apply
+        fast_pdb_annotation. So the two flags are combined here, at use time.
+        """
+        return self.compute_ppi and not self.fast_pdb_annotation
+
     def check_mapping_db(self):
         # Check for mapping DB instance
         try:
@@ -377,37 +653,61 @@ class Config:
             cursor = db.cursor()
             return db, cursor
 
-        try:
-            if server_connection:
-                db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, autocommit=autocommit)
-                cursor = db.cursor()
-            elif mapping_db:
-                if self.ignore_local_mapping_db:
-                    return None, None
+        if mapping_db and not server_connection:
+            if self.ignore_local_mapping_db:
+                return None, None
+            if self.mapping_db is None:
+                return None, None
 
-                if self.mapping_db is None:
+        # 'Too many connections' is the normal answer when a few hundred ray
+        # workers reach for the database at the same moment, and it is purely
+        # transient. The old handler retried 10 times 0.1s apart - a whole second -
+        # and then handed back (None, None), which every caller then used as a
+        # cursor and died with a misleading AttributeError. Back off properly
+        # instead, with jitter so the retries of all workers do not line up again.
+        attempt = try_again
+        last_exception_text = None
+        while attempt <= self.db_connection_trials:
+            try:
+                if server_connection:
+                    db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, autocommit=autocommit)
+                elif mapping_db:
+                    db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, database=self.mapping_db, autocommit=autocommit)
+                elif db_name is None:
+                    db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, database=self.db_name, autocommit=autocommit)
+                else:
+                    db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, database=db_name, autocommit=autocommit)
+
+                cursor = db.cursor()
+                if cursor is not None:
+                    return db, cursor
+
+                target_db = db_name if db_name is not None else self.db_name
+                self.errorlog.add_warning(f'getDB misfunctioned: {self.db_address}, {self.db_user_name}, {target_db}')
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            except Exception as err:
+                if silent:  # In database create we test the connection and expect it to fail
                     return None, None
-                db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, database=self.mapping_db, autocommit=autocommit)
-                cursor = db.cursor()
-            elif db_name is None:
-                db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, database=self.db_name, autocommit=autocommit)
-                cursor = db.cursor()
-                if cursor is None:
-                    self.errorlog.add_warning(f'getDB misfunctioned: {self.db_address}, {self.db_user_name}, {self.db_password}, {self.db_name}')
-            else:
-                db = MySQLdb.connect(host=self.db_address, user=self.db_user_name, password=self.db_password, database=db_name, autocommit=autocommit)
-                cursor = db.cursor()
-                if cursor is None:
-                    self.errorlog.add_warning(f'getDB misfunctioned: {self.db_address}, {self.db_user_name}, {self.db_password}, {db_name}')
-            return db, cursor
-        except:
-            if silent: #In database create we test the connection and expect it to fail
-                return None, None
-            if try_again < 10:
-                time.sleep(0.1)
-                return self.getDB(server_connection=server_connection, mapping_db=mapping_db, autocommit=autocommit, try_again = (try_again + 1))
-            else:
-                [e, f, g] = sys.exc_info()
-                g = traceback.format_exc()
-                self.errorlog.add_error(f'Couldnt get database connection: {self.db_address}, {self.db_user_name}, {self.db_password}, {self.db_name}\n{e}\n{f}\n{g}')
-                return None, None
+                last_exception_text = f'{type(err).__name__}: {err}'
+
+            attempt += 1
+            if attempt > self.db_connection_trials:
+                break
+            # 0.2s, 0.4s, 0.8s ... capped, each with up to 50% extra jitter.
+            backoff = min(0.1 * (2 ** attempt), self.db_connection_max_backoff)
+            time.sleep(backoff * (1.0 + random.random() * 0.5))
+
+        if silent:
+            return None, None
+
+        if last_exception_text is None:
+            last_exception_text = 'connection succeeded but no cursor could be opened'
+        target_db = db_name if db_name is not None else self.db_name
+        self.errorlog.add_error(
+            f'Couldnt get database connection after {self.db_connection_trials} trials: '
+            f'{self.db_address}, {self.db_user_name}, {target_db}\n{last_exception_text}\n{traceback.format_exc()}'
+        )
+        return None, None

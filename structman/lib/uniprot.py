@@ -23,6 +23,7 @@ from structman.base_utils import base_utils
 from structman.settings import HUMAN_INFO_MAP
 from structman.base_utils.base_utils import calculate_chunksizes
 from structman.base_utils.config_class import Config
+from structman.base_utils.ray_utils import ray_init, parallel_db_access
 
 POLLING_INTERVAL = 3
 
@@ -269,7 +270,7 @@ def indel_insert(
         indel_map[ac][indel.get_notation()] = indel
     return
 
-@ray.remote(max_calls=1)
+@ray.remote
 def fetch_chains(package, config):
     results = []
     for pdb_id in package:
@@ -594,10 +595,19 @@ def IdMapping(
             ref = ac_np_map[u_ac]
             proteins[u_ac].ref_id = ref
 
-    if number_of_pdbs_to_expand >= config.proc_n:
+    # parallel_db_access, not just the count: it is false for read_only runs and for
+    # proc_n == 1, and the branch below is the only thing in buildQueue that would
+    # start a cluster for them. The else branch does the same expansion serially.
+    if number_of_pdbs_to_expand >= config.proc_n and parallel_db_access(config):
         small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(config.proc_n, number_of_pdbs_to_expand)
         package: list[str] = []
         fetch_chain_processes = []
+        # IdMapping runs inside buildQueue, before the pipeline's own ray_init in
+        # serializedPipeline.main. Without this the ray.put below fell into ray's
+        # auto_init_hook and cold started an unconfigured cluster - spilling enabled,
+        # /tmp as spill directory, no watchdog - which every later ray_init then found
+        # already initialized and left alone. That cost a whole-PDB run an ENOSPC.
+        ray_init(config)
         config_store = ray.put(config)
         for pdb_tuple in pdb_map:
             if pdb_tuple in prot_gene_map:
@@ -1318,16 +1328,38 @@ def getSequencesPlain(u_acs, config: Config, max_seq_len=None, filtering_db=None
 
 
 # called by serializePipeline
-def getSequences(proteins, config):
+def fetch_missing_sequences(proteins, config) -> int:
+    """Fetch the sequence of every protein that still has none. Returns how many were asked for.
 
-    t0 = time.time()
-    u_acs = set()
+    Runs before protCheck: its sequence deduplication can only place a protein that has a
+    sequence. sequenceScan already fetches most of them; this catches what it could not.
+
+    A fetch that fails leaves the 0 marker getSequencesPlain reports, as it always has, so the
+    protein is not tried again. Mutants are left alone: their sequence is built by
+    MultiMutation.mutate after protCheck, which only builds one that is still None, and asking
+    for one here only produced a 0 and an error.
+    """
+    protein_map = proteins.get_protein_map()
+    missing = {
+        prot_id for prot_id, protein in protein_map.items()
+        if protein.sequence is None and not sdsc_utils.is_mutant_ac(prot_id)
+    }
+    if len(missing) == 0:
+        return 0
+
+    gene_sequence_map = getSequencesPlain(missing, config)
+
+    for prot_id in missing:
+        protein_map[prot_id].sequence = gene_sequence_map.get(prot_id, 0)
+    return len(missing)
+
+
+# called by serializePipeline
+def add_go_terms_and_pathways(proteins, config):
+    """GO terms and pathways from the human info map, by the proteins' final primary ids."""
     iso_map = {}
     protein_map = proteins.get_protein_map()
     for prot_id in protein_map:
-        if protein_map[prot_id].sequence is None:
-            u_acs.add(prot_id)
-
         if prot_id.count('-') == 1:
             [base, iso] = prot_id.split('-')
         else:
@@ -1337,11 +1369,6 @@ def getSequences(proteins, config):
             iso_map[base] = [iso]
         else:
             iso_map[base].append(iso)
-
-    gene_sequence_map = getSequencesPlain(u_acs, config)
-
-    for u_ac in u_acs:
-        protein_map[u_ac].sequence = gene_sequence_map[u_ac]
 
     info_map_path = HUMAN_INFO_MAP
 
@@ -1406,7 +1433,7 @@ def get_obsolete_sequence(u_ac: str, config: Config, return_id=False, tries = 0)
 
 def getSequence(uniprot_ac: str, config: Config, tries=0, return_id=False, obsolete_try = False):
     if config.verbosity >= 3:
-        config.logger.info(f'uniprot.getSequence for {uniprot_ac} {tries}')
+        config.logger.info(f'uniprot.getSequence for {uniprot_ac} {tries} {obsolete_try=}')
 
     if uniprot_ac is None:
         config.errorlog.add_error('Uniprot Ac is None')

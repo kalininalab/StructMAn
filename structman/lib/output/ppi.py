@@ -21,14 +21,15 @@ def create_ppi_network(session, config, outfile):
 
         positions = proteins.get_position_ids(u_ac)
 
-        annotation_list = proteins.get_protein_annotation_list(u_ac)
+        annotation_list = proteins[u_ac].structure_annotations
 
         n_struct_anno += len(annotation_list)
         n_positions += len(positions)
 
-        for (pdb_id, chain) in annotation_list:
+        for annotation in annotation_list:
 
-            sub_infos = proteins.get_sub_infos(u_ac, pdb_id, chain)
+            pdb_id, chain = annotation.pdb_id, annotation.chain
+            sub_infos = annotation.get_sub_infos()
             n_sub_infos += len(sub_infos)
             for pos in positions:
                 if sub_infos[pos] is None:

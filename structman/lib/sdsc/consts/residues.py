@@ -494,7 +494,8 @@ THREE_TO_ONE = {
     "IL0": "X", "SUJ": "X", "B8N": "X", "DKA": "X", "9MN": "X",
     "ACE": "X", "BAL": "X", "7XC": "F", "OSL": "X", "BTK": "L",
     "IVA": "X", "3WU": "X", "3WT": "X", "3FB": "X", "HT7": "W",
-    "V9M": "X"
+    "V9M": "X", "D2T": "D", "NEH": "X", "ABU": "X", "AYE": "X",
+    "YTH": "T"
 }
 BIN_THREE_TO_ONE = {}
 for tlc in THREE_TO_ONE:

@@ -37,6 +37,7 @@ from structman.lib.database.database_core_functions import select
 from structman.lib.lib_utils import fuse_multi_mutations, generate_multi_mutation
 from structman.lib.output import out_generator, out_utils, massmodel
 from structman.base_utils.base_utils import resolve_path, calculate_chunksizes
+from structman.base_utils.ray_utils import ray_init
 from structman.lib.sdsc.mutations import MultiMutation
 from structman.lib.sdsc.consts.residues import ONE_TO_THREE, THREE_TO_ONE
 
@@ -1146,6 +1147,9 @@ def create_gene_report(session_id, target, config, out_f, session_name):
     outfile_stem = os.path.join(out_f, f'{session_name}')
     cmap=mpl.colormaps['RdYlGn']
 
+    # The output stage can reach this with ray down; without an init here the put
+    # below would auto-start an unconfigured cluster (see structman/__init__.py).
+    ray_init(config, stop_existing = False)
     store = ray.put((config, gene_isoform_score_dict, cmap, outfile_stem, out_f, session_name))
 
     small_chunksize, big_chunksize, n_of_small_chunks, n_of_big_chunks = calculate_chunksizes(config.proc_n, len(targets))

@@ -10,41 +10,24 @@ import structman
 
 from structman.scripts import createPdbBaDb, updateMappingDB, updateAlphafoldModelDB, createCustomDb, updateComplexModelDB
 from structman.scripts.createMMDB import update_microminer_db
+from structman.base_utils.base_utils import create_mmseqs_index
 
-
-def create_mmseqs_index(infile, outfolder, mmseqs2_tmp):
-    p = subprocess.Popen(['mmseqs', 'createdb', infile, f'{infile}_search_db'], cwd=outfolder)
-    p.wait()
-
-    p = subprocess.Popen(['rm', '-R', mmseqs2_tmp], cwd=outfolder)
-    p.wait()
-
-    if not os.path.isdir(mmseqs2_tmp):
-        os.mkdir(mmseqs2_tmp)
-
-    p = subprocess.Popen(['chmod', '777', '-R', mmseqs2_tmp], cwd=outfolder)
-    p.wait()
-
-    p = subprocess.Popen(['mmseqs', 'createindex', f'{infile}_search_db', mmseqs2_tmp, '-s', '7.5'], cwd=outfolder)
-    p.wait()
 
 def main(
             config, skipUpdatePDB=False, skip_rindb=False, rin_fromScratch=False, update_mapping_db = False,
             mapping_db_from_scratch = False, update_mapping_db_keep_raw_files = False, update_alphafold_db = False,
             update_source = None, update_microminer = False, microminer_from_scratch = False, check_search_db = False, update_complex_model_db = False
         ):
-    mmseqs_fromScratch = False
     skipStructureDBs = False
 
     verbose = True
 
     pdb_path = config.pdb_path
     pdb_update_script = config.pdb_sync_script
-    print(f'================================\nStructMAn Update Script:\n Update PDB: {not skipUpdatePDB}\n Update RIN DB: {not skipUpdatePDB}\n Update AF DB: {update_alphafold_db}\n Update Mapping DB: {update_mapping_db}\n Check Search DB: {check_search_db}\n Update Complex Model DB: {update_complex_model_db}\n================================')
+    print(f'================================\nStructMAn Update Script ({config.proc_n=}):\n Update PDB: {not skipUpdatePDB}\n Update RIN DB: {not skip_rindb}\n Update AF DB: {update_alphafold_db}\n Update Mapping DB: {update_mapping_db}\n Check Search DB: {check_search_db}\n Update Complex Model DB: {update_complex_model_db}\n================================')
 
     rinerator_base_path = config.rinerator_base_path
     rin_db_path = config.rin_db_path
-    complex_model_db_path = config.complex_model_db_path
 
     mmseqs2_db_path = config.mmseqs2_db_path
     search_db_base_path = mmseqs2_db_path.rsplit('/', 1)[0]
@@ -76,9 +59,30 @@ def main(
                 FNULL = open(os.devnull, 'w')
                 p = subprocess.Popen([pdb_update_script], stderr=FNULL, stdout=FNULL)
             p.wait()
+            sync_returncode = p.returncode
 
             p = subprocess.Popen(['chmod', '777', '-R', '.'], cwd=pdb_path)
             p.wait()
+
+            # The sync script exits non-zero only after it has already retried the
+            # failing directories, so reaching here means the mirror could not be
+            # completed. Everything below is built by walking that mirror, so
+            # carrying on would spend hours producing a search database and a RIN
+            # database that are silently short by exactly the entries that failed
+            # to download - and the next run would have to redo all of it anyway.
+            # Stop instead, with a non-zero exit code so a scripted update fails
+            # loudly rather than looking like it worked.
+            if sync_returncode != 0:
+                print(
+                    f'\n!!! ERROR !!!\nThe PDB sync script exited with '
+                    f'{sync_returncode}: the local PDB mirror at {pdb_path} is '
+                    f'INCOMPLETE (see the directory list above).\nStopping the '
+                    f'update: anything built from a partial mirror - the MMseqs2 '
+                    f'search database, the RIN database - would be missing the '
+                    f'same entries.\nRe-run the update to resume the download; '
+                    f'rsync continues where it stopped.\n'
+                )
+                sys.exit(1)
 
             print('Update PDB done')
 
@@ -94,6 +98,8 @@ def main(
                 fromScratch=rin_fromScratch,
                 pdb_p=pdb_path,
                 rin_db_path=rin_db_path,
+                update_alphafold_db=update_alphafold_db,
+                update_complex_model_db=update_complex_model_db,
                 n_proc=config.proc_n,
                 rinerator_base_path=rinerator_base_path,
                 config = config

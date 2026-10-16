@@ -1,4 +1,5 @@
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol, Slotted_obj
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol
+from structman.base_utils.base_utils import Slotted_obj
 
 class SNV(Slotted_obj):
     __slots__ = ['new_aa', 'database_id', 'stored', 'tags']

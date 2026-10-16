@@ -2,18 +2,15 @@ import gzip
 import os
 import sys
 
-import psutil
 import ray
 
 # if running as script, add local structman package to path
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(os.path.realpath(__file__))))))
 
-import structman
-
-from structman.lib import serializedPipeline
-from structman.lib.sdsc.consts import residues as residue_consts
+from structman.base_utils import residue_consts
 from structman.base_utils.ray_utils import ray_init, ray_hack
+from structman.base_utils.chain_consts import CHAIN_ID_ORDER as chain_order
 
 """
 
@@ -36,7 +33,6 @@ def sanity_check_for_filename(filename):
 @ray.remote(num_cpus=1)
 def parseByAtom(parse_dump, model_db = False):
     ray_hack()
-    chain_order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz'
     divide_folder = parse_dump
 
     files = os.listdir(divide_folder)

@@ -4,7 +4,7 @@ import gzip
 import os
 import sys
 
-import pymysql as MySQLdb
+import structman.base_utils.mysql_driver as MySQLdb
 from structman.base_utils import resolve_path
 
 

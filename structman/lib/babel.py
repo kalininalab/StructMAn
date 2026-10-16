@@ -2,7 +2,7 @@ import os
 import subprocess
 import time
 
-import pymysql as MySQLdb
+import structman.base_utils.mysql_driver as MySQLdb
 
 from structman.lib.database import database
 

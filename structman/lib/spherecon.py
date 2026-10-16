@@ -8,7 +8,7 @@ import sys
 import numpy
 from Bio.Data import PDBData as scd
 
-from structman.lib.sdsc.consts import residues as residue_consts
+from structman.base_utils import residue_consts
 
 
 threeToOne = scd.protein_letters_3to1

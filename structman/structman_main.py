@@ -3,13 +3,14 @@
 
 import getopt
 import os
+import shutil
 import resource
 import sys
 import time
 import logging
 from datetime import datetime
 
-import pymysql as MySQLdb
+import structman.base_utils.mysql_driver as MySQLdb
 import ray
 
 # if running as script, add local structman package to path
@@ -50,8 +51,9 @@ def limit_memory(soft_limit):
 def main(infiles, out_folder, config):
     # resource.setrlimit(resource.RLIMIT_AS,(6442450944,8589934592))
     # resource.setrlimit(resource.RLIMIT_AS,(442450944,589934592))
-    numba_logger = logging.getLogger('numba')
-    numba_logger.setLevel(logging.WARNING)
+    if config.verbosity < 8:
+        numba_logger = logging.getLogger('numba')
+        numba_logger.setLevel(logging.WARNING)
     fl_logger = logging.getLogger('filelock')
     fl_logger.setLevel(logging.WARNING)
     for infile in infiles:
@@ -78,6 +80,7 @@ def main(infiles, out_folder, config):
 
         config.logfile = log_file
         config.logger = main_logger
+        config.logger.addHandler(logging.FileHandler(log_file, mode='a'))
 
         print(f'Command will be written to: {log_file}')
 
@@ -118,10 +121,28 @@ def main(infiles, out_folder, config):
 
         returncode = main_returncode | out_returncode
 
-        if config.read_only_mode:
+        # Both modes drop only the session bookkeeping: what a read_hybrid run computed -
+        # proteins, positions, alignments, interfaces - stays for the runs after it.
+        if config.read_only_mode or config.read_hybrid_mode:
             repairDB.remove_sessions(config)
-        elif config.read_hybrid_mode:
-            repairDB.clear(config)
+
+        # serializedPipeline.main hands its running cluster to the output stage
+        # instead of shutting it down in between, so the teardown belongs here, at
+        # the end of the infile. The next infile cold starts its own cluster, the
+        # way it did before. A no-op when ray was never started, which is every
+        # read_only run (see ray_utils.parallel_db_access).
+        ray.shutdown()
+
+        # Only now is the pipeline's temp folder safe to remove. Ray workers inherit it
+        # as their working directory (serializedPipeline.main chdirs into it before
+        # ray_init), so it has to outlive both the output stage and the cluster.
+        temp_folder = getattr(config, 'pipeline_temp_folder', None)
+        if temp_folder is not None and os.path.isdir(temp_folder):
+            try:
+                shutil.rmtree(temp_folder)
+            except OSError as err:
+                config.logger.warning(f'Could not remove the temp folder {temp_folder}: {err}')
+            config.pipeline_temp_folder = None
 
     return returncode
 
@@ -211,7 +232,16 @@ def structman_cli():
         'clear :\n  deletes all content of the database, but keeps the results of all stored structures\n\n',
         'export <-p path_to_a_folder> :\n  exports the database to a .sql.gz format file\n\n',
         'destroy :\n  completely removes the database (database name is taken from config file)\n\n',
-        'create  :\n  creates an instance of the database (database name is taken from config file)'
+        'create  :\n  creates an instance of the database (database name is taken from config file)\n\n',
+        'repair <-i input_file | --session_id S> <--from_protein_id N> <--apply> :\n',
+        '  removes the proteins a crashed run left unfinished, so that rerunning the input computes them again\n',
+        '  and reuses everything that finished. Only reports what it would remove unless --apply is given.\n',
+        '  -i limits it to the session of that input file. --session_id limits it to the proteins session S\n',
+        '  stored first, which still works once the session tables are truncated (without a matching session,\n',
+        '  -i lists the session ids). --session_id and --from_protein_id also remove unfinished proteins of a\n',
+        '  chunk that crashed before its alignments were written (both ids are in the main log).\n',
+        '  --apply then truncates Session and all RS_*_Session tables (like remove_sessions), so every input\n',
+        '  has to be rerun for its output. Do not run it while StructMAn uses the database.'
     ])
 
     dev_util_disclaimer = ''.join([
@@ -250,7 +280,7 @@ def structman_cli():
         database_util = True
         argv = argv[1:]
 
-        possible_key_words = set(['reset', 'out', 'create', 'destroy', 'clear', 'export', 'reduce', 'remove_sessions', 'fix', 'clone', 'clone_afdb'])
+        possible_key_words = set(['reset', 'out', 'create', 'destroy', 'clear', 'export', 'reduce', 'remove_sessions', 'fix', 'clone', 'clone_afdb', 'clone_afdb_hetero', 'clone_afdb_homo', 'repair'])
 
         if len(argv) == 0 or argv[0] == '-h' or argv[0] == '--help':
             print(database_util_disclaimer)
@@ -404,16 +434,17 @@ def structman_cli():
         if arg == '-i':
             insert_flag_pos = pos
     # ignore --overwrrite by removing it, there will be a bug if someone combines single line input with overwrite
+    possible_update_keywords = set([
+        'pdb', 'rindb', 'rindb_from_scratch', 'mapping_db', 
+        'mapping_db_from_scratch', 'mapping_db_keep_raw_files',
+        'mapping_db_from_scratch_keep_raw', 'alphafold_db',
+        'mmdb', 'mmdb_from_scratch', 'complex_model_db',
+        'check_search_db'
+        ])
     for pos, arg in enumerate(argv):
         if arg == '--overwrite':
             remove_args.append(pos)
-        if arg == 'pdb':
-            remove_args.append(pos)
-        if arg == 'rindb':
-            remove_args.append(pos)
-        if arg == 'mmdb':
-            remove_args.append(pos)
-        if arg == 'mmdb_from_scratch':
+        if arg in possible_update_keywords:
             remove_args.append(pos)            
 
     remove_args.reverse()
@@ -427,7 +458,8 @@ def structman_cli():
             'model_indel_structures', 'ignore_local_pdb', 'ignore_local_rindb', 'ignore_local_mapping_db',
             'skip_main_output_generation', 'ray_local_mode', 'compute_ppi', 'structure_limiter=',
             'force_modelling', 'target=', 'custom_db', 'update_source=', 'condition_1=', 'condition_2=',
-            'local_db=', 'read_only', 'read_hybrid', 'fast_pdb_annotation', 'target_db=', 'get_msas'
+            'local_db=', 'read_only', 'read_hybrid', 'fast_pdb_annotation', 'target_db=', 'get_msas',
+            'isolate_ppi', 'fetch_alignments', 'ray_object_store_fraction=', 'apply', 'from_protein_id=', 'session_id='
         ]
         opts, args = getopt.getopt(argv, "c:i:n:o:hp:", long_paras)
 
@@ -455,6 +487,8 @@ def structman_cli():
     ignore_local_rindb = False
     ignore_local_mapping_db = False
     skip_main_output_generation = False
+    fetch_alignments = False
+    ray_object_store_fraction = None
     ray_local_mode = False
     compute_ppi = True
     overwrite_force_modelling = None
@@ -469,6 +503,10 @@ def structman_cli():
     fast_pdb_annotation = None
     target_db = None
     provide_msas = False
+    isolate_ppi = False
+    repair_apply = False
+    from_protein_id = None
+    repair_session_id = None
 
     '''
     #mmcif mode flag is added
@@ -550,6 +588,16 @@ def structman_cli():
         if opt == '--skip_main_output_generation':
             skip_main_output_generation = True
 
+        if opt == '--ray_object_store_fraction':
+            try:
+                ray_object_store_fraction = float(arg)
+            except ValueError:
+                print(f'--ray_object_store_fraction needs a number, got {arg!r}')
+                sys.exit(2)
+
+        if opt == '--fetch_alignments':
+            fetch_alignments = True
+
         if opt == '--ray_local_mode':
             ray_local_mode = True
 
@@ -592,6 +640,29 @@ def structman_cli():
         if opt == '--get_msas':
             provide_msas = True
 
+        if opt == '--isolate_ppi':
+            isolate_ppi = True
+
+        if opt == '--apply':
+            repair_apply = True
+
+        if opt == '--from_protein_id':
+            try:
+                from_protein_id = int(arg)
+            except ValueError:
+                print(f'--from_protein_id needs a Protein_Id, got {arg!r}')
+                sys.exit(2)
+
+        if opt == '--session_id':
+            try:
+                repair_session_id = int(arg)
+            except ValueError:
+                print(f'--session_id needs a Session_Id, got {arg!r}')
+                sys.exit(2)
+
+    # Taken before infile is resolved, which turns an empty one into the working directory.
+    infile_given = infile != ''
+
     if not output_util and not util_mode:
         if infile == '' and len(single_line_inputs) == 0:
             input_folder = '/structman/input_data/'
@@ -615,18 +686,17 @@ def structman_cli():
             infile = resolve_path(infile)
             infiles = [infile]
 
-    if not util_mode:
-        if outfolder == '':
-            outfolder = '/structman/results/'
-            if not os.path.isdir(outfolder):
-                if infile != '':
-                    outfolder = resolve_path(os.path.join(os.path.dirname(infile), 'Output'))
-                    if not os.path.exists(outfolder):
-                        os.makedirs(outfolder)
-                elif len(single_line_inputs) != 0:
-                    outfolder = os.getcwd()
-                else:
-                    outfolder = None
+    if not util_mode and outfolder == '':
+        outfolder = '/structman/results/'
+        if not os.path.isdir(outfolder):
+            if infile != '':
+                outfolder = resolve_path(os.path.join(os.path.dirname(infile), 'Output'))
+                if not os.path.exists(outfolder):
+                    os.makedirs(outfolder)
+            elif len(single_line_inputs) != 0:
+                outfolder = os.getcwd()
+            else:
+                outfolder = None
 
     if config_path == '':
         # search highest to lowest priority
@@ -664,6 +734,7 @@ def structman_cli():
     config.condition_1_tag = condition_1_tag
     config.condition_2_tag = condition_2_tag
     config.provide_msas = provide_msas
+    config.isolate_ppi = isolate_ppi
     
     if read_only is not None:
         config.read_only_mode = read_only
@@ -691,6 +762,14 @@ def structman_cli():
         config.mapping_db_is_set = False
 
     config.skip_main_output_generation = skip_main_output_generation
+
+    # Overrides the config file for one run, typically a big input that needs more
+    # store. ray_init clamps it to what /dev/shm can hold.
+    if ray_object_store_fraction is not None:
+        config.ray_object_store_fraction = ray_object_store_fraction
+
+    if fetch_alignments:
+        config.fetch_alignments = True
 
     if mem_limit is not None:
         lim = ray._private.utils.get_system_memory() * mem_limit
@@ -764,6 +843,37 @@ def structman_cli():
                 print('Database clone_afdb needs "--target_db" to be specified, Abort ...')
                 sys.exit(1)
             repairDB.clone_afdb(config, target_db)
+
+        elif db_mode == 'clone_afdb_hetero':
+            if target_db is None:
+                print('Database clone_afdb_hetero needs "--target_db" to be specified, Abort ...')
+                sys.exit(1)
+            repairDB.clone_afdb(config, target_db, template_db=config.afdb_hetero)
+
+        elif db_mode == 'clone_afdb_homo':
+            if target_db is None:
+                print('Database clone_afdb_homo needs "--target_db" to be specified, Abort ...')
+                sys.exit(1)
+            repairDB.clone_afdb(config, target_db, template_db=config.afdb_homo)
+
+        elif db_mode == 'repair':
+            session_id = None
+            if infile_given and repair_session_id is not None:
+                print('Give either -i or --session_id, not both.')
+                sys.exit(2)
+            if infile_given:
+                if not os.path.isfile(infile):
+                    print(f'Input file not found: {infile}')
+                    sys.exit(1)
+                session_id = database.getSessionId(infile, config)
+                if session_id is None:
+                    print(f'No session for {infile} in {config.db_name}: it was never run against this '
+                          'database, the file changed since (sessions are found by path and checksum), or the '
+                          'session tables were truncated. Pick its session with --session_id instead:')
+                    repairDB.print_sessions_of_proteins(config)
+                    sys.exit(1)
+            repairDB.repair_crashed_chunks(config, session_id=session_id, from_protein_id=from_protein_id,
+                                           apply=repair_apply, original_session=repair_session_id)
 
     elif output_util:
         if config.verbosity >= 1:

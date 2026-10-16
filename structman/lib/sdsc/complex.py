@@ -1,5 +1,6 @@
 from structman.lib import pdbParser 
-from structman.lib.sdsc.sdsc_utils import doomsday_protocol, is_alphafold_model, alphafold_model_id_to_file_path, Slotted_obj
+from structman.lib.sdsc.sdsc_utils import doomsday_protocol, is_alphafold_model, alphafold_model_id_to_file_path
+from structman.base_utils.base_utils import Slotted_obj
 
 class Complex(Slotted_obj):
     __slots__ = [
@@ -8,7 +9,7 @@ class Complex(Slotted_obj):
         'stored',       'lig_profile',          'metal_profile',
         'ion_profile',  'chain_chain_profile',  'homomers',
         'atom_count',   'page',                 'IAmap',
-        'interfaces'
+        'interfaces',   'chain_names'
     ]
 
     slot_mask = [
@@ -17,13 +18,13 @@ class Complex(Slotted_obj):
         False,  False,  False,
         False,  False,  False,
         False,  False,  False,
-        True    
+        True,   False
     ]
 
     def __init__(self, pdb_id = None, resolution=None, chains_str=None, lig_profile=None, lig_profile_str=None, metal_profile=None,
                  metal_profile_str=None, ion_profile=None, ion_profile_str=None, chain_chain_profile=None,
                  chain_chain_profile_str=None, stored=False, database_id=None, homomers=None, homomers_str=None, atom_count=None,
-                 IAmap = None, interfaces = None, chain_names = None):
+                 IAmap = None, interfaces = None, chain_names = None, chaintype_map=None):
         self.pdb_id = pdb_id
         self.chains = {}  # {One-letter-chain-id:chaintype} ; possible chaintypes: 'Protein','DNA','RNA,'Peptide'
         self.chainlist = None
@@ -57,6 +58,9 @@ class Complex(Slotted_obj):
         if homomers_str is not None:
             self.parseHomomersStr(homomers_str)
 
+        if chaintype_map is not None:
+            self.chains = chaintype_map
+            
         if chains_str is not None:
             self.parseChainStr(chains_str)
 
@@ -88,9 +92,6 @@ class Complex(Slotted_obj):
         del self.ion_profile
         del self.metal_profile
         del self.lig_profile
-        for chain in self.interfaces:
-            for chain2 in self.interfaces[chain]:
-                self.interfaces[chain][chain2].deconstruct()
         del self.interfaces
         del self.chains
         doomsday_protocol(self)
@@ -130,6 +131,8 @@ class Complex(Slotted_obj):
 
     def getChainStr(self):
         chain_str_parts = []
+        if self.chainlist is None:
+            return ''
         for chain in self.chainlist:
             chain_str_parts.append('%s:%s' % (chain, self.chains[chain]))
         return ','.join(chain_str_parts)
@@ -139,8 +142,8 @@ class Complex(Slotted_obj):
         for chain_str_part in chain_str.split(','):
             if chain_str_part.count(':') < 1:
                 continue
-            chain, chaintype = chain_str_part.split(':')
-            self.chains[chain] = chaintype
+            chain, chain_name = chain_str_part.split(':')
+            self.chain_names[chain] = chain_name
             chainlist.append(chain)
         self.chainlist = chainlist
 

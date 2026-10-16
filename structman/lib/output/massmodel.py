@@ -1,4 +1,4 @@
-import os
+﻿import os
 import shutil
 import sys
 import traceback
@@ -17,6 +17,7 @@ except:
     pass
 
 from structman.lib.output import out_generator
+from structman.base_utils.ray_utils import ray_init
 
 def get_optimal_templates(prot_id, proteins, config):
 
@@ -26,8 +27,9 @@ def get_optimal_templates(prot_id, proteins, config):
         best_interface_structure = None
         for structure_id in interface_structure_map:
             chain, i_chain, interface_size = interface_structure_map[structure_id]
-            seq_id = proteins[prot_id].structure_annotations[(structure_id, chain)].sequence_identity
-            cov = proteins[prot_id].structure_annotations[(structure_id, chain)].coverage
+            annotation = proteins[prot_id].get_annotation(structure_id, chain)
+            seq_id = annotation.sequence_identity
+            cov = annotation.coverage
             score = interface_size * seq_id * cov
             if score > best_score:
                 best_score = score
@@ -37,9 +39,11 @@ def get_optimal_templates(prot_id, proteins, config):
         else:
             best_interface_structures[best_interface_structure].append(interface_number)
 
+    # Unfinished: pos is never bound and nothing calls this function. Left as it was
+    # apart from the container, which is a list of annotations now, not a map.
     for position in proteins[prot_id].positions:
-        for (structure_id, tchain) in proteins[prot_id].structure_annotations:
-            sub_info = protein_obj.structure_annotations[(pdb_id, chain)].get_sub_info(pos)
+        for annotation in proteins[prot_id].structure_annotations:
+            sub_info = annotation.get_sub_info(pos)
             res_nr = sub_info[0]
     #TODO
 
@@ -71,6 +75,9 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
             para = True
         if para:
             modelling_result_ids = []
+            # Reached from the output stage, where ray can be down; an unguarded put
+            # would auto-start an unconfigured cluster (see structman/__init__.py).
+            ray_init(config, stop_existing = False)
             conf_dump = ray.put(config)
         else:
             models = []
@@ -218,9 +225,14 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                         compl_obj = proteins.complexes[pdb_id]
                         structures = proteins.get_complex_structures(pdb_id)
                         try:
-                            alignment_tuple = proteins[prot_id].structure_annotations[pdb_id][tchain].get_alignment(unpacked=True)
-                            seq_id = proteins[prot_id].structure_annotations[pdb_id][tchain].sequence_identity
-                            cov = proteins[prot_id].structure_annotations[pdb_id][tchain].coverage
+                            # Named by a recommended structure rather than reached by
+                            # iteration, so this is one of the few places that still
+                            # needs keyed access. get_annotation memoises the protein's
+                            # index, so the three reads cost one lookup between them.
+                            annotation = proteins[prot_id].get_annotation(pdb_id, tchain)
+                            alignment_tuple = annotation.get_alignment(unpacked=True)
+                            seq_id = annotation.sequence_identity
+                            cov = annotation.coverage
                         except:
                             [e, f, g] = sys.exc_info()
                             g = traceback.format_exc()
@@ -236,9 +248,10 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
 
                     model_jobs[prot_id][pdb_id].append([compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, sav_pos, inv_inserts, inv_del_flanks, mut_prot_id])
 
-                    mut_alignment_tuple = proteins[mut_prot_id].structure_annotations[pdb_id][tchain].get_alignment(unpacked=True)
-                    mut_seq_id = proteins[mut_prot_id].structure_annotations[pdb_id][tchain].sequence_identity
-                    mut_cov = proteins[mut_prot_id].structure_annotations[pdb_id][tchain].coverage
+                    mut_annotation = proteins[mut_prot_id].get_annotation(pdb_id, tchain)
+                    mut_alignment_tuple = mut_annotation.get_alignment(unpacked=True)
+                    mut_seq_id = mut_annotation.sequence_identity
+                    mut_cov = mut_annotation.coverage
 
                     if mut_prot_id not in model_jobs:
                         model_jobs[mut_prot_id] = {}
@@ -270,9 +283,17 @@ def mass_model(session_id, config, outfolder, include_snvs=False, template_selec
                     print('Modelling of:', prot_id, pdb_id, tchain, label_add)
 
                     if para:
-                        compl_obj.deactivate_slot_mask()
-                        #print(f'{compl_obj.pdb_id=} {compl_obj.slot_mask=} {Complex.slot_mask=}')
-                        modelling_result_ids.append(modelling.model_remote_wrapper.remote(conf_dump, pack(compl_obj), pack(structures), alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, label_add = label_add, skip_analysis=True, force_modelling = config.force_modelling, mutation_positions = [sav_positions, insertion_positions, deletion_flanks], target_path = model_database))
+                        # Complex.slot_mask drops 14 of its 17 slots and modelling needs
+                        # them, so the object is packed with the mask off. The mask is a
+                        # class attribute, so model_remote_wrapper has to turn its own off
+                        # before unpacking or the values land in the wrong slots. Restored
+                        # right after the pack: deactivate_slot_mask mutates the class, and
+                        # leaving it off changed the serialised form of every Complex this
+                        # process packs afterwards.
+                        slot_mask_bu = compl_obj.deactivate_slot_mask()
+                        packed_compl_obj = pack(compl_obj)
+                        compl_obj.reactivate_slot_mask(slot_mask_bu)
+                        modelling_result_ids.append(modelling.model_remote_wrapper.remote(conf_dump, packed_compl_obj, pack(structures), alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, label_add = label_add, skip_analysis=True, force_modelling = config.force_modelling, mutation_positions = [sav_positions, insertion_positions, deletion_flanks], target_path = model_database))
                     else:
                         models.append(modelling.model(config, compl_obj, structures, alignment_tuple, seq_id, cov, pdb_id, tchain, prot_id, label_add = label_add, skip_analysis=True, force_modelling = config.force_modelling, mutation_positions = [sav_positions, insertion_positions, deletion_flanks], target_path = model_database))
         if para:

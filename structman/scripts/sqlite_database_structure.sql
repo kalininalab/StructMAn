@@ -132,30 +132,24 @@ CREATE TABLE `Protein_Protein_Interaction_9` (
   `Pos_Pos_Data` BLOB DEFAULT NULL
 );
 
-CREATE TABLE `Position_Position_Interaction` (
-  `Position_Position_Interaction_Id` integer NOT NULL PRIMARY KEY AUTOINCREMENT,
-  `Position_A` integer NOT NULL REFERENCES `Position` (`Position_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Position_B` integer NOT NULL REFERENCES `Position` (`Position_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Residue_A` integer  NOT NULL REFERENCES `Residue` (`Residue_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Residue_B` integer  NOT NULL REFERENCES `Residue` (`Residue_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Interaction_Score` float DEFAULT NULL,
-  UNIQUE (`Position_A`,`Position_B`)
-);
-
 CREATE TABLE `Protein` (
   `Protein_Id` integer  NOT NULL PRIMARY KEY AUTOINCREMENT,
   `Gene` integer  DEFAULT NULL REFERENCES `Gene` (`Gene_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Primary_Protein_Id` varchar(255) DEFAULT NULL,
-  `Uniprot_Ac` varchar(16) DEFAULT NULL UNIQUE,
+  `Uniprot_Ac` varchar(255) DEFAULT NULL,
   `RefSeq_Ids` text,
-  `Uniprot_Id` varchar(32) DEFAULT NULL,
+  `Uniprot_Id` varchar(255) DEFAULT NULL,
   `Mutant_Type` varchar(32) DEFAULT NULL,
   `Mutant_Positions` text,
   `Original_Session` integer DEFAULT NULL,
   `Error_Code` integer DEFAULT NULL,
   `Error` varchar(255) DEFAULT NULL,
   `Sequence` text,
-  `Species` varchar(255) DEFAULT NULL
+  `Species` varchar(255) DEFAULT NULL,
+  `Sequence_Hash` integer DEFAULT NULL,
+  `Ensembl_Ids` text,
+  `PDB_Ids` text,
+  `Other_Ids` text
 );
 
 CREATE TABLE `Gene` (
@@ -244,7 +238,7 @@ CREATE TABLE `RS_Protein_Pathway` (
 CREATE TABLE `RS_Protein_Session` (
   `Protein` integer  NOT NULL REFERENCES `Session` (`Session_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
   `Session` integer NOT NULL REFERENCES `Protein` (`Protein_Id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  `Input_Id` varchar(255) DEFAULT NULL,
+  `Input_Id` text,
   `Tags` mediumtext COLLATE BINARY
 );
 
@@ -330,6 +324,7 @@ CREATE TABLE `Suggestion` (
 
 
 CREATE INDEX idx_uniprot_ac ON `Protein` (`Uniprot_Ac`);
+CREATE INDEX idx_sequence_hash ON `Protein` (`Sequence_Hash`);
 
 CREATE INDEX idx_protein ON `Interface` (`Protein`);
 

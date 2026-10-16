@@ -1,11 +1,6 @@
-import sys
 import os
-
 import time
-#from numba.experimental import jitclass
-#from numba.typed import List as NumbaList
-#from numba.types import ListType, int64
-#from numba import typeof
+import numpy as np
 
 try:
     from reprlib import repr
@@ -15,174 +10,6 @@ except ImportError:
 from structman.lib.sdsc.consts import ligands, residues
 from structman.base_utils.base_utils import identify_structure_id_type_key, is_connected
 
-def sizeof_fmt(num, suffix='B'):
-    ''' by Fred Cirera,  https://stackoverflow.com/a/1094933/1870254, modified'''
-    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
-        if abs(num) < 1024.0:
-            return "%3.1f %s%s" % (num, unit, suffix)
-        num /= 1024.0
-    return "%.1f %s%s" % (num, 'Yi', suffix)
-
-def deep_get_size_of(obj):
-    if isinstance(obj, list) or isinstance(obj, set):
-        size_sum = 0
-        for s_obj in obj:
-            size_sum += deep_get_size_of(s_obj)
-        return size_sum
-    
-    if isinstance(obj, dict):
-        size_sum = 0
-        for s_obj in obj.values():
-            size_sum += deep_get_size_of(s_obj)
-        return size_sum
-    
-    if isinstance(obj, Slotted_obj):
-        return obj.__getsize__()
-
-    return sys.getsizeof(obj)
-
-class Slotted_obj:
-    def __serialize__(self) -> list:
-        serialized_object = []
-        try:
-            slot_mask: list[bool] = self.slot_mask
-            for slot_number, attribute_name in enumerate(self.__slots__):
-                try:
-                    if slot_mask[slot_number]:
-                        try:
-                            serialized_object.append(self.__getattribute__(attribute_name))
-                        except AttributeError:
-                            serialized_object.append(None)
-
-                except IndexError as e:
-                    raise IndexError(f'{e}\n{type(self)} {slot_number=} {attribute_name=}')
-        except AttributeError:
-            for attribute_name in self.__slots__:
-                try:
-                    serialized_object.append(self.__getattribute__(attribute_name))
-                except AttributeError:
-                    serialized_object.append(None)
-        return serialized_object
-    
-    def deactivate_slot_mask(self) -> None:
-        slot_mask_bu = []
-        for pos in range(len(self.slot_mask)):
-            slot_mask_bu.append(self.slot_mask[pos])
-            self.__class__.slot_mask[pos] = True
-        return slot_mask_bu
-
-    def reactivate_slot_mask(self, slot_mask_bu) -> None:
-        for pos in range(len(slot_mask_bu)):
-            self.__class__.slot_mask[pos] = slot_mask_bu[pos]
-
-    def __getsize__(self):
-        size_sum = 0
-        for attr_name in self.__slots__:
-            obj = self.__getattribute__(attr_name)
-            size_sum += deep_get_size_of(obj)
-        return size_sum
-
-    def log_attr_sizes(self, logger, label = ''):
-        tup_list = []
-        for attr_name in self.__slots__:
-            obj = self.__getattribute__(attr_name)            
-            size = deep_get_size_of(obj)
-            tup_list.append((attr_name, size))
-
-        tup_list = sorted(tup_list, key= lambda x :x[1], reverse=True)
-        for attr_name, size in tup_list[:10]:
-            logger.info(f'{label}{attr_name} {sizeof_fmt(size)}')
-
-class SparseArray(Slotted_obj):
-    __slots__ = ['ranged_lists']
-
-    def __init__(self):
-        self.ranged_lists: list[tuple[int, int, list[any]]] = []
-
-    def insert(self, key: int, value: any) -> None:
-        for ranged_list_id, (min_key, max_key, value_list) in enumerate(self.ranged_lists):
-            if key >= min_key:
-                if key <= max_key: #New element inside one of the ranged lists
-                    try:
-                        value_list[key-min_key] = value
-                    except TypeError:
-                        value_list = list(value_list)
-                        value_list[key-min_key] = value
-                    return
-            elif key == (min_key-1): #New element just one index to the left of current ranged list
-                if ranged_list_id == 0: #And it is the most left ranged list -> fuse with current ranged list
-                    new_list: list[any] = [value]
-                    new_list.extend(value_list)
-                    self.ranged_lists[0] = (min_key-1, max_key, new_list)
-                    return
-                elif key == self.ranged_lists[ranged_list_id -1][1]+1: #It is also just one index to the right of the previous ranged list -> fuse lists
-                    self.ranged_lists[ranged_list_id -1][2].append(value)
-                    self.ranged_lists[ranged_list_id -1][2].extend(value_list)
-                    self.ranged_lists[ranged_list_id -1] = (self.ranged_lists[ranged_list_id -1][0], max_key, self.ranged_lists[ranged_list_id - 1][2])
-                    self.ranged_lists.pop(ranged_list_id)
-                    return
-                else: #fuse with current ranged list
-                    new_list: list[any] = [value]
-                    new_list.extend(value_list)
-                    self.ranged_lists[0] = (min_key-1, max_key, new_list)
-                    return
-            elif ranged_list_id == 0: #New element outside boundarys of current ranged lists to the left side -> spawn new ranged list
-                new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
-                new_ranged_lists: list[tuple[int, int, list[any]]] = [new_ranged_list]
-                new_ranged_lists.extend(self.ranged_lists)
-                self.ranged_lists = new_ranged_lists
-                return
-            elif key == self.ranged_lists[ranged_list_id -1][1]+1:#New element just one index to the right of previous ranged list -> append it there
-                self.ranged_lists[ranged_list_id -1][2].append(value)
-                self.ranged_lists[ranged_list_id -1] = (self.ranged_lists[ranged_list_id -1][0], self.ranged_lists[ranged_list_id -1][1] + 1, self.ranged_lists[ranged_list_id - 1][2])
-                return
-            else: #New element in the middle ground between two ranged lists -> spawn new ranged list
-                new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
-                new_ranged_lists: list[tuple[int, int, list[any]]] = self.ranged_lists[:ranged_list_id]
-                new_ranged_lists.append(new_ranged_list)
-                new_ranged_lists.extend(self.ranged_lists[ranged_list_id:])
-                self.ranged_lists = new_ranged_lists
-                return
-        #If not returned yet, the new element lies to right of current ranged lists
-        if len(self.ranged_lists) == 0:
-            self.ranged_lists.append((key, key, [value]))
-        elif key == self.ranged_lists[-1][1]+1:
-            l = self.ranged_lists[-1][2]
-            try:
-                l.append(value)
-            except AttributeError:
-                l = list(self.ranged_lists[-1][2])
-                l.append(value)
-            try:
-                self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, l)
-            except TypeError:
-                self.ranged_lists = list(self.ranged_lists)
-                self.ranged_lists[-1] = (self.ranged_lists[-1][0], self.ranged_lists[-1][1] + 1, l)
-        else:
-            new_ranged_list: tuple[int, int, list[any]] = (key, key, [value])
-            self.ranged_lists.append(new_ranged_list)
-
-    def get(self, key: int) -> any:
-        for min_key, max_key, value_list in self.ranged_lists:
-            if key >= min_key:
-                if key <= max_key:
-                    return value_list[key-min_key]
-        return None
-
-    def get_keys(self) -> list[int]:
-        keys: list[int] = []
-        for min_key, max_key, _ in self.ranged_lists:
-            keys.extend(range(min_key, max_key+1))
-        return keys
-
-    def get_first_item(self) -> any:
-        return self.ranged_lists[0][2][0]
-
-    def __len__(self) -> int:
-        n: int = 0
-        for min_key, max_key, _ in self.ranged_lists:
-            n += ((max_key + 1) - min_key)
-        return n
 
 """
 spec = [
@@ -419,10 +246,15 @@ def process_recommend_structure_str(recommended_structure_str):
     return recommended_structure, seq_id, cov, resolution
 
 
-def classify(interaction_profile, location):
+def classify(interaction_profile, location, debug_print = False):
+    if debug_print:
+        print(f'call of classify: {location=}')
     if interaction_profile is None:
         return None, None
-    raw_rin_class, raw_rin_simple_class = interaction_profile.getClass()
+    raw_rin_class, raw_rin_simple_class = interaction_profile.getClass(debug_print=debug_print)
+
+    if debug_print:
+        print(f'in classify: {raw_rin_class=} {raw_rin_simple_class=}')
     if raw_rin_class == 'No interaction':
         rin_class = location
     else:
@@ -478,55 +310,47 @@ def process_alignment_data(alignment) -> str | tuple[str, str]:
     return target_seq, template_seq
 
 
-def get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances):
+def get_shortest_distances(chains: dict[str, str], lig_dists, chain_distances):
     min_ld = None
     min_md = None
     min_id = None
     min_cd = None
     min_dd = None
     min_rd = None
-    min_hd = None
 
-    ldists = {}
-    mdists = {}
-    idists = {}
+    ldists = []
+    mdists = []
+    idists = []
     if lig_dists is not None:
         for lig_id in lig_dists:
             lig_name, res, chain = lig_id.split('_')
             (dist, atom_pair) = lig_dists[lig_id]
+            if np.isnan(dist):
+                continue
             if lig_name in residues.METAL_ATOMS:
-                mdists[dist] = lig_name, res, chain
+                mdists.append(dist)
             elif lig_name in residues.ION_ATOMS:
-                idists[dist] = lig_name, res, chain
+                idists.append(dist)
             else:
-                ldists[dist] = lig_name, res, chain
-
-    min_lig = None
-    min_metal = None
-    min_ion = None
+                ldists.append(dist)
 
     if len(ldists) > 0:
-        min_ld = min(ldists.keys())
-        min_lig = ldists[min_ld]
+        min_ld = min(ldists)
 
     if len(mdists) > 0:
-        min_md = min(mdists.keys())
-        min_metal = mdists[min_md]
+        min_md = min(mdists)
 
     if len(idists) > 0:
-        min_id = min(idists.keys())
-        min_ion = idists[min_id]
+        min_id = min(idists)
 
-    cdists = {}
-    ddists = {}
-    rdists = {}
-
-    iacs = {}
+    cdists = []
+    ddists = []
+    rdists = []
 
     if chain_distances is not None:
         for chain_id in chain_distances:
             (dist, atom_pair, min_resi) = chain_distances[chain_id]
-            if dist is None:
+            if dist is None or np.isnan(dist):
                 continue
             if chain_id not in chains:
                 chaintype = 'Protein'
@@ -534,29 +358,18 @@ def get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances
                 chaintype = chains[chain_id]
 
             if chaintype == "Protein" or chaintype == 'Peptide':
-                cdists[dist] = chain_id
+                cdists.append(dist)
             elif chaintype == "RNA":
-                rdists[dist] = chain_id
+                rdists.append(dist)
             elif chaintype == "DNA":
-                ddists[dist] = chain_id
+                ddists.append(dist)
 
-    if len(cdists) > 0:
-        min_cd = min(cdists.keys())
-        iacs['Protein'] = cdists[min_cd]
-    if len(rdists) > 0:
-        min_rd = min(rdists.keys())
-        iacs['RNA'] = rdists[min_rd]
-    if len(ddists) > 0:
-        min_dd = min(ddists.keys())
-        iacs['DNA'] = ddists[min_dd]
-
-    homo_dists = []
-    if homomer_distances is not None:
-        for homo_chain in homomer_distances:
-            dist = homomer_distances[homo_chain]
-            homo_dists.append(dist)
-    if len(homo_dists) > 0:
-        min_hd = min(homo_dists)
+        if len(cdists) > 0:
+            min_cd = min(cdists)
+        if len(rdists) > 0:
+            min_rd = min(rdists)
+        if len(ddists) > 0:
+            min_dd = min(ddists)
 
     minimal_distances = []
     if min_cd is not None:
@@ -580,7 +393,7 @@ def get_shortest_distances(chains, lig_dists, chain_distances, homomer_distances
     if min_minimal_distances < 1.2:
         return None
 
-    return min_hd, min_ld, min_md, min_id, min_cd, min_rd, min_dd, min_lig, min_metal, min_ion, iacs
+    return min_ld, min_md, min_id, min_cd, min_rd, min_dd
 
 
 def connection_sleep_cycle(verbosity, url):
